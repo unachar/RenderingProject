@@ -120,3 +120,4 @@ imgui.ini
 /External/Draco/install-dx12-md/
 *.tar.gz
 *.zip
+*.cfg

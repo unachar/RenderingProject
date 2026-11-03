@@ -15727,6 +15727,29 @@ struct MaterialComponent
     vector<MeshOutlineOverride> ToonMeshOutlineOverrides{};
     vector<float> ToonMeshOutlineWidthScales{};
     vector<MeshShadingOverride> MeshShadingOverrides{};
+    // メカクレ（前髪越しに目・眉を透かす）。PMX / VRM / FBX 共通。対象メッシュは読み込み時の
+    // 名前分類（MeshSemanticFlags）と下の名前フィルターで決まる。
+    bool MekakureEnabled = false;
+    float MekakureOpacity = 0.55f;      // 髪越しに見える目の不透明度
+    float MekakureDepth = 0.06f;        // 透過を許す奥行き（ワールド単位）。後頭部越しには透けない
+    float MekakureFadeStart = 0.35f;    // N・V がこの値以上で完全に表示
+    float MekakureFadeEnd = 0.05f;      // N・V がこの値以下で非表示（横顔・後ろ向きで消える）
+    int MekakureTargetMask = 60;        // MeshSemantic_Eye | EyeHighlight | Brow | Lash
+    string MekakureIncludeNames;        // 追加対象（カンマ区切り・部分一致）
+    string MekakureExcludeNames;        // 除外（カンマ区切り・部分一致）
+    // 透過マスク：前髪のどこから目を透かすか（学マス方式：髪テクスチャのアルファで範囲と透け具合を制御）
+    int MekakureMaskSource = 0;         // 0: なし, 1: 髪テクスチャのアルファ, 2: 専用マスク画像（R）
+    string MekakureMaskPath;            // 専用マスク画像（髪の UV 空間）
+    float MekakureMaskStrength = 1.0f;  // マスクの効き
+    bool MekakureMaskInvert = false;    // 白黒を反転
+    // ライブトゥーンのマテリアルテクスチャ（トゥーン系クラスのみ）
+    string LiveToonDefPath;             // Def：R = 影しきい値の補正(0.5 で変化なし), G = 境界のぼかし倍率, B = 質感ランプのマスク
+    float LiveToonDefStrength = 1.0f;
+    string LiveToonFacePath;            // 顔陰影反転：R = 影側でも光を残す領域（頬など）
+    float LiveToonFaceStrength = 1.0f;
+    string LiveToonTextureRampPath;     // 質感ランプ：横軸 = 視線角度（正面→縁）
+    float LiveToonTextureRampMultiply = 1.0f;
+    float LiveToonTextureRampAdd = 0.0f;
     float Alpha = 1.0f;
     MaterialShadowMode ShadowMode = MaterialShadowMode::Auto;
     float ShadowCutoff = 0.5f;
@@ -16122,6 +16145,7 @@ class ComponentManager
         Registry::RemoveComponent(entity, types...);
     }
 };
+
 
 ===== FILE: source\ecs\ecs.cpp =====
 #include "pch.h"
@@ -22375,7 +22399,11 @@ void ImGuiManager::Redo()
 #include "scenehierarchy.h"
 #include "gpuscene/gpuscenechanges.h"
 #include "impostorrenderer.h"
+#include "livetoonstyle.h"
+#include "materialpartresolver.h"
 #include <fstream>
+#include <array>
+#include <unordered_map>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -22988,6 +23016,81 @@ void ImGuiManager::DrawLegacyMaterialEditorWindow()
     ImGui::End();
 }
 
+// テクスチャのパス入力（UTF-8）。エクスプローラーからパスを貼り付けて Enter で確定。
+static bool DrawLiveToonPathInput(const char* label, string& path)
+{
+    // 入力中の文字列はフレームをまたいで保持し、編集中でないときだけパスから同期する。
+    static std::unordered_map<ImGuiID, std::array<char, 512>> buffers;
+    auto& buffer = buffers[ImGui::GetID(label)];
+    bool changed = false;
+    const bool committed =
+        ImGui::InputText(label, buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!ImGui::IsItemActive() && !committed)
+    {
+        strncpy_s(buffer.data(), buffer.size(), path.c_str(), _TRUNCATE);
+    }
+    if (committed)
+    {
+        string value = buffer.data();
+        // 「パスのコピー」で付く引用符を外す
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+        {
+            value = value.substr(1, value.size() - 2);
+        }
+        path = value;
+        changed = true;
+    }
+    if (!path.empty())
+    {
+        ImGui::SameLine();
+        ImGui::PushID(label);
+        if (ImGui::SmallButton("×"))
+        {
+            path.clear();
+            changed = true;
+        }
+        ImGui::PopID();
+        if (LiveToonTextures::ResolveDescriptor(path) < 0)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "読み込めません: %s", path.c_str());
+        }
+    }
+    return changed;
+}
+
+// ライブ用トゥーンスタイル（シーン全体）。Forward / Deferred 共通で LightParams に入る。
+static void DrawLiveToonStyleControls()
+{
+    auto& s = LiveToonStyle::Get();
+    ImGui::TextWrapped("学マスのライブ風シェーディング（シーン全体）。トゥーン系クラス（髪・服・肌・トゥーン）に適用されます。");
+    ImGui::SliderFloat("ライブスタイル適用", &s.Blend, 0.0f, 1.0f);
+    ImGui::SeparatorText("メインライト（平行光源）");
+    ImGui::ColorEdit3("影の乗算色", &s.ShadowTint.x, ImGuiColorEditFlags_Float);
+    ImGui::SliderFloat("乗算色の効き", &s.ShadowTintStrength, 0.0f, 1.0f);
+    ImGui::SliderFloat("肌の血色", &s.SkinWarmth, 0.0f, 1.0f);
+    ImGui::SliderFloat("落ち影の濃さ", &s.CastShadowDensity, 0.0f, 1.0f);
+    ImGui::SeparatorText("加算ライト（点 / スポット / 矩形）");
+    ImGui::SliderFloat("回り込み", &s.AdditiveSoftness, 0.0f, 1.0f);
+    ImGui::SliderFloat("加算ライト強度", &s.AdditiveGain, 0.0f, 3.0f);
+    ImGui::SeparatorText("リム");
+    ImGui::SliderFloat("ソフトリム", &s.RimSoft, 0.0f, 2.0f);
+    ImGui::SliderFloat("ハードリム", &s.RimHard, 0.0f, 2.0f);
+    ImGui::SliderFloat("リム幅", &s.RimWidth, 0.02f, 1.0f);
+    ImGui::SliderFloat("リムのライト色", &s.RimLightTint, 0.0f, 1.0f);
+    ImGui::SeparatorText("スペキュラ");
+    ImGui::SliderFloat("ランプスペキュラ", &s.RampSpecular, 0.0f, 2.0f);
+    ImGui::SliderFloat("天使の輪（髪）", &s.HairAngelRing, 0.0f, 2.0f);
+    ImGui::SliderFloat("環境スペキュラ", &s.EnvSpecular, 0.0f, 2.0f);
+    ImGui::SeparatorText("陰影ランプ（シーン全体）");
+    ImGui::TextWrapped("横軸 = 影（左）→ 光（右）。上半分 = 肌、下半分 = 肌以外。パスを貼り付けて Enter。");
+    DrawLiveToonPathInput("陰影ランプ画像", s.ShadowRampPath);
+    ImGui::SliderFloat("陰影ランプの強さ", &s.ShadowRampStrength, 0.0f, 1.0f);
+    if (ImGui::Button("ライブスタイルを標準値に戻す"))
+    {
+        LiveToonStyle::Reset();
+    }
+}
+
 void ImGuiManager::DrawRimSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(420.0f, 560.0f), ImGuiCond_FirstUseEver);
@@ -23001,6 +23104,8 @@ void ImGuiManager::DrawRimSettingsWindow()
         !ComponentManager::HasComponent<MaterialComponent>(m_SelectedEntity))
     {
         ImGui::TextUnformatted("リムを設定するマテリアル付きオブジェクトを選択してください");
+        ImGui::Separator();
+        DrawLiveToonStyleControls();
         ImGui::End();
         return;
     }
@@ -23088,6 +23193,11 @@ void ImGuiManager::DrawRimSettingsWindow()
                 }
                 ImGui::PopID();
             }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("ライブトゥーン"))
+        {
+            DrawLiveToonStyleControls();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -23231,6 +23341,124 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
     changed |= ImGui::SliderFloat("アウトライン幅", &material.ToonOutlineWidth, 0.0f, 0.20f);
     changed |= ImGui::SliderFloat("スクリーン幅px", &material.ToonOutlineScreenWidth, 0.0f, 24.0f, "%.1f");
     changed |= ImGui::SliderFloat("TEO幅スケール", &material.ToonOutlineTeoWidthScale, 0.0f, 3.0f);
+
+    if (IsModelMaterialEntity(entity))
+    {
+        ImGui::SeparatorText("メカクレ（前髪越しの目）");
+        changed |= ImGui::Checkbox("メカクレ有効", &material.MekakureEnabled);
+        ImGui::BeginDisabled(!material.MekakureEnabled);
+        changed |= ImGui::SliderFloat("透け具合", &material.MekakureOpacity, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("透過する奥行き", &material.MekakureDepth, 0.0f, 0.5f, "%.3f");
+        ImGui::SetItemTooltip("目の手前この距離（ワールド単位）以内の遮蔽物だけ透けます。後頭部越しには透けません。");
+        changed |= ImGui::SliderFloat("フェード開始 N・V", &material.MekakureFadeStart, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("フェード終了 N・V", &material.MekakureFadeEnd, -1.0f, 1.0f);
+        struct MaskItem
+        {
+            const char* Label;
+            uint32_t Bit;
+        };
+        const MaskItem maskItems[] = {{"目", MeshSemantic_Eye},
+                                      {"目ハイライト", MeshSemantic_EyeHighlight},
+                                      {"眉", MeshSemantic_Brow},
+                                      {"まつ毛", MeshSemantic_Lash},
+                                      {"顔", MeshSemantic_Face}};
+        for (size_t i = 0; i < std::size(maskItems); ++i)
+        {
+            bool on = (static_cast<uint32_t>(material.MekakureTargetMask) & maskItems[i].Bit) != 0;
+            if (i != 0)
+            {
+                ImGui::SameLine();
+            }
+            if (ImGui::Checkbox(maskItems[i].Label, &on))
+            {
+                uint32_t mask = static_cast<uint32_t>(material.MekakureTargetMask);
+                mask = on ? (mask | maskItems[i].Bit) : (mask & ~maskItems[i].Bit);
+                material.MekakureTargetMask = static_cast<int>(mask);
+                changed = true;
+            }
+        }
+        char includeBuffer[256]{};
+        char excludeBuffer[256]{};
+        strncpy_s(includeBuffer, material.MekakureIncludeNames.c_str(), _TRUNCATE);
+        strncpy_s(excludeBuffer, material.MekakureExcludeNames.c_str(), _TRUNCATE);
+        if (ImGui::InputText("追加対象名", includeBuffer, IM_ARRAYSIZE(includeBuffer)))
+        {
+            material.MekakureIncludeNames = includeBuffer;
+            changed = true;
+        }
+        ImGui::SetItemTooltip("メッシュ名 / マテリアル名の部分一致。カンマ区切り（例: eye_L, 瞳）");
+        if (ImGui::InputText("除外名", excludeBuffer, IM_ARRAYSIZE(excludeBuffer)))
+        {
+            material.MekakureExcludeNames = excludeBuffer;
+            changed = true;
+        }
+        const char* maskSources[] = {"なし（奥行きだけで判定）", "髪テクスチャのアルファ", "専用マスク画像（R）"};
+        changed |= ImGui::Combo("透過マスク", &material.MekakureMaskSource, maskSources, IM_ARRAYSIZE(maskSources));
+        ImGui::SetItemTooltip("前髪のどこから・どれだけ目を透かすか。白 = 透かす、黒 = 透かさない（髪の UV 空間）。");
+        if (material.MekakureMaskSource == 2)
+        {
+            changed |= DrawLiveToonPathInput("マスク画像", material.MekakureMaskPath);
+        }
+        if (material.MekakureMaskSource != 0)
+        {
+            changed |= ImGui::SliderFloat("マスクの効き", &material.MekakureMaskStrength, 0.0f, 1.0f);
+            changed |= ImGui::Checkbox("マスク反転", &material.MekakureMaskInvert);
+        }
+        if (ImGui::TreeNode("対象メッシュの確認"))
+        {
+            auto listMesh = [&](const string& meshName, const string& materialName, const string& key, uint32_t flags) {
+                const bool excluded = !material.MekakureExcludeNames.empty() &&
+                                      MeshSemanticKeyMatchesFilter(key, material.MekakureExcludeNames);
+                const bool target = !excluded && ((flags & static_cast<uint32_t>(material.MekakureTargetMask)) != 0 ||
+                                                  (!material.MekakureIncludeNames.empty() &&
+                                                   MeshSemanticKeyMatchesFilter(key, material.MekakureIncludeNames)));
+                if (!target)
+                {
+                    return;
+                }
+                ImGui::BulletText("%s / %s", meshName.c_str(), materialName.c_str());
+            };
+            if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+            {
+                const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+                if (auto* model = component.ModelId >= 0 ? ModelManager::GetAnimModel(component.ModelId) : nullptr)
+                {
+                    for (UINT m = 0; m < model->GetMeshCount(); ++m)
+                    {
+                        const auto& mesh = model->GetMeshData(m);
+                        listMesh(mesh.MeshName, mesh.MaterialName, mesh.SemanticKey, mesh.SemanticFlags);
+                    }
+                }
+            }
+            else if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+            {
+                const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+                if (auto* model = component.ModelId >= 0 ? ModelManager::GetStaticModel(component.ModelId) : nullptr)
+                {
+                    for (UINT m = 0; m < model->GetMeshCount(); ++m)
+                    {
+                        const auto& mesh = model->GetMeshData(m);
+                        listMesh(mesh.MeshName, mesh.MaterialName, mesh.SemanticKey, mesh.SemanticFlags);
+                    }
+                }
+            }
+            ImGui::TreePop();
+        }
+        ImGui::EndDisabled();
+    }
+
+    ImGui::SeparatorText("ライブトゥーンのテクスチャ");
+    ImGui::TextWrapped("トゥーン系クラス（髪・服・肌・トゥーン）に適用。パスを貼り付けて Enter。");
+    changed |= DrawLiveToonPathInput("Def テクスチャ", material.LiveToonDefPath);
+    ImGui::SetItemTooltip("R = 影しきい値の補正（0.5 で変化なし）、G = 境界のぼかし倍率、B = 質感ランプのマスク");
+    changed |= ImGui::SliderFloat("Def の強さ", &material.LiveToonDefStrength, 0.0f, 2.0f);
+    changed |= DrawLiveToonPathInput("顔陰影反転", material.LiveToonFacePath);
+    ImGui::SetItemTooltip("R = 影側でも光を残す領域（頬など）");
+    changed |= ImGui::SliderFloat("顔陰影反転の強さ", &material.LiveToonFaceStrength, 0.0f, 1.0f);
+    changed |= DrawLiveToonPathInput("質感ランプ", material.LiveToonTextureRampPath);
+    ImGui::SetItemTooltip("横軸 = 視線角度（左 = 正面、右 = 縁）。オーロラ素材・偏光塗料風の色変化");
+    changed |= ImGui::SliderFloat("質感ランプ（乗算）", &material.LiveToonTextureRampMultiply, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("質感ランプ（加算）", &material.LiveToonTextureRampAdd, 0.0f, 1.0f);
 
     if (changed)
     {
@@ -25265,6 +25493,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
     }
 }
+
 
 
 ===== FILE: source\editor\editormaterialassets.cpp =====
@@ -30765,6 +30994,7 @@ namespace EditorSceneNavigation
 
 ===== FILE: source\editor\editorsettings.cpp =====
 #include "pch.h"
+#include "livetoonstyle.h"
 #include "editorworkspace.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
@@ -32155,6 +32385,35 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
     field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);
     field("editor.ShowLightDebug", m_ShowLightDebug, 0, 1);
+    // ライブ用トゥーンスタイル（シーン全体）
+    auto& liveToon = LiveToonStyle::Get();
+    field("livetoon.Blend", liveToon.Blend, 0.0, 1.0);
+    field("livetoon.ShadowTintStrength", liveToon.ShadowTintStrength, 0.0, 1.0);
+    field("livetoon.AdditiveSoftness", liveToon.AdditiveSoftness, 0.0, 1.0);
+    field("livetoon.AdditiveGain", liveToon.AdditiveGain, 0.0, 3.0);
+    field("livetoon.ShadowTintR", liveToon.ShadowTint.x, 0.0, 1.0);
+    field("livetoon.ShadowTintG", liveToon.ShadowTint.y, 0.0, 1.0);
+    field("livetoon.ShadowTintB", liveToon.ShadowTint.z, 0.0, 1.0);
+    field("livetoon.SkinWarmth", liveToon.SkinWarmth, 0.0, 1.0);
+    field("livetoon.RimSoft", liveToon.RimSoft, 0.0, 2.0);
+    field("livetoon.RimHard", liveToon.RimHard, 0.0, 2.0);
+    field("livetoon.RimWidth", liveToon.RimWidth, 0.02, 1.0);
+    field("livetoon.RimLightTint", liveToon.RimLightTint, 0.0, 1.0);
+    field("livetoon.RampSpecular", liveToon.RampSpecular, 0.0, 2.0);
+    field("livetoon.HairAngelRing", liveToon.HairAngelRing, 0.0, 2.0);
+    field("livetoon.EnvSpecular", liveToon.EnvSpecular, 0.0, 2.0);
+    field("livetoon.CastShadowDensity", liveToon.CastShadowDensity, 0.0, 1.0);
+    field("livetoon.ShadowRampStrength", liveToon.ShadowRampStrength, 0.0, 1.0);
+    // 陰影ランプのパス（文字列。数値用の EditorConfig::Value は使えないので直接扱う）
+    if (output)
+    {
+        *output << "livetoon.ShadowRampPath=" << liveToon.ShadowRampPath << '\n';
+    }
+    else if (key == "livetoon.ShadowRampPath")
+    {
+        liveToon.ShadowRampPath = value;
+        matched = true;
+    }
     field("editor.gizmo", m_GizmoOperation, 0, 3);
     field("editor.log_auto_scroll", m_LogAutoScroll, 0, 1);
     // 自動品質調整（可変レイトレーシング / 可変GI など）の設定
@@ -32934,6 +33193,7 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
+
 
 ===== FILE: source\editor\editorshell.cpp =====
 #include "pch.h"
@@ -58202,7 +58462,16 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
             material->Get(AI_MATKEY_OPACITY, opacity);
         }
-        const float materialPartId = ResolveMaterialPartId(m_AiScene, mesh);
+        // 名前は上で取得済み。部位 ID と意味フラグを 1 回の走査で求める（マテリアル名の再取得を省く）。
+        float materialPartId = 10.0f;
+        if (mesh->mMaterialIndex < m_AiScene->mNumMaterials)
+        {
+            MeshSemanticInfo semantic =
+                ResolveMeshSemantics(materialName.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex);
+            materialPartId = semantic.MaterialPartId;
+            m_Meshes[m].SemanticFlags = semantic.Flags;
+            m_Meshes[m].SemanticKey = std::move(semantic.Key);
+        }
         m_Meshes[m].MaterialName = materialName.C_Str();
         m_Meshes[m].MaterialPartId = materialPartId;
         m_Meshes[m].DefaultToonOutlineEnabled = materialPartId != 3.0f;
@@ -59141,6 +59410,7 @@ void AnimationModelResource::Uninit()
     m_VmdAnimations.clear();
 }
 
+
 ===== FILE: source\models\animationmodel.h =====
 #pragma once
 
@@ -59321,6 +59591,8 @@ struct MeshData
     string MeshName{};
     string MaterialName{};
     float MaterialPartId = 10.0f;
+    uint32_t SemanticFlags = 0; // MeshSemanticFlags（materialpartresolver.h）。読み込み時に 1 回だけ計算。
+    string SemanticKey{};       // 小文字化した "material mesh"。メカクレの名前フィルター用。
     bool DefaultToonOutlineEnabled = true;
 
     const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
@@ -59674,6 +59946,7 @@ class AnimationModelResource
         return !m_PmxRigidBodies.empty();
     }
 };
+
 
 ===== FILE: source\models\animationmorph.cpp =====
 #include "pch.h"
@@ -64582,10 +64855,42 @@ inline bool Solve(Pose& pose, const Rig& rig, State& state, aiVector3D target,
 #include "material.h"
 #include "scene.h"
 #include <algorithm>
-#include <cctype>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
+
+// ---------------------------------------------------------------------------------------------
+// メッシュ名 / マテリアル名の分類（PMX / VRM / FBX / glTF 共通）
+//
+// 最適化：
+//  - 以前は ResolveMaterialPartId の中で AI_MATKEY_NAME を再取得し、「material + " " + mesh」の
+//    文字列を毎回組み立て直してトークン表を最大 8 回走査していた。
+//  - ここでは読み込み側ですでに取得済みの名前を受け取り、ASCII だけを小文字化した 1 本のキー
+//    （MeshSemanticKey）を 1 回だけ作る。部位 ID とメカクレ用の意味フラグを同じ走査で求め、
+//    キーは MeshData に保存して毎フレームの名前フィルター判定でも再利用する。
+//  - tolower はロケール依存で UTF-8 の多バイト文字を壊すことがあるため、ASCII だけを変換する。
+//    これで「前髪」「目」「眉」などの日本語トークンも安全に照合できる。
+// ---------------------------------------------------------------------------------------------
+
+enum MeshSemanticFlags : uint32_t
+{
+    MeshSemantic_None = 0,
+    MeshSemantic_Hair = 1u << 0,
+    MeshSemantic_Bangs = 1u << 1,         // 前髪
+    MeshSemantic_Eye = 1u << 2,           // 白目 / 瞳 / 虹彩
+    MeshSemantic_EyeHighlight = 1u << 3,  // 目のハイライト
+    MeshSemantic_Brow = 1u << 4,          // 眉
+    MeshSemantic_Lash = 1u << 5,          // まつ毛 / アイライン
+    MeshSemantic_Face = 1u << 6,
+    MeshSemantic_Skin = 1u << 7,
+    MeshSemantic_Cloth = 1u << 8,
+    MeshSemantic_Accessory = 1u << 9,
+};
+
+// メカクレで髪越しに透かす既定の対象。
+inline constexpr uint32_t kMekakureDefaultTargetMask =
+    MeshSemantic_Eye | MeshSemantic_EyeHighlight | MeshSemantic_Brow | MeshSemantic_Lash;
 
 inline const vector<string_view> kMaterialPartWearMaterialTokens = {"wear", "other"};
 
@@ -64601,19 +64906,43 @@ inline const vector<string_view> kMaterialPartSkinTokens = {"skin", "body", "fac
 
 inline const vector<string_view> kMaterialPartClothTokens = {"cloth", "dress", "shoe", "socks", "skirt"};
 
+// 意味フラグ用のトークン（部位 ID の判定とは独立。部位 ID の結果は従来と完全に同じ）。
+// VRoid 系 VRM（F00_000_00_FaceBrow_00_FACE など）、MMD 系 PMX（前髪 / 目 / 眉 / まつ毛）、
+// 一般的な FBX（Eye_L, Brow, Lashes, Bangs）を想定。
+inline const vector<string_view> kSemanticBangsTokens = {"bang", "fringe", "maegami", "front_hair", "fronthair",
+                                                         "hair_front", "hairfront", "\xE5\x89\x8D\xE9\xAB\xAA" /*前髪*/};
+inline const vector<string_view> kSemanticHairTokens = {"hair", "kami", "\xE9\xAB\xAA" /*髪*/, "\xE3\x81\x8B\xE3\x81\xBF" /*かみ*/};
+inline const vector<string_view> kSemanticHighlightTokens = {
+    "highlight", "eye_hl", "eyehl", "hilight", "\xE3\x83\x8F\xE3\x82\xA4\xE3\x83\xA9\xE3\x82\xA4\xE3\x83\x88" /*ハイライト*/};
+inline const vector<string_view> kSemanticLashTokens = {
+    "lash",       "eyeline",    "eye_line", "matsuge",
+    "\xE3\x81\xBE\xE3\x81\xA4\xE6\xAF\x9B" /*まつ毛*/, "\xE3\x81\xBE\xE3\x81\xA4\xE3\x81\x92" /*まつげ*/,
+    "\xE7\x9D\xAB" /*睫*/, "\xE4\xBA\x8C\xE9\x87\x8D" /*二重*/};
+inline const vector<string_view> kSemanticBrowTokens = {"brow", "mayu", "\xE7\x9C\x89" /*眉*/};
+inline const vector<string_view> kSemanticEyeTokens = {
+    "eye",  "iris", "pupil", "hitomi", "shirome",
+    "\xE7\x9E\xB3" /*瞳*/, "\xE7\x99\xBD\xE7\x9B\xAE" /*白目*/, "\xE7\x9B\xAE" /*目*/};
+inline const vector<string_view> kSemanticFaceTokens = {"face", "head", "kao", "\xE9\xA1\x94" /*顔*/};
+inline const vector<string_view> kSemanticSkinTokens = {"skin", "body", "hada", "\xE8\x82\x8C" /*肌*/};
+
 inline string MaterialPartToLowerString(string value)
 {
-    transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(tolower(c));
-    });
+    // ASCII だけを小文字化する（UTF-8 の後続バイトを壊さない）。
+    for (char& c : value)
+    {
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
     return value;
 }
 
-inline bool MaterialPartContainsAnyToken(const string& value, const vector<string_view>& tokens)
+inline bool MaterialPartContainsAnyToken(string_view value, const vector<string_view>& tokens)
 {
     for (string_view token : tokens)
     {
-        if (value.find(token) != string::npos)
+        if (value.find(token) != string_view::npos)
         {
             return true;
         }
@@ -64621,52 +64950,152 @@ inline bool MaterialPartContainsAnyToken(const string& value, const vector<strin
     return false;
 }
 
+struct MeshSemanticInfo
+{
+    float MaterialPartId = 10.0f;
+    uint32_t Flags = MeshSemantic_None;
+    string Key; // 小文字化した "material mesh"。名前フィルター用に保存する。
+};
+
+// 取得済みの名前から部位 ID と意味フラグを 1 回で求める。
+inline MeshSemanticInfo ResolveMeshSemantics(string_view materialNameRaw, string_view meshNameRaw,
+                                             unsigned int materialIndex)
+{
+    MeshSemanticInfo info;
+    info.Key.reserve(materialNameRaw.size() + meshNameRaw.size() + 1);
+    info.Key.append(materialNameRaw);
+    info.Key.push_back(' ');
+    info.Key.append(meshNameRaw);
+    info.Key = MaterialPartToLowerString(std::move(info.Key));
+
+    const string_view key = info.Key;
+    const string_view materialName = key.substr(0, materialNameRaw.size());
+    const string_view meshName = key.substr(materialNameRaw.size() + 1);
+
+    // --- 部位 ID（従来の ResolveMaterialPartId と同じ優先順位・同じ結果） ---
+    const bool hairToken = MaterialPartContainsAnyToken(key, kMaterialPartHairTokens);
+    const bool skinToken = MaterialPartContainsAnyToken(key, kMaterialPartSkinTokens);
+    if (MaterialPartContainsAnyToken(materialName, kMaterialPartWearMaterialTokens) ||
+        MaterialPartContainsAnyToken(meshName, kMaterialPartWearMeshTokens) ||
+        (materialName.find("face_alpha") != string_view::npos && meshName.find("other") != string_view::npos) ||
+        MaterialPartContainsAnyToken(key, kMaterialPartAccessoryTokens))
+    {
+        info.MaterialPartId = 2.0f;
+        info.Flags |= MeshSemantic_Accessory;
+    }
+    else if (hairToken)
+    {
+        info.MaterialPartId = 1.0f;
+    }
+    else if (skinToken)
+    {
+        info.MaterialPartId = 3.0f;
+    }
+    else if (MaterialPartContainsAnyToken(key, kMaterialPartClothTokens))
+    {
+        info.MaterialPartId = 2.0f;
+        info.Flags |= MeshSemantic_Cloth;
+    }
+    else if (materialIndex == 0)
+    {
+        info.MaterialPartId = 1.0f;
+    }
+    else if (materialIndex == 2)
+    {
+        info.MaterialPartId = 3.0f;
+    }
+    else
+    {
+        info.MaterialPartId = 2.0f;
+    }
+
+    // --- 意味フラグ（目・眉・まつ毛は髪より優先して判定） ---
+    const bool highlight = MaterialPartContainsAnyToken(key, kSemanticHighlightTokens);
+    const bool lash = MaterialPartContainsAnyToken(key, kSemanticLashTokens);
+    const bool brow = MaterialPartContainsAnyToken(key, kSemanticBrowTokens);
+    const bool eye = MaterialPartContainsAnyToken(key, kSemanticEyeTokens);
+    if (highlight && (eye || key.find("hl") != string_view::npos))
+    {
+        info.Flags |= MeshSemantic_EyeHighlight;
+    }
+    if (lash)
+    {
+        info.Flags |= MeshSemantic_Lash;
+    }
+    if (brow)
+    {
+        info.Flags |= MeshSemantic_Brow;
+    }
+    if (eye && !lash && !brow)
+    {
+        info.Flags |= MeshSemantic_Eye;
+    }
+    const bool facialPart = (info.Flags & kMekakureDefaultTargetMask) != 0;
+    if (!facialPart)
+    {
+        if (MaterialPartContainsAnyToken(key, kSemanticBangsTokens))
+        {
+            info.Flags |= MeshSemantic_Hair | MeshSemantic_Bangs;
+        }
+        else if (MaterialPartContainsAnyToken(key, kSemanticHairTokens))
+        {
+            info.Flags |= MeshSemantic_Hair;
+        }
+        if (MaterialPartContainsAnyToken(key, kSemanticFaceTokens))
+        {
+            info.Flags |= MeshSemantic_Face;
+        }
+        if (MaterialPartContainsAnyToken(key, kSemanticSkinTokens))
+        {
+            info.Flags |= MeshSemantic_Skin;
+        }
+    }
+    return info;
+}
+
+// 互換 API（既存呼び出し用）。新規コードは ResolveMeshSemantics を使う。
 inline float ResolveMaterialPartId(const aiScene* scene, const aiMesh* mesh)
 {
     if (!scene || !mesh || mesh->mMaterialIndex >= scene->mNumMaterials)
     {
         return 10.0f;
     }
-
-    const aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
     aiString name;
-    material->Get(AI_MATKEY_NAME, name);
-    const string materialName = MaterialPartToLowerString(name.C_Str());
-    const string meshName = MaterialPartToLowerString(mesh->mName.C_Str());
-    const string lowerName = materialName + " " + meshName;
+    scene->mMaterials[mesh->mMaterialIndex]->Get(AI_MATKEY_NAME, name);
+    return ResolveMeshSemantics(name.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex).MaterialPartId;
+}
 
-    if (MaterialPartContainsAnyToken(materialName, kMaterialPartWearMaterialTokens) ||
-        MaterialPartContainsAnyToken(meshName, kMaterialPartWearMeshTokens) ||
-        (materialName.find("face_alpha") != string::npos && meshName.find("other") != string::npos) ||
-        MaterialPartContainsAnyToken(lowerName, kMaterialPartAccessoryTokens))
+// カンマ区切りの名前フィルター（小文字化済みキーに対して部分一致）。空なら false。
+inline bool MeshSemanticKeyMatchesFilter(string_view key, string_view filter)
+{
+    size_t begin = 0;
+    while (begin < filter.size())
     {
-        return 2.0f;
+        size_t end = filter.find(',', begin);
+        if (end == string_view::npos)
+        {
+            end = filter.size();
+        }
+        string_view token = filter.substr(begin, end - begin);
+        while (!token.empty() && (token.front() == ' ' || token.front() == '\t'))
+        {
+            token.remove_prefix(1);
+        }
+        while (!token.empty() && (token.back() == ' ' || token.back() == '\t'))
+        {
+            token.remove_suffix(1);
+        }
+        if (!token.empty())
+        {
+            const string lowered = MaterialPartToLowerString(string(token));
+            if (key.find(lowered) != string_view::npos)
+            {
+                return true;
+            }
+        }
+        begin = end + 1;
     }
-
-    if (MaterialPartContainsAnyToken(lowerName, kMaterialPartHairTokens))
-    {
-        return 1.0f;
-    }
-
-    if (MaterialPartContainsAnyToken(lowerName, kMaterialPartSkinTokens))
-    {
-        return 3.0f;
-    }
-
-    if (MaterialPartContainsAnyToken(lowerName, kMaterialPartClothTokens))
-    {
-        return 2.0f;
-    }
-
-    if (mesh->mMaterialIndex == 0)
-    {
-        return 1.0f;
-    }
-    if (mesh->mMaterialIndex == 2)
-    {
-        return 3.0f;
-    }
-    return 2.0f;
+    return false;
 }
 
 ===== FILE: source\models\modelimportutils.h =====
@@ -68393,6 +68822,12 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
                                           static_cast<uint32_t>(mesh.MaterialIndex)) == materialIds->end()) return false;
             mesh.MaterialPartId = entry["part"].asFloat();
             mesh.AppliedMaterialPartId = mesh.MaterialPartId;
+            {
+                MeshSemanticInfo semantic = ResolveMeshSemantics(mesh.MaterialName, mesh.MeshName,
+                                                                 static_cast<unsigned int>(mesh.MaterialIndex));
+                mesh.SemanticFlags = semantic.Flags;
+                mesh.SemanticKey = std::move(semantic.Key);
+            }
             mesh.VirtualGeometrySettings = settings;
             auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>(*mesh.VirtualGeometryLODs[0]);
             runtime->ImportSettings = settings;
@@ -68664,7 +69099,13 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
             material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
             material->Get(AI_MATKEY_OPACITY, opacity);
         }
-        const float materialPartId = ResolveMaterialPartId(scene, mesh);
+        // 名前は上で取得済み。部位 ID と意味フラグを 1 回の走査で求める（マテリアル名の再取得を省く）。
+        MeshSemanticInfo semantic{};
+        if (mesh->mMaterialIndex < scene->mNumMaterials)
+        {
+            semantic = ResolveMeshSemantics(materialName.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex);
+        }
+        const float materialPartId = semantic.MaterialPartId;
         const XMFLOAT4 meshDiffuse(diffuse.r, diffuse.g, diffuse.b, materialPartId);
 
         vector<StaticModelVertex> vertices(mesh->mNumVertices);
@@ -68763,6 +69204,8 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         meshData.MaterialName = materialName.C_Str();
         meshData.MaterialPartId = materialPartId;
         meshData.AppliedMaterialPartId = meshData.MaterialPartId;
+        meshData.SemanticFlags = semantic.Flags;
+        meshData.SemanticKey = std::move(semantic.Key);
         meshData.DefaultToonOutlineEnabled = materialPartId != 3.0f;
         meshData.CpuVertices = vertices;
         meshData.CpuIndices.assign(indices.begin(), indices.end());
@@ -69022,6 +69465,7 @@ void StaticModelResource::RefreshResourceMap(const char* fileName, bool isConver
     }
 }
 
+
 ===== FILE: source\models\staticmodel.h =====
 #pragma once
 #include "main.h"
@@ -69083,6 +69527,8 @@ struct StaticMeshData
     string MaterialName{};
     float MaterialPartId = 10.0f;
     float AppliedMaterialPartId = 10.0f;
+    uint32_t SemanticFlags = 0; // MeshSemanticFlags（materialpartresolver.h）。読み込み時に 1 回だけ計算。
+    string SemanticKey{};       // 小文字化した "material mesh"。メカクレの名前フィルター用。
     bool DefaultToonOutlineEnabled = true;
     vector<StaticModelVertex> CpuVertices{};
     array<Meshlets::Asset, LodCount> MeshletLODs{};
@@ -69242,6 +69688,7 @@ class StaticModelResource
     vector<uint64_t> m_VGDependencyHashes;
     vector<std::filesystem::file_time_type> m_VGDependencyTimes;
 };
+
 
 ===== FILE: source\models\toonoutlinebuilder.h =====
 #pragma once
@@ -92624,6 +93071,7 @@ namespace KtxBasis
 
 ===== FILE: source\rendering\lightingresources.cpp =====
 #include "pch.h"
+#include "livetoonstyle.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
 #include "envflags.h"
@@ -92768,6 +93216,7 @@ namespace
         XMFLOAT4 SkySunDirection{};
         XMFLOAT4 SkyParameters{};
         XMFLOAT4 LightIesProfiles[RendererState::g_kMAX_SHADER_LIGHTS]{};
+        XMFLOAT4 LiveToonStyle[5]{}; // livetoonstyle.h（HLSL: LiveToonStyle0..3）
     };
 
     static_assert(sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
@@ -94037,6 +94486,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
     }
     const RuntimeLightState& runtimeLight = *runtimeLightSelection;
     LightConstants constants{};
+    LiveToonStyle::Write(constants.LiveToonStyle);
     Raytracing::BeginLightList();
     WriteAtmosphereConstants(constants);
     for (UINT i = 0; i < RendererState::g_kMAX_SHADER_LIGHTS; ++i)
@@ -94795,6 +95245,7 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
     return true;
 }
 
+
 ===== FILE: source\rendering\lightingresources.h =====
 #pragma once
 #include "rendererstate.h"
@@ -95096,6 +95547,118 @@ class LightInstanceBuilder
     static D3D12_GPU_VIRTUAL_ADDRESS GetTileIndexAddress(UINT frameIndex);
     static D3D12_GPU_VIRTUAL_ADDRESS GetVolumetricIndexAddress(UINT frameIndex);
 };
+
+===== FILE: source\rendering\livetoonstyle.h =====
+#pragma once
+#include <string>
+#include <unordered_map>
+#include "texturemanager.h"
+#include "rendererstate.h"
+
+// ---------------------------------------------------------------------------------------------
+// ライブ用トゥーンスタイル（学マスのライブシーン風）
+//
+// CEDEC2024「学園アイドルマスター」講演で紹介された構成を、このエンジンのトゥーン経路に合わせて
+// 再構成したもの（実装は独自。パラメーター名・初期値は本エンジン用の目安）：
+//   1. トゥーン陰影用メインライト  … 平行光源だけがセル陰影の境界を作る。影領域は「乗算色」で制御
+//   2. 加算ライト                  … 点 / スポット / 矩形は陰影の境界を作らず、距離減衰した明るさだけを足す
+//   3. リムライト                  … ふわっと広いリム + 輪郭を締める強いリム（ライト色を拾う）
+//   4. スペキュラ（ランプ）         … 段のついたハイライト。髪は天使の輪（異方性バンド）
+//   5. 環境スペキュラ               … IBL（環境マップ）からの縁の映り込み
+//   6. 落ち影の濃さ                 … セルフシャドウ / 落ち影の濃さを陰影と独立に調整
+//
+// Deferred のフルスクリーンパスは他エンティティのマテリアルを参照できないため、これはシーン全体の
+// 設定として LightParams（b1）の末尾 4 個の float4 で渡す（ルートシグネチャは変更しない）。
+// ---------------------------------------------------------------------------------------------
+struct LiveToonStyleSettings
+{
+    float Blend = 1.0f;              // 0 = 従来のトゥーン、1 = ライブスタイル
+    float ShadowTintStrength = 1.0f; // 影の乗算色の効き
+    float AdditiveSoftness = 0.65f;  // 加算ライトの回り込み（大きいほど面の向きに依存しない）
+    float AdditiveGain = 1.0f;       // 加算ライトの強さ
+
+    XMFLOAT3 ShadowTint = {0.78f, 0.72f, 0.90f}; // 影の乗算色（わずかに青紫へ寄せると映える）
+    float SkinWarmth = 0.65f;                    // 肌の影を暖色へ寄せる量（血色）
+
+    float RimSoft = 0.35f;      // ふわっとしたリム
+    float RimHard = 0.55f;      // 輪郭を締める強いリム（逆光・ステージライト）
+    float RimWidth = 0.38f;     // リム幅
+    float RimLightTint = 0.75f; // リムがライト色を拾う量
+
+    float RampSpecular = 0.30f;      // 段付きスペキュラ（ランプ）
+    float HairAngelRing = 0.40f;     // 髪の天使の輪
+    float EnvSpecular = 0.20f;       // 環境マップの縁の映り込み
+    float CastShadowDensity = 0.85f; // 落ち影の濃さ
+
+    // 陰影ランプ（シーン全体・1 枚）。横軸 = 影(左)→光(右)、上半分 = 肌、下半分 = 肌以外。
+    std::string ShadowRampPath;
+    float ShadowRampStrength = 1.0f;
+};
+
+// マテリアル・ランプ用のテクスチャ解決。パス → ディスクリプタ番号をキャッシュし、
+// 毎フレームの定数構築では文字列マップの検索だけで済ませる。
+namespace LiveToonTextures
+{
+    inline int ResolveDescriptor(const std::string& path)
+    {
+        if (path.empty())
+        {
+            return -1;
+        }
+        static std::unordered_map<std::string, int> cache;
+        auto it = cache.find(path);
+        if (it != cache.end())
+        {
+            return it->second;
+        }
+        // LoadTexture(const char*) は UTF-8 パスを受け取り、読み込み済みなら同じ番号を返す。
+        int descriptor = TextureManager::LoadTexture(path.c_str());
+        if (descriptor == TextureManager::GetErrorTextureIndex())
+        {
+            descriptor = -1;
+        }
+        cache.emplace(path, descriptor);
+        return descriptor;
+    }
+
+    // シェーダーのテクスチャ表（t0 space1 / t0 space5）内の番号。無効なら UINT32_MAX。
+    inline uint32_t ResolveHeapOffset(const std::string& path)
+    {
+        const int descriptor = ResolveDescriptor(path);
+        if (descriptor < static_cast<int>(RendererState::g_kTEXTURE_SRV_START_INDEX))
+        {
+            return UINT32_MAX;
+        }
+        const uint32_t offset = static_cast<uint32_t>(descriptor) - RendererState::g_kTEXTURE_SRV_START_INDEX;
+        return offset < 512u ? offset : UINT32_MAX;
+    }
+} // namespace LiveToonTextures
+
+namespace LiveToonStyle
+{
+    inline LiveToonStyleSettings& Get()
+    {
+        static LiveToonStyleSettings settings{};
+        return settings;
+    }
+
+    inline void Reset()
+    {
+        Get() = LiveToonStyleSettings{};
+    }
+
+    // LightParams.LiveToonStyle0..4 と同じ並び。
+    inline void Write(XMFLOAT4 (&out)[5])
+    {
+        const LiveToonStyleSettings& s = Get();
+        out[0] = {s.Blend, s.ShadowTintStrength, s.AdditiveSoftness, s.AdditiveGain};
+        out[1] = {s.ShadowTint.x, s.ShadowTint.y, s.ShadowTint.z, s.SkinWarmth};
+        out[2] = {s.RimSoft, s.RimHard, s.RimWidth, s.RimLightTint};
+        out[3] = {s.RampSpecular, s.HairAngelRing, s.EnvSpecular, s.CastShadowDensity};
+        const uint32_t ramp = LiveToonTextures::ResolveHeapOffset(s.ShadowRampPath);
+        out[4] = {ramp == UINT32_MAX ? -1.0f : static_cast<float>(ramp), s.ShadowRampStrength, 0.0f, 0.0f};
+    }
+} // namespace LiveToonStyle
 
 ===== FILE: source\rendering\localheightfog.h =====
 #pragma once
@@ -98856,6 +99419,7 @@ class LumenSurfaceCache
 
 ===== FILE: source\rendering\materialbindings.cpp =====
 #include "pch.h"
+#include "livetoonstyle.h"
 #include "transmittanceshadows.h"
 #include "materialbindings.h"
 #include "graphicsdevice.h"
@@ -98937,7 +99501,11 @@ namespace
         XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR、AO、発光、サーフェスとカリングのフラグ。
         XMFLOAT4 AssetParallax{0, 32, -1, 0};
         std::array<ProcStudio::TextureGpuParams, 3> AssetNoise{};
+        XMUINT4 LiveToonTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // Def、顔陰影反転、質感ランプ
+        XMFLOAT4 LiveToonMaterialParams{1, 1, 1, 0};
     };
+    static_assert(offsetof(PBRConstants, LiveToonTextures) == 190 * sizeof(XMFLOAT4));
+    static_assert(sizeof(PBRConstants) <= GpuSceneMaterialParameterVectors * sizeof(XMFLOAT4));
 
     static_assert(offsetof(PBRConstants, AssetNoise) == 151 * sizeof(XMFLOAT4));
     static_assert(offsetof(PBRConstants, AssetTextures) == 149 * sizeof(XMFLOAT4));
@@ -99048,6 +99616,11 @@ namespace
                 // EncodeShadingModel）：ビット4～6がモデル、8～15が強度。
                 ((min(material.ShadingModel, 7u) & 7u) << 4) |
                 (static_cast<uint32_t>(clamp(material.ShadingStrength, 0.0f, 1.0f) * 255.0f + 0.5f) << 8)};
+        constants.LiveToonTextures = {LiveToonTextures::ResolveHeapOffset(material.LiveToonDefPath),
+                                      LiveToonTextures::ResolveHeapOffset(material.LiveToonFacePath),
+                                      LiveToonTextures::ResolveHeapOffset(material.LiveToonTextureRampPath), 0u};
+        constants.LiveToonMaterialParams = {material.LiveToonDefStrength, material.LiveToonFaceStrength,
+                                            material.LiveToonTextureRampMultiply, material.LiveToonTextureRampAdd};
         return constants;
     }
 
@@ -99229,6 +99802,7 @@ bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3
     const uint32_t heightIndex = offset(material.HeightTextureID);
     constants.AssetParallax.z = heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f;
     constants.AssetParallax.w = static_cast<float>(textureBase);
+    constants.LiveToonTextures = {UINT32_MAX, UINT32_MAX, UINT32_MAX, 0u}; // プレビューはテクスチャ基点が異なる
     uint8_t* mapped = nullptr;
     if (FAILED(buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))))
     {
@@ -99349,6 +99923,7 @@ void MaterialBindings::UpdateDeferredLightingMaterial()
         memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
     }
 }
+
 
 ===== FILE: source\rendering\materialbindings.h =====
 #pragma once
@@ -119633,7 +120208,8 @@ class RendererState
     static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
     static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 10 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 +
                                                      16 + 3 + g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
-                                                     g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2 + g_kMAX_SHADER_LIGHTS;
+                                                     g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2 + g_kMAX_SHADER_LIGHTS +
+                                                     5 /* LiveToonStyle */;
     static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
     // 現在のマテリアルは15個のパーツ上書きを含み、2048バイトを超える。
     static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 768 + 255) & ~255;
@@ -119787,6 +120363,7 @@ class RendererState
     static UINT m_DynamicVertexOffset;
     static UINT m_TransientCbSlot;
 };
+
 
 ===== FILE: source\rendering\renderfeature.h =====
 #pragma once
@@ -123300,6 +123877,7 @@ namespace SceneDepth
 #include "screenspaceeffects.h"
 #include "graphicslog.h"
 #include "gpumemorybudget.h"
+#include "mekakure.h"
 
 namespace
 {
@@ -123727,13 +124305,22 @@ void ScenePasses::BeginHdrTransparentPass()
 
 void ScenePasses::EndHdrTransparentPass()
 {
-    Raytracing::EndGlassRead(m_CommandList.Get());
     if (TransparencyEffects::IsOitPassActive())
     {
         TransparencyEffects::EndTransparentPass(m_CommandList.Get(), GetRenderTargetRtvHandle(RenderTargetType::Scene),
                                                 m_Viewport, m_ScissorRect);
         RenderFrame::SetDescriptorHeap();
     }
+    // メカクレ：半透明（OIT の合成を含む）の後、ガラス用のスキン頂点読み取りを終える前に重ねる。
+    {
+        RenderProfiler::ScopedEvent profile("Mekakure", m_CommandList.Get());
+        const UINT depthIndex = m_UseLowResDepth ? g_kLOW_DEPTH_READ_DSV_INDEX : g_kFULL_DEPTH_READ_DSV_INDEX;
+        CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), depthIndex,
+                                          m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
+        Mekakure::Render(m_CommandList.Get(), GetRenderTargetRtvHandle(RenderTargetType::Scene), dsv, m_Viewport,
+                         m_ScissorRect);
+    }
+    Raytracing::EndGlassRead(m_CommandList.Get());
     auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
         depth,
@@ -124173,6 +124760,7 @@ void ScenePasses::EndVelocityBuffer()
                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
+
 
 ===== FILE: source\rendering\scenepasses.h =====
 #pragma once
@@ -132471,6 +133059,25 @@ namespace SceneFile
         a("meshOutlineOverrides", c.ToonMeshOutlineOverrides);
         a("meshOutlineWidthScales", c.ToonMeshOutlineWidthScales);
         a("meshShadingOverrides", c.MeshShadingOverrides);
+        a("mekakureEnabled", c.MekakureEnabled);
+        a("mekakureOpacity", c.MekakureOpacity);
+        a("mekakureDepth", c.MekakureDepth);
+        a("mekakureFadeStart", c.MekakureFadeStart);
+        a("mekakureFadeEnd", c.MekakureFadeEnd);
+        a("mekakureTargetMask", c.MekakureTargetMask);
+        a("mekakureInclude", c.MekakureIncludeNames);
+        a("mekakureExclude", c.MekakureExcludeNames);
+        a("mekakureMaskSource", c.MekakureMaskSource);
+        a("mekakureMaskPath", c.MekakureMaskPath);
+        a("mekakureMaskStrength", c.MekakureMaskStrength);
+        a("mekakureMaskInvert", c.MekakureMaskInvert);
+        a("liveToonDefPath", c.LiveToonDefPath);
+        a("liveToonDefStrength", c.LiveToonDefStrength);
+        a("liveToonFacePath", c.LiveToonFacePath);
+        a("liveToonFaceStrength", c.LiveToonFaceStrength);
+        a("liveToonTextureRampPath", c.LiveToonTextureRampPath);
+        a("liveToonTextureRampMultiply", c.LiveToonTextureRampMultiply);
+        a("liveToonTextureRampAdd", c.LiveToonTextureRampAdd);
         a("alpha", c.Alpha);
         a("shadowMode", c.ShadowMode);
         a("shadowCutoff", c.ShadowCutoff);
@@ -132744,6 +133351,7 @@ namespace SceneFile
         });
     }
 } // 名前空間 SceneFile の終わり。
+
 
 
 ===== FILE: source\scene\simulationconfiguration.cpp =====
@@ -137101,6 +137709,21 @@ class MaterialSystem : public SystemBase
     static bool SetPBRParameters(EntityID entity, float metallic, float roughness, float fresnel);
 };
 
+===== FILE: source\systems\mekakure.h =====
+#pragma once
+#include <d3d12.h>
+
+// メカクレ（前髪越しに目・眉を透かす）。ScenePasses::EndHdrTransparentPass から、半透明（OIT の合成を含む）を
+// 描き終えた直後に呼ぶ。実装は modelsystem.cpp（モデルの描画データを共有するため）。
+//  1. 髪マスク：メカクレ対象キャラの髪を R8 マスクへ描く（髪テクスチャのアルファ / 専用マスク）
+//  2. 目の重ね描き：目・眉・まつ毛を深度だけ手前へずらして、マスク × 不透明度でシーンへ合成
+namespace Mekakure
+{
+    void Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv,
+                D3D12_CPU_DESCRIPTOR_HANDLE depthDsv, const D3D12_VIEWPORT& viewport, const D3D12_RECT& scissor);
+    void Release();
+}
+
 ===== FILE: source\systems\modelsystem.cpp =====
 #include "pch.h"
 #include "noisecachebindings.h"
@@ -137137,6 +137760,10 @@ class MaterialSystem : public SystemBase
 #include "lightingresources.h"
 #include "gpuobjectculling.h"
 #include "renderconfiguration.h"
+#include "materialpartresolver.h"
+#include "mekakure.h"
+#include "livetoonstyle.h"
+#include <type_traits>
 
 static const MaterialComponent& DefaultMaterial()
 {
@@ -137301,6 +137928,490 @@ const char* GetModelPsPath(EntityID entity)
         }
     }
     return "shader/hlsl/build/modelshaderPS.cso";
+}
+
+// ---------------------------------------------------------------------------------------------
+// メカクレ（前髪越しに目・眉を透かす）
+// HDR 半透明パスの最後に、対象メッシュ（読み込み時に分類した目 / 眉 / まつ毛）だけを
+// 「深度をカメラ側へ寄せた」状態でアルファ合成する（MekakureVS / MekakurePS）。
+//  - 深度は書かない・ステンシル不要・ルートシグネチャ変更なし
+//  - 対象メッシュの判定は読み込み時の SemanticFlags（ビット演算のみ）。名前フィルターが空なら
+//    毎フレームの文字列処理は発生しない
+// ---------------------------------------------------------------------------------------------
+template <typename TMeshData> static bool IsMekakureTargetMesh(const MaterialComponent& material, const TMeshData& mesh)
+{
+    if (!material.MekakureExcludeNames.empty() &&
+        MeshSemanticKeyMatchesFilter(mesh.SemanticKey, material.MekakureExcludeNames))
+    {
+        return false;
+    }
+    if ((mesh.SemanticFlags & static_cast<uint32_t>(material.MekakureTargetMask)) != 0)
+    {
+        return true;
+    }
+    return !material.MekakureIncludeNames.empty() &&
+           MeshSemanticKeyMatchesFilter(mesh.SemanticKey, material.MekakureIncludeNames);
+}
+
+namespace
+{
+    // ---- メカクレ用の GPU リソース（PSO・髪マスク） ----
+    constexpr UINT kMekakureMaskSrvIndex = RendererState::g_kQUALITY_DESCRIPTOR_START + 12;
+    constexpr float kMekakureHairPush = 0.002f; // 髪マスク：深度の誤差で自分の髪に負けないよう少しだけ手前へ
+
+    struct MekakureGpu
+    {
+        ComPtr<ID3D12PipelineState> OverlayPso;
+        ComPtr<ID3D12PipelineState> MaskPso;
+        DXGI_FORMAT OverlayFormat = DXGI_FORMAT_UNKNOWN;
+        ComPtr<ID3D12Resource> Mask;
+        ComPtr<ID3D12Resource> Retired[RendererState::g_kFRAME_COUNT + 1];
+        UINT RetiredCursor = 0;
+        ComPtr<ID3D12DescriptorHeap> RtvHeap;
+        UINT Width = 0;
+        UINT Height = 0;
+        bool PsoFailed = false;
+    };
+
+    MekakureGpu& GetMekakureGpu()
+    {
+        static MekakureGpu gpu;
+        return gpu;
+    }
+
+    ID3D12PipelineState* CreateMekakurePso(const char* vsPath, const char* psPath, DXGI_FORMAT format, bool overlay)
+    {
+        ComPtr<ID3DBlob> vs;
+        ComPtr<ID3DBlob> ps;
+        ShaderDescription vsDesc{};
+        vsDesc.csoPath = vsPath;
+        vsDesc.ppBlob = vs.GetAddressOf();
+        ShaderDescription psDesc{};
+        psDesc.csoPath = psPath;
+        psDesc.ppBlob = ps.GetAddressOf();
+        if (!ShaderPipelines::LoadShaderBlob(vsDesc) || !ShaderPipelines::LoadShaderBlob(psDesc))
+        {
+            return nullptr;
+        }
+        static D3D12_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = ShaderPipelines::GetModelRootSignature();
+        desc.VS = CD3DX12_SHADER_BYTECODE(vs.Get());
+        desc.PS = CD3DX12_SHADER_BYTECODE(ps.Get());
+        desc.InputLayout = {layout, _countof(layout)};
+        desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        desc.RasterizerState.CullMode = overlay ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
+        desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        auto& blend = desc.BlendState.RenderTarget[0];
+        blend.BlendEnable = TRUE;
+        if (overlay)
+        {
+            // 乗算済みアルファ
+            blend.SrcBlend = D3D12_BLEND_ONE;
+            blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            blend.BlendOp = D3D12_BLEND_OP_ADD;
+            blend.SrcBlendAlpha = D3D12_BLEND_ZERO;
+            blend.DestBlendAlpha = D3D12_BLEND_ONE;
+            blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        }
+        else
+        {
+            // 髪が重なったら一番「透かさない」値を残す
+            blend.SrcBlend = D3D12_BLEND_ONE;
+            blend.DestBlend = D3D12_BLEND_ONE;
+            blend.BlendOp = D3D12_BLEND_OP_MIN;
+            blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+            blend.DestBlendAlpha = D3D12_BLEND_ONE;
+            blend.BlendOpAlpha = D3D12_BLEND_OP_MIN;
+        }
+        blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        desc.SampleMask = UINT_MAX;
+        desc.DepthStencilState.DepthEnable = TRUE;
+        desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL; // 逆 Z
+        desc.DepthStencilState.StencilEnable = FALSE;
+        desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        desc.NumRenderTargets = 1;
+        desc.RTVFormats[0] = format;
+        desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        desc.SampleDesc.Count = 1;
+        ID3D12PipelineState* pso = nullptr;
+        if (FAILED(GraphicsDevice::GetDevice()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso))))
+        {
+            Debug::Log("ERROR: Mekakure PSO creation failed (%s)\n", psPath);
+            return nullptr;
+        }
+        return pso;
+    }
+
+    bool EnsureMekakureResources(UINT width, UINT height)
+    {
+        MekakureGpu& gpu = GetMekakureGpu();
+        ID3D12Device* device = GraphicsDevice::GetDevice();
+        const DXGI_FORMAT sceneFormat = RendererState::GetSceneColorFormat();
+        if (!gpu.PsoFailed && (!gpu.OverlayPso || gpu.OverlayFormat != sceneFormat))
+        {
+            gpu.OverlayPso.Attach(CreateMekakurePso("shader/hlsl/build/MekakureVS.cso",
+                                                    "shader/hlsl/build/MekakurePS.cso", sceneFormat, true));
+            gpu.MaskPso.Attach(CreateMekakurePso("shader/hlsl/build/MekakureVS.cso",
+                                                 "shader/hlsl/build/MekakureMaskPS.cso", DXGI_FORMAT_R8_UNORM, false));
+            gpu.OverlayFormat = sceneFormat;
+            gpu.PsoFailed = !gpu.OverlayPso || !gpu.MaskPso;
+        }
+        if (gpu.PsoFailed)
+        {
+            return false;
+        }
+        if (!gpu.RtvHeap)
+        {
+            D3D12_DESCRIPTOR_HEAP_DESC heap{};
+            heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            heap.NumDescriptors = 1;
+            if (FAILED(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&gpu.RtvHeap))))
+            {
+                return false;
+            }
+        }
+        if (!gpu.Mask || gpu.Width != width || gpu.Height != height)
+        {
+            if (gpu.Mask)
+            {
+                // GPU がまだ使っている可能性があるので数フレーム保持してから解放する。
+                gpu.Retired[gpu.RetiredCursor] = gpu.Mask;
+                gpu.RetiredCursor = (gpu.RetiredCursor + 1) % _countof(gpu.Retired);
+                gpu.Mask.Reset();
+            }
+            const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8_UNORM, width, height, 1, 1, 1, 0,
+                                                           D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+            const CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
+            D3D12_CLEAR_VALUE clear{};
+            clear.Format = DXGI_FORMAT_R8_UNORM;
+            clear.Color[0] = 1.0f;
+            if (FAILED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+                                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                       IID_PPV_ARGS(&gpu.Mask))))
+            {
+                return false;
+            }
+            gpu.Mask->SetName(L"MekakureHairMask");
+            device->CreateRenderTargetView(gpu.Mask.Get(), nullptr, gpu.RtvHeap->GetCPUDescriptorHandleForHeapStart());
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+            srv.Format = DXGI_FORMAT_R8_UNORM;
+            srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srv.Texture2D.MipLevels = 1;
+            device->CreateShaderResourceView(
+                gpu.Mask.Get(), &srv,
+                CD3DX12_CPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart(),
+                                              kMekakureMaskSrvIndex, FrameConstants::GetCbvIncrementSize()));
+            gpu.Width = width;
+            gpu.Height = height;
+        }
+        return true;
+    }
+
+    struct MekakureEntityDraw
+    {
+        EntityID Entity = g_kINVALID_ENTITY;
+        const MaterialComponent* Source = nullptr;
+        AnimationModelResource* Animated = nullptr;
+        StaticModelResource* Static = nullptr;
+        vector<UINT> EyeMeshes;
+        vector<UINT> HairMeshes;
+    };
+} // namespace
+
+void Mekakure::Release()
+{
+    GetMekakureGpu() = MekakureGpu{};
+}
+
+void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv,
+                      D3D12_CPU_DESCRIPTOR_HANDLE depthDsv, const D3D12_VIEWPORT& viewport, const D3D12_RECT& scissor)
+{
+    if (!commandList)
+    {
+        return;
+    }
+
+    // ---- 対象の収集（ビット演算のみ。名前フィルターが空なら文字列処理なし） ----
+    static vector<MekakureEntityDraw> draws;
+    draws.clear();
+    bool anyMask = false;
+    auto collect = [&](EntityID entity, auto* model) {
+        if (!model || !ComponentManager::HasComponent<MaterialComponent>(entity))
+        {
+            return;
+        }
+        const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        if (!source.MekakureEnabled || source.MekakureOpacity <= 0.001f)
+        {
+            return;
+        }
+        MekakureEntityDraw draw;
+        draw.Entity = entity;
+        draw.Source = &source;
+        const bool useMask = source.MekakureMaskSource != 0 && source.MekakureMaskStrength > 0.001f;
+        for (UINT m = 0; m < model->GetMeshCount(); ++m)
+        {
+            const auto& mesh = model->GetMeshData(m);
+            if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            {
+                continue;
+            }
+            if (IsMekakureTargetMesh(source, mesh))
+            {
+                draw.EyeMeshes.push_back(m);
+            }
+            else if (useMask && (mesh.SemanticFlags & MeshSemantic_Hair) != 0)
+            {
+                draw.HairMeshes.push_back(m);
+            }
+        }
+        if (draw.EyeMeshes.empty())
+        {
+            return;
+        }
+        anyMask |= !draw.HairMeshes.empty();
+        if constexpr (std::is_same_v<std::decay_t<decltype(*model)>, AnimationModelResource>)
+        {
+            draw.Animated = model;
+        }
+        else
+        {
+            draw.Static = model;
+        }
+        draws.push_back(std::move(draw));
+    };
+    for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
+    {
+        const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+        collect(entity, component.ModelId >= 0 ? ModelManager::GetAnimModel(component.ModelId) : nullptr);
+    }
+    for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
+    {
+        const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+        collect(entity, component.ModelId >= 0 ? ModelManager::GetStaticModel(component.ModelId) : nullptr);
+    }
+    if (draws.empty())
+    {
+        return;
+    }
+    const UINT width = static_cast<UINT>(max(viewport.Width, 1.0f));
+    const UINT height = static_cast<UINT>(max(viewport.Height, 1.0f));
+    if (!EnsureMekakureResources(width, height))
+    {
+        return;
+    }
+    MekakureGpu& gpu = GetMekakureGpu();
+
+    // ---- スキニング済み頂点を頂点バッファの状態へ ----
+    static vector<D3D12_RESOURCE_BARRIER> barriers;
+    barriers.clear();
+    for (auto& draw : draws)
+    {
+        if (!draw.Animated)
+        {
+            continue;
+        }
+        draw.Animated->DispatchGpuSkinning(commandList, 0); // 姿勢が同じなら内部でスキップ
+        auto addBarrier = [&](UINT m) {
+            ID3D12Resource* vb = draw.Animated->GetMeshData(m).VertexBuffer.Get();
+            if (!Raytracing::IsReadingSkinnedVerticesForGlass(vb))
+            {
+                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+                    vb, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+            }
+        };
+        for (UINT m : draw.EyeMeshes)
+        {
+            addBarrier(m);
+        }
+        for (UINT m : draw.HairMeshes)
+        {
+            addBarrier(m);
+        }
+    }
+    if (!barriers.empty())
+    {
+        commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+    }
+
+    ScenePasses::BeginModelPass(); // ルートシグネチャとライト・影・GI のバインド
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    XMMATRIX view = XMMatrixIdentity();
+    XMMATRIX projection = XMMatrixIdentity();
+    Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+    XMFLOAT3 eye{};
+    {
+        XMVECTOR determinant{};
+        XMStoreFloat3(&eye, XMMatrixInverse(&determinant, view).r[3]);
+    }
+    const XMMATRIX transposedView = XMMatrixTranspose(view);
+    const XMMATRIX transposedProjection = XMMatrixTranspose(projection);
+    const auto heapStart = FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart();
+    const UINT increment = FrameConstants::GetCbvIncrementSize();
+    const int defaultTexture = TextureManager::GetDefaultTextureIndex();
+    const auto handle = [&](int index) { return CD3DX12_GPU_DESCRIPTOR_HANDLE(heapStart, index, increment); };
+
+    auto baseConstants = [&](EntityID entity) {
+        const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+        ConstantBuffer3D cb{};
+        cb.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
+        cb.View = transposedView;
+        cb.Projection = transposedProjection;
+        cb.CameraPos = eye;
+        cb.ViewportSize = {viewport.Width, viewport.Height};
+        return cb;
+    };
+    auto meshGeometry = [&](const MekakureEntityDraw& draw, UINT m, D3D12_VERTEX_BUFFER_VIEW& vb,
+                            D3D12_INDEX_BUFFER_VIEW& ib, UINT& count, int& texture) {
+        if (draw.Animated)
+        {
+            const MeshData& mesh = draw.Animated->GetMeshData(m);
+            vb = mesh.VertexBufferView;
+            ib = mesh.IndexBufferView;
+            count = mesh.IndexCount;
+            texture = mesh.TextureIndex;
+        }
+        else
+        {
+            const StaticMeshData& mesh = draw.Static->GetMeshData(m);
+            vb = mesh.VertexBufferView;
+            ib = mesh.IndexBufferView;
+            count = mesh.IndexCount;
+            texture = mesh.TextureIndex;
+        }
+    };
+
+    // ---- 1. 髪マスク ----
+    const bool maskReady = anyMask;
+    if (maskReady)
+    {
+        auto toRt = CD3DX12_RESOURCE_BARRIER::Transition(gpu.Mask.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                                         D3D12_RESOURCE_STATE_RENDER_TARGET);
+        commandList->ResourceBarrier(1, &toRt);
+        const D3D12_CPU_DESCRIPTOR_HANDLE maskRtv = gpu.RtvHeap->GetCPUDescriptorHandleForHeapStart();
+        const float clear[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        commandList->ClearRenderTargetView(maskRtv, clear, 0, nullptr);
+        commandList->OMSetRenderTargets(1, &maskRtv, FALSE, &depthDsv);
+        commandList->SetPipelineState(gpu.MaskPso.Get());
+        for (const auto& draw : draws)
+        {
+            if (draw.HairMeshes.empty())
+            {
+                continue;
+            }
+            const MaterialComponent& source = *draw.Source;
+            ConstantBuffer3D cb = baseConstants(draw.Entity);
+            cb.ToonOutlineWidth = kMekakureHairPush;
+            cb.MaterialPadding = source.MekakureMaskSource == 2 ? 1.0f : 0.0f; // 0: アルファ, 1: R
+            cb.ConstantPadding = source.MekakureMaskInvert ? 1.0f : 0.0f;
+            cb.MaterialAlpha = std::clamp(source.MekakureMaskStrength, 0.0f, 1.0f);
+            commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
+            const int maskTexture =
+                source.MekakureMaskSource == 2 ? LiveToonTextures::ResolveDescriptor(source.MekakureMaskPath) : -1;
+            const MaterialComponent& material = MaterialManager::Resolve(source);
+            for (UINT m : draw.HairMeshes)
+            {
+                D3D12_VERTEX_BUFFER_VIEW vb{};
+                D3D12_INDEX_BUFFER_VIEW ib{};
+                UINT count = 0;
+                int texture = -1;
+                meshGeometry(draw, m, vb, ib, count, texture);
+                if (source.MekakureMaskSource == 2)
+                {
+                    texture = maskTexture;
+                }
+                else if (texture < 0)
+                {
+                    texture = (material.UseTexture && material.TextureID >= 0) ? material.TextureID : -1;
+                }
+                if (texture < 0)
+                {
+                    continue; // マスクの元が無い髪はマスクを書かない（クリア値 1 = 従来どおり透過）
+                }
+                TextureManager::TouchTexture(texture);
+                commandList->SetGraphicsRootDescriptorTable(1, handle(texture));
+                commandList->IASetVertexBuffers(0, 1, &vb);
+                commandList->IASetIndexBuffer(&ib);
+                commandList->DrawIndexedInstanced(count, 1, 0, 0, 0);
+            }
+        }
+        auto toSrv = CD3DX12_RESOURCE_BARRIER::Transition(gpu.Mask.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commandList->ResourceBarrier(1, &toSrv);
+    }
+
+    // ---- 2. 目・眉・まつ毛の重ね描き ----
+    commandList->OMSetRenderTargets(1, &sceneRtv, FALSE, &depthDsv);
+    commandList->SetGraphicsRootDescriptorTable(8, handle(kMekakureMaskSrvIndex)); // t3 をマスクとして使う
+    for (const auto& draw : draws)
+    {
+        const MaterialComponent& source = *draw.Source;
+        const MaterialComponent& material = MaterialManager::Resolve(source);
+        ConstantBuffer3D cb = baseConstants(draw.Entity);
+        cb.UseTexture = static_cast<int>(material.UseTexture);
+        cb.MaterialMetallic = material.Metallic;
+        cb.MaterialRoughness = material.Roughness;
+        cb.MaterialFresnel = material.Fresnel;
+        cb.MaterialMode = static_cast<int>(material.ShaderClassMode);
+        cb.ShaderClass = static_cast<int>(material.ShaderClass);
+        cb.MaterialAlpha = std::clamp(source.MekakureOpacity, 0.0f, 1.0f) * material.Alpha;
+        cb.ToonOutlineWidth = max(source.MekakureDepth, 0.0f);
+        cb.ToonOutlineScreenWidth = source.MekakureFadeStart;
+        cb.ConstantPadding = source.MekakureFadeEnd;
+        cb.MaterialPadding = (maskReady && !draw.HairMeshes.empty()) ? 1.0f : 0.0f; // 髪マスクを使う
+        int normalTexture = defaultTexture;
+        if (material.NormalMapID >= 0)
+        {
+            cb.UseNormalMap = 1;
+            normalTexture = material.NormalMapID;
+        }
+        const int entityTexture = (material.UseTexture && material.TextureID >= 0) ? material.TextureID : defaultTexture;
+        commandList->SetPipelineState(gpu.OverlayPso.Get());
+        commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
+        commandList->SetGraphicsRootDescriptorTable(6, handle(normalTexture));
+        MaterialBindings::SetMaterial(draw.Entity, material);
+        for (UINT m : draw.EyeMeshes)
+        {
+            if (!source.MaterialSlots.empty())
+            {
+                const auto& slotMaterial = MaterialManager::Resolve(source, m);
+                if (MaterialSystem::IsTransparentMaterial(slotMaterial))
+                {
+                    continue;
+                }
+                MaterialBindings::BindAssetSlot(draw.Entity, slotMaterial);
+            }
+            D3D12_VERTEX_BUFFER_VIEW vb{};
+            D3D12_INDEX_BUFFER_VIEW ib{};
+            UINT count = 0;
+            int texture = -1;
+            meshGeometry(draw, m, vb, ib, count, texture);
+            texture = texture >= 0 ? texture : entityTexture;
+            TextureManager::TouchTexture(texture);
+            commandList->SetGraphicsRootDescriptorTable(1, handle(texture));
+            commandList->IASetVertexBuffers(0, 1, &vb);
+            commandList->IASetIndexBuffer(&ib);
+            commandList->DrawIndexedInstanced(count, 1, 0, 0, 0);
+        }
+    }
+
+    for (auto& barrier : barriers)
+    {
+        std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+    }
+    if (!barriers.empty())
+    {
+        commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+    }
 }
 
 void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
@@ -138306,8 +139417,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             }
         }
     }
-}
 
+}
 
 ===== FILE: source\systems\modelsystem.h =====
 #pragma once
@@ -157271,6 +158382,12 @@ cbuffer LightParams : register(b1)
     float4 SkySunDirection;
     float4 SkyParameters;
     float4 LightIesProfiles[MAX_SHADER_LIGHTS]; // x: 配光テクスチャ番号+1、y: 軸回りの回転（周）
+    // ライブ用トゥーンスタイル（source/rendering/livetoonstyle.h と同じ並び）
+    float4 LiveToonStyle0; // x: ブレンド, y: 影乗算色の効き, z: 加算ライトの回り込み, w: 加算ライトの強さ
+    float4 LiveToonStyle1; // rgb: 影の乗算色, w: 肌の血色
+    float4 LiveToonStyle2; // x: ソフトリム, y: ハードリム, z: リム幅, w: リムのライト色
+    float4 LiveToonStyle3; // x: ランプスペキュラ, y: 天使の輪, z: 環境スペキュラ, w: 落ち影の濃さ
+    float4 LiveToonStyle4; // x: 陰影ランプのテクスチャ番号（<0 で無効）, y: 陰影ランプの強さ
 };
 
 StructuredBuffer<uint> LightTileIndices : register(t11);
@@ -158094,6 +159211,9 @@ cbuffer PBRParams : register(b2)
     uint4 AssetTextures;
     float4 AssetParallax;
     ProceduralTexture::Parameters AssetNoise[3]; // Base Color, Normal, Height. Width is enabled.
+    // ライブトゥーンのマテリアルテクスチャ（ベクトル 190, 191。GPU Scene の 192 ベクトルにちょうど収まる）
+    uint4 LiveToonTextures;       // x: Def, y: 顔陰影反転, z: 質感ランプ（テクスチャ表の番号、UINT_MAX で無効）, w: フラグ
+    float4 LiveToonMaterialParams; // x: Def の強さ, y: 顔陰影反転の強さ, z: 質感ランプ（乗算）, w: 質感ランプ（加算）
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)
@@ -158394,6 +159514,7 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 #endif
 
 
+
 ===== FILE: shader\hlsl\debugLinePS.hlsl =====
 #define SHADER_DEBUG_LINE
 #include "common.hlsl"
@@ -158667,7 +159788,17 @@ float4 ShadeDeferred(PSInputPostProcess input)
         float2 environmentUv = float2(frac(atan2(surfaceNormal.z, surfaceNormal.x) / (2.0f * PI) + 0.5f),
                                       acos(clamp(surfaceNormal.y, -1.0f, 1.0f)) / PI);
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, environmentUv, 8.0f).rgb;
-        baseColor.rgb = pbrDirectLight + EvaluateLiveToonAmbient(baseColor.rgb, irradiance, shaderClass);
+        const float3 toonAlbedo = baseColor.rgb;
+        baseColor.rgb = pbrDirectLight + EvaluateLiveToonAmbientStyled(toonAlbedo, irradiance, shaderClass);
+        [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
+        {
+            float3 reflected = reflect(-viewDir, surfaceNormal);
+            float2 reflectedUv = float2(frac(atan2(reflected.z, reflected.x) / (2.0f * PI) + 0.5f),
+                                        acos(clamp(reflected.y, -1.0f, 1.0f)) / PI);
+            float3 environment = EnvironmentTexture.SampleLevel(TextureSampler, reflectedUv, 4.0f).rgb;
+            baseColor.rgb += EvaluateLiveToonEnvironmentSpecular(toonAlbedo, surfaceNormal, viewDir, environment,
+                                                                 shaderClass);
+        }
     }
     [branch] if (shadow || lit)
     {
@@ -158979,6 +160110,7 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
 }
 
 
+
 ===== FILE: shader\hlsl\DeferredPS.hlsl =====
 #ifndef GEOMETRIC_SPECULAR_AA
 #define GEOMETRIC_SPECULAR_AA 0
@@ -158999,6 +160131,8 @@ SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
 #include "NormalMapDecode.hlsli"
+#include "ToonLighting.hlsli"
+#include "LiveToonMaterial.hlsli"
 #if GEOMETRIC_SPECULAR_AA
 #include "GeometricSpecularAA.hlsli"
 #endif
@@ -159144,6 +160278,29 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    // ライブトゥーンのマテリアルテクスチャ（Def / 顔陰影反転 / 質感ランプ）
+    // Visibility 解決（コンピュート）では暗黙微分の Sample が使えないので対象外。
+#ifndef SHADER_VISIBILITY_RESOLVE
+    {
+#ifdef SHADER_GPU_DRIVEN
+        uint4 liveToonTextures = asuint(LoadSceneMaterialVector(gSceneMaterials, materialID, 190u));
+        float4 liveToonParams = LoadSceneMaterialVector(gSceneMaterials, materialID, 191u);
+#else
+        uint4 liveToonTextures = LiveToonTextures;
+        float4 liveToonParams = LiveToonMaterialParams;
+#endif
+        LiveToonMaterialSurface toonSurface;
+        toonSurface.Albedo = output.Color.rgb;
+        toonSurface.ShadowThreshold = output.Shadow.r;
+        toonSurface.ShadowSoftness = output.Shadow.g;
+        ApplyLiveToonMaterialTextures(liveToonTextures, liveToonParams, materialUv, normal,
+                                      SurfaceViewDirectionCommon(In.WorldPos, In.CameraPos), materialPartId,
+                                      g_SamplerState, toonSurface);
+        output.Color.rgb = toonSurface.Albedo;
+        output.Shadow.r = toonSurface.ShadowThreshold;
+        output.Shadow.g = toonSurface.ShadowSoftness;
+    }
+#endif
     // POM セルフシャドウ（主光源）。
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     output.Color.a = 1.0f;
@@ -159180,6 +160337,7 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 #endif
+
 
 ===== FILE: shader\hlsl\DlssPrepareCS.hlsl =====
 Texture2D<float4> Input : register(t0);
@@ -162704,6 +163862,275 @@ cbuffer BuilderConstants : register(b0)
     }
 }
 
+===== FILE: shader\hlsl\LiveToonMaterial.hlsli =====
+#ifndef LIVE_TOON_MATERIAL_HLSLI
+#define LIVE_TOON_MATERIAL_HLSLI
+
+// ---------------------------------------------------------------------------------------------
+// ライブトゥーンのマテリアルテクスチャ（学マス講演の Def / 顔陰影反転 / 質感ランプに相当）。
+// ジオメトリ段（DeferredPS / modelshaderPS）で評価し、結果は
+//   ・陰影のしきい値・ぼかし → GBuffer の Shadow.r / g（Forward は g_LiveToonShadow）へ
+//   ・質感ランプ             → ベースカラーへ
+// として既存の経路に流す。GBuffer の追加チャンネルもルートシグネチャの変更も不要。
+//
+//  Def テクスチャ   : R = 影しきい値の補正（0.5 で変化なし。明るいほど影が出にくい）
+//                     G = 境界のぼかし倍率（0.5 で等倍、1 で 2 倍）
+//                     B = 質感ランプのマスク（1 で全面に適用）
+//  顔陰影反転       : R = 影側でも光を残す領域（頬など）。白いほど強く光を残す
+//  質感ランプ       : 横軸 = 視線と法線の角度（左 = 正面、右 = 縁）。オーロラ・偏光塗料風の色変化
+// ---------------------------------------------------------------------------------------------
+
+struct LiveToonMaterialSurface
+{
+    float3 Albedo;
+    float ShadowThreshold;
+    float ShadowSoftness;
+};
+
+void ApplyLiveToonMaterialTextures(uint4 textures, float4 parameters, float2 uv, float3 normal, float3 viewDir,
+                                   float materialClass, SamplerState materialSampler,
+                                   inout LiveToonMaterialSurface surface)
+{
+    if (!IsLiveToonClass(materialClass))
+    {
+        return;
+    }
+    float rampMask = 1.0f;
+    [branch] if (textures.x < 512u && parameters.x > 0.0f)
+    {
+        float4 def = LoadMaterialTexture(textures.x).Sample(materialSampler, uv);
+        surface.ShadowThreshold = saturate(surface.ShadowThreshold - (def.r - 0.5f) * parameters.x);
+        surface.ShadowSoftness *= lerp(1.0f, max(def.g * 2.0f, 0.05f), saturate(parameters.x));
+        rampMask = lerp(1.0f, def.b, saturate(parameters.x));
+    }
+    [branch] if (textures.y < 512u && parameters.y > 0.0f)
+    {
+        float faceLight = LoadMaterialTexture(textures.y).Sample(materialSampler, uv).r;
+        // しきい値を 0 へ寄せる：影側（N・L < 0）でも光が残る。真後ろからの光では従来どおり影になる。
+        surface.ShadowThreshold = lerp(surface.ShadowThreshold, 0.0f, saturate(faceLight * parameters.y));
+    }
+    [branch] if (textures.z < 512u && (parameters.z > 0.0f || parameters.w > 0.0f))
+    {
+        float facing = saturate(dot(normal, viewDir));
+        float u = clamp(1.0f - facing, 0.02f, 0.98f);
+        float3 ramp = LoadMaterialTexture(textures.z).SampleLevel(materialSampler, float2(u, 0.5f), 0.0f).rgb;
+        float3 multiplied = lerp(surface.Albedo, surface.Albedo * ramp * 2.0f, saturate(parameters.z) * rampMask);
+        surface.Albedo = saturate(multiplied + ramp * max(parameters.w, 0.0f) * rampMask);
+    }
+}
+#endif
+
+===== FILE: shader\hlsl\LiveToonStyle.hlsli =====
+#ifndef LIVE_TOON_STYLE_HLSLI
+#define LIVE_TOON_STYLE_HLSLI
+
+// ---------------------------------------------------------------------------------------------
+// ライブ用トゥーンスタイル（学マスのライブシーン風）。ToonLighting.hlsli の拡張。
+// パラメーターはシーン全体の LightParams.LiveToonStyle0..3（source/rendering/livetoonstyle.h）。
+// Forward（modelshaderPS）と Deferred（DeferredLightingPS）の両方が SurfaceLighting.hlsli 経由で
+// 同じ関数を使うので、経路による見た目の差は出ない。
+//
+//  メインライト（平行光源）: セル陰影 + 影の乗算色 + 落ち影の濃さ + ランプスペキュラ + 天使の輪 + リム
+//  加算ライト（点 / スポット / 矩形）: 陰影の境界を作らず、距離減衰した明るさを柔らかく足す
+//                                      （ステージの色ライトが輪郭に乗るハードリムもここで加える）
+// すべての項は albedo と radiance に線形。HDR のまま返し、トーンマップは後段に任せる。
+// ---------------------------------------------------------------------------------------------
+
+float LiveToonLuminance(float3 value)
+{
+    return max(dot(value, float3(0.2126f, 0.7152f, 0.0722f)), 0.0f);
+}
+
+float3 LiveToonSaturate(float3 color, float amount)
+{
+    float l = LiveToonLuminance(color);
+    return max(lerp(float3(l, l, l), color, amount), 0.0f);
+}
+
+// 陰影ランプ（シーン全体）。横軸 = 光量（左 = 影、右 = 光）、上半分 = 肌、下半分 = 肌以外。
+// 戻り値の w が 0 のときはランプ無効。
+float4 LiveToonShadowRamp(float lit, bool skin)
+{
+#ifdef MEGALIGHTS_LIGHT_TEXTURES
+    [branch] if (LiveToonStyle4.x >= 0.0f && LiveToonStyle4.y > 0.0f)
+    {
+        uint index = (uint)LiveToonStyle4.x;
+        float2 uv = float2(clamp(lit, 0.01f, 0.99f), skin ? 0.25f : 0.75f);
+        float3 ramp = MegaLightTextures[NonUniformResourceIndex(index)].SampleLevel(TextureSampler, uv, 0.0f).rgb;
+        return float4(ramp, saturate(LiveToonStyle4.y));
+    }
+#endif
+    return float4(1.0f, 1.0f, 1.0f, 0.0f);
+}
+
+// 影領域の色。乗算色で色相をずらし、彩度を少し上げて「濁らない影」にする。
+float3 LiveToonShadowColor(float3 albedo, bool skin, float strength)
+{
+    float tintAmount = saturate(LiveToonStyle0.y) * saturate(strength);
+    float3 tint = lerp(float3(1.0f, 1.0f, 1.0f), saturate(LiveToonStyle1.rgb), tintAmount);
+    if (skin)
+    {
+        // 肌の影は暖色へ（血色）。青紫の乗算色をそのまま肌に掛けると顔色が悪く見える。
+        float3 warm = float3(1.0f, 0.80f, 0.76f);
+        tint = lerp(tint, warm, saturate(LiveToonStyle1.w));
+    }
+    return LiveToonSaturate(albedo * tint, 1.0f + 0.25f * tintAmount);
+}
+
+// 髪の天使の輪（Kajiya-Kay 風の異方性バンド）。髪束はおおむね縦方向に流れる前提で、
+// 接線を「上方向を法線に直交化したもの」として近似する（UV 接線に依存しないので PMX / VRM / FBX 共通）。
+float LiveToonAngelRing(float3 normal, float3 viewDir, float3 lightDir)
+{
+    float3 up = float3(0.0f, 1.0f, 0.0f);
+    float3 tangent = up - normal * dot(normal, up);
+    float tangentLength = dot(tangent, tangent);
+    if (tangentLength < 1e-4f)
+    {
+        return 0.0f;
+    }
+    tangent *= rsqrt(tangentLength);
+    float3 halfDir = LiveToonNormalize(lightDir + viewDir, normal);
+    float tDotH = dot(tangent, halfDir);
+    float sinTH = sqrt(saturate(1.0f - tDotH * tDotH));
+    float ring = pow(sinTH, 96.0f);
+    // 段のついた帯にする（アニメ塗りのハイライト）
+    return LiveToonBand(ring, 0.55f, 0.08f) * saturate(dot(normal, lightDir) + 0.2f);
+}
+
+// radiance: 影を含まない放射輝度（強度・距離減衰・大気を含む）
+// visibility: 影の可視率（色付き透過影を含む）
+// lightType : LightPositionType.w（0 = 平行光源）
+float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, float3 lightDir, float3 radiance,
+                                  float3 visibility, float lightType, float materialClass, float roughness,
+                                  float shadowThreshold, float shadowSoftness, float shadowStrength)
+{
+    bool skin = abs(materialClass - 3.0f) < 0.5f;
+    bool hair = abs(materialClass - 1.0f) < 0.5f;
+    float nDotL = dot(normal, lightDir);
+    float nDotV = saturate(dot(normal, viewDir));
+    float edge = 1.0f - nDotV;
+    float rimWidth = clamp(LiveToonStyle2.z, 0.02f, 1.0f);
+    float radianceLuma = LiveToonLuminance(radiance);
+    float3 rimLight = lerp(radianceLuma.xxx, radiance, saturate(LiveToonStyle2.w));
+    float3 rimAlbedo = lerp(albedo, float3(1.0f, 1.0f, 1.0f), 0.45f);
+
+    // ---- 加算ライト：境界を作らない柔らかい明るさ ----
+    if (lightType > 0.5f)
+    {
+        float wrap = saturate(LiveToonStyle0.z);
+        float diffuse = saturate((nDotL + wrap) / (1.0f + wrap));
+        // 回り込みが大きいほど「ライトの近くにいるだけで明るい」ボリューム感になる
+        diffuse = lerp(diffuse, 0.5f + 0.5f * diffuse, wrap * 0.5f);
+        float3 skinRadiance = skin ? lerp(radianceLuma.xxx, radiance, 0.7f) : radiance;
+        float3 additive = albedo * skinRadiance * visibility * diffuse * max(LiveToonStyle0.w, 0.0f);
+
+        // ステージの色ライトが輪郭に乗る強いリム（逆光側ほど強い）
+        float hardRim = LiveToonBand(edge, 1.0f - rimWidth * 0.55f, 0.03f);
+        hardRim *= LiveToonBand(saturate(nDotL + 0.35f), 0.25f, 0.2f);
+        additive += rimAlbedo * rimLight * visibility * hardRim * max(LiveToonStyle2.y, 0.0f) * (skin ? 0.5f : 1.0f);
+        return additive;
+    }
+
+    // ---- トゥーン陰影用メインライト ----
+    float wrapMain = skin ? 0.30f : 0.10f;
+    float coordinate = saturate((nDotL + wrapMain) / (1.0f + wrapMain));
+    float softness = max(shadowSoftness, skin ? 0.06f : 0.015f);
+    float litBand = LiveToonBand(coordinate, saturate(shadowThreshold), softness);
+    // 落ち影：陰影と同じ乗算色の領域にまとめる（濃さだけ独立に調整）
+    float castVisibility = LiveToonLuminance(visibility);
+    float cast = lerp(1.0f, saturate(castVisibility), saturate(LiveToonStyle3.w));
+    float lit = litBand * cast;
+
+    float3 skinRadiance = skin ? lerp(radianceLuma.xxx, radiance, 0.55f) : radiance;
+    float3 shadowColor = LiveToonShadowColor(albedo, skin, shadowStrength);
+    // 影の中の光量（真っ黒にしない下限）。影色は乗算色で作るので明るさは控えめに落とすだけ
+    float shadowLevel = lerp(1.0f, skin ? 0.62f : 0.48f, saturate(shadowStrength));
+    float3 diffuse = lerp(shadowColor * shadowLevel, albedo, lit) * skinRadiance;
+    // 陰影ランプ：ベタ影 → ランプの色のグラデーション（肌と肌以外を 1 枚で描き分け）
+    float4 shadowRamp = LiveToonShadowRamp(lit, skin);
+    diffuse = lerp(diffuse, albedo * shadowRamp.rgb * skinRadiance, shadowRamp.w);
+    // 色付きの透過影（ガラス越し）は色だけ反映
+    float3 visibilityTint = visibility / max(castVisibility, 1e-3f);
+    diffuse *= lerp(float3(1.0f, 1.0f, 1.0f), saturate(visibilityTint), step(1e-3f, castVisibility));
+
+    // ランプ（段付き）スペキュラ
+    float3 halfDir = LiveToonNormalize(lightDir + viewDir, normal);
+    float specularPower = lerp(80.0f, 16.0f, saturate(roughness));
+    float specular = pow(saturate(dot(normal, halfDir)), specularPower);
+    float ramp = LiveToonBand(specular, 0.55f, 0.06f) * 0.7f + LiveToonBand(specular, 0.85f, 0.03f) * 0.3f;
+    float rampStrength = max(LiveToonStyle3.x, 0.0f) * (skin ? 0.15f : (hair ? 0.6f : 1.0f));
+    float3 specularTerm = lerp(albedo, float3(1.0f, 1.0f, 1.0f), 0.5f) * radiance * ramp * rampStrength * lit;
+
+    if (hair)
+    {
+        float ring = LiveToonAngelRing(normal, viewDir, lightDir);
+        specularTerm += lerp(albedo, float3(1.0f, 1.0f, 1.0f), 0.6f) * radiance * ring * cast *
+                        max(LiveToonStyle3.y, 0.0f);
+    }
+
+    // ふわっとしたリム（光源側に寄せる）＋ 輪郭を締める強いリム（逆光側）
+    float softRim = smoothstep(1.0f - rimWidth, 1.0f, edge) * saturate(nDotL * 0.5f + 0.5f);
+    float hardRim = LiveToonBand(edge, 1.0f - rimWidth * 0.45f, 0.025f) *
+                    LiveToonBand(-dot(viewDir, lightDir), -0.1f, 0.3f);
+    float3 rim = rimAlbedo * rimLight * cast *
+                 (softRim * max(LiveToonStyle2.x, 0.0f) + hardRim * max(LiveToonStyle2.y, 0.0f)) *
+                 (skin ? 0.45f : 1.0f);
+
+    return diffuse + specularTerm + rim;
+}
+
+// 従来のトゥーンとライブスタイルを LiveToonStyle0.x でブレンドする入口。
+float3 EvaluateLiveToonLightStyled(float3 albedo, float3 normal, float3 viewDir, float3 lightDir, float3 radiance,
+                                   float3 visibility, float lightType, float materialClass, float roughness,
+                                   float shadowThreshold, float shadowSoftness, float shadowStrength)
+{
+    float blend = saturate(LiveToonStyle0.x);
+    float3 legacy = 0.0f;
+    [branch] if (blend < 0.999f)
+    {
+        legacy = EvaluateLiveToonLight(albedo, normal, viewDir, lightDir, radiance * visibility, materialClass,
+                                       roughness, shadowThreshold, shadowSoftness, shadowStrength);
+    }
+    [branch] if (blend <= 0.001f)
+    {
+        return legacy;
+    }
+    float3 live = EvaluateLiveToonStageLight(albedo, normal, viewDir, lightDir, radiance, visibility, lightType,
+                                             materialClass, roughness, shadowThreshold, shadowSoftness, shadowStrength);
+    return lerp(legacy, live, blend);
+}
+
+// 環境スペキュラ（IBL の縁の映り込み）。environment は反射方向でサンプルした環境色。
+float3 EvaluateLiveToonEnvironmentSpecular(float3 albedo, float3 normal, float3 viewDir, float3 environment,
+                                           float materialClass)
+{
+    float strength = max(LiveToonStyle3.z, 0.0f) * saturate(LiveToonStyle0.x);
+    if (strength <= 0.0f)
+    {
+        return 0.0f;
+    }
+    bool skin = abs(materialClass - 3.0f) < 0.5f;
+    float fresnel = pow(1.0f - saturate(dot(normal, viewDir)), 4.0f);
+    float3 tint = lerp(albedo, float3(1.0f, 1.0f, 1.0f), 0.6f);
+    return tint * environment * (0.04f + 0.96f * fresnel) * strength * (skin ? 0.35f : 1.0f);
+}
+
+// 影側の環境光にも乗算色を入れて、陰の色が環境光で白く濁らないようにする。
+float3 EvaluateLiveToonAmbientStyled(float3 albedo, float3 environmentIrradiance, float materialClass)
+{
+    float3 legacy = EvaluateLiveToonAmbient(albedo, environmentIrradiance, materialClass);
+    float blend = saturate(LiveToonStyle0.x);
+    if (blend <= 0.001f)
+    {
+        return legacy;
+    }
+    bool skin = abs(materialClass - 3.0f) < 0.5f;
+    float3 tinted = EvaluateLiveToonAmbient(LiveToonShadowColor(albedo, skin, 1.0f), environmentIrradiance,
+                                            materialClass);
+    return lerp(legacy, tinted, blend);
+}
+#endif
+
 ===== FILE: shader\hlsl\LumenPasses.hlsli =====
 // 常駐メッシュごとに軸に沿ったカードを 6 枚持ち、各カードは 16 x 16 テクセル。
 groupshared float3 LumenMinimum[64];
@@ -166115,6 +167542,95 @@ groupshared uint gs_Hash[4];
     }
 }
 
+===== FILE: shader\hlsl\MekakureMaskPS.hlsl =====
+// ---------------------------------------------------------------------------------------------
+// メカクレの髪マスク。前髪のどこから・どれだけ目を透かすかを R8 マスクへ書く（学マス方式：
+// 髪テクスチャのアルファチャンネルで透ける領域と透け具合を制御）。
+//   Padding         = 0: 髪テクスチャのアルファ, 1: 専用マスク画像の R
+//   ConstantPadding = 1 で白黒反転
+//   MaterialAlpha   = マスクの効き（0 で常に 1 = 制限なし）
+// 1 = 目を透かす、0 = 透かさない。重なった髪は MIN ブレンドで「透かさない」側が残る。
+// ---------------------------------------------------------------------------------------------
+#define SHADER_3D
+#include "common.hlsl"
+
+Texture2D g_Texture : register(t0);
+SamplerState g_SamplerState : register(s0);
+
+float main(PSInput3D In) : SV_Target0
+{
+    float4 texel = g_Texture.Sample(g_SamplerState, In.TexCoord);
+    float mask = Padding > 0.5f ? texel.r : texel.a;
+    mask = ConstantPadding > 0.5f ? 1.0f - mask : mask;
+    return lerp(1.0f, saturate(mask), saturate(MaterialAlpha));
+}
+
+===== FILE: shader\hlsl\MekakurePS.hlsl =====
+// ---------------------------------------------------------------------------------------------
+// メカクレ用ピクセルシェーダー。本体と同じ ShadeForward（トゥーン / ライブスタイル込み）で陰影を付け、
+// 不透明度と「顔の向き」フェードを掛けた乗算済み α で HDR シーンへ合成する。
+// 正面（N・V が大きい）ほど表示、横顔・後ろ向きでは自然に消える。
+// ---------------------------------------------------------------------------------------------
+#define MODEL_SHADER_NO_ENTRY
+#include "modelshaderPS.hlsl"
+
+float4 main(in PSInput3D In) : SV_Target0
+{
+    float4 premultiplied = ShadeForward(In);
+    float3 normal = SafeNormalizeCommon(In.Normal, float3(0.0f, 0.0f, 1.0f));
+    float3 viewDir = SurfaceViewDirectionCommon(In.WorldPos, CameraPos);
+    float fadeStart = ToonOutlineScreenWidth;
+    float fadeEnd = min(ConstantPadding, fadeStart - 0.001f);
+    float facing = smoothstep(fadeEnd, fadeStart, dot(normal, viewDir));
+    premultiplied *= facing;
+    [branch] if (Padding > 0.5f)
+    {
+        premultiplied *= saturate(SceneColorTexture.Load(int3(In.Position.xy, 0)).r);
+    }
+    clip(premultiplied.a - (1.0f / 255.0f));
+    return premultiplied;
+}
+
+===== FILE: shader\hlsl\MekakureVS.hlsl =====
+// ---------------------------------------------------------------------------------------------
+// メカクレ（前髪越しに目・眉を透かす）用の頂点シェーダー。
+//
+// 目・眉・まつ毛メッシュを、HDR 半透明パスで「深度だけカメラ側へ寄せて」もう一度描く。
+// 頂点を視線（カメラへのレイ）に沿って動かすので画面上の位置は変わらず、深度だけが手前になる。
+//   - 目の手前 MekakureDepth 以内にある遮蔽物（前髪）は深度テストを通過 → 髪越しに透けて見える
+//   - それより奥の遮蔽（後頭部・別キャラ）は通過しない → 後ろ向きで目が透けることはない
+// 定数の流用（ConstantBuffer3D の輪郭線用フィールド。このパスでは輪郭線を描かない）：
+//   ToonOutlineWidth       = MekakureDepth（ワールド単位）
+//   ToonOutlineScreenWidth = フェード開始の N・V
+//   ConstantPadding        = フェード終了の N・V
+//   MaterialAlpha          = メカクレの不透明度 × マテリアル α
+// ---------------------------------------------------------------------------------------------
+#define SHADER_3D
+#include "common.hlsl"
+
+PSInput3D main(VSInput3D input)
+{
+    PSInput3D output;
+    float4 worldPos = mul(float4(input.Position, 1.0f), World);
+    float3 toCamera = SurfaceViewDirectionCommon(worldPos.xyz, CameraPos);
+    float depthOffset = max(ToonOutlineWidth, 0.0f);
+    if (abs(Projection[3][3]) < 0.5f)
+    {
+        // 透視投影：ニアクリップを越えないよう、カメラまでの距離の 90% までに制限する。
+        depthOffset = min(depthOffset, length(CameraPos - worldPos.xyz) * 0.9f);
+    }
+    float4 pushedWorld = float4(worldPos.xyz + toCamera * depthOffset, 1.0f);
+    output.Position = mul(mul(pushedWorld, View), Projection);
+    output.Normal = normalize(mul(input.Normal, (float3x3)World));
+    output.TexCoord = input.TexCoord;
+    output.Diffuse = input.Diffuse;
+    // ライティングは元の位置で行う（影・ライト・GI が本体の描画と一致する）。
+    output.WorldPos = worldPos.xyz;
+    output.ViewPos = mul(worldPos, View).xyz;
+    output.CameraPos = CameraPos;
+    return output;
+}
+
 ===== FILE: shader\hlsl\MeshletCommon.hlsli =====
 #ifndef MESHLET_COMMON
 #define MESHLET_COMMON
@@ -167262,6 +168778,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 #include "GeometryGlass.hlsli"
 #include "MaterialOpticsPreview.hlsli"
 #include "NormalMapDecode.hlsli"
+#include "LiveToonMaterial.hlsli"
 
 static float g_PomForwardDepth = 0.0f;
 
@@ -167351,6 +168868,21 @@ float4 ShadeForward(in PSInput3D In)
     float shadowThreshold = shadowParams.r;
     float shadowSoftness = max(shadowParams.g, 0.0001f);
     float shadowStrength = saturate(shadowParams.b);
+#ifndef IMPOSTOR_FORWARD
+    // ライブトゥーンのマテリアルテクスチャ（Def / 顔陰影反転 / 質感ランプ）。Deferred と同じ処理。
+    {
+        LiveToonMaterialSurface toonSurface;
+        toonSurface.Albedo = baseColor.rgb;
+        toonSurface.ShadowThreshold = shadowThreshold;
+        toonSurface.ShadowSoftness = shadowSoftness;
+        ApplyLiveToonMaterialTextures(LiveToonTextures, LiveToonMaterialParams, materialUv, surfaceNormal,
+                                      SurfaceViewDirectionCommon(In.WorldPos, CameraPos), shaderClass,
+                                      g_SamplerState, toonSurface);
+        baseColor.rgb = toonSurface.Albedo;
+        shadowThreshold = toonSurface.ShadowThreshold;
+        shadowSoftness = max(toonSurface.ShadowSoftness, 0.0001f);
+    }
+#endif
 
     if (IsLiveToonClass(shaderClass) && !transparent)
     {
@@ -167366,7 +168898,13 @@ float4 ShadeForward(in PSInput3D In)
             material.rgb, shadowSoftness, directLight, toonDirection, toonColor,
             attenuation, volume, range, visibility);
         float3 irradiance = SampleEnvironmentLatLong(surfaceNormal, 1.0f);
-        float3 color = directLight + EvaluateLiveToonAmbient(baseColor.rgb, irradiance, shaderClass);
+        float3 color = directLight + EvaluateLiveToonAmbientStyled(baseColor.rgb, irradiance, shaderClass);
+        [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
+        {
+            float3 environment = SampleEnvironmentLatLong(reflect(-toonView, surfaceNormal), 0.5f);
+            color += EvaluateLiveToonEnvironmentSpecular(baseColor.rgb, surfaceNormal, toonView, environment,
+                                                         shaderClass);
+        }
         color *= assetEmissionAO.a;
         // Reuse the same GI/fog/emission composition as Deferred.
         float2 screenUv = In.Position.xy / max(ViewportSize, float2(1.0f, 1.0f));
@@ -167591,7 +169129,8 @@ struct ForwardOutput
     float HardwareDepth : SV_DepthLessEqual; // POM のピクセル深度オフセット（常に補間深度以下）
 };
 
-#ifndef IMPOSTOR_FORWARD
+// MODEL_SHADER_NO_ENTRY：ShadeForward だけを再利用するシェーダー（MekakurePS など）用。
+#if !defined(IMPOSTOR_FORWARD) && !defined(MODEL_SHADER_NO_ENTRY)
 ForwardOutput main(in PSInput3D In)
 {
     float4 premultiplied = ShadeForward(In);
@@ -167607,6 +169146,7 @@ ForwardOutput main(in PSInput3D In)
     return output;
 }
 #endif
+
 
 ===== FILE: shader\hlsl\modelshaderPS_MRT.hlsl =====
 #define SHADER_3D
@@ -174064,6 +175604,8 @@ float3 MLRectTextureMean(uint textureIndex)
         .rgb;
 }
 #endif
+// ライブトゥーン：陰影ランプをエンジンのテクスチャ表（MegaLightTextures）から読むため、その宣言の後に置く。
+#include "LiveToonStyle.hlsli"
 // ---------------------------------------------------------------------------------------------
 // 1 ライト分の評価（従来のライトループの本体を関数化。結果は acc に加算）
 //   cbIndex >= 0 : LightParams 配列のライト。シャドウマップ / VSM / DXR 影 / コンタクト影 / 雲影は従来どおり
@@ -174243,11 +175785,19 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         }
     }
 
-    if (IsLiveToonClass(g_LiveToonClass))
+    [branch] if (IsLiveToonClass(g_LiveToonClass))
     {
-        acc.PbrDirect += sampleWeight * EvaluateLiveToonLight(
-            albedo, normal, viewDir, singleDir, singleColor, g_LiveToonClass, materialData.g,
-            g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
+        // ライブスタイルは影を陰影の乗算色にまとめるため、影なしの放射輝度と可視率を分けて渡す。
+        // 大気の適用は lightColor に線形なので、singleColor = toonRadiance * shadowVisibility と一致する。
+        float3 toonRadiance = authoredLightColor * lightIntensityValue * singleAttenuation;
+        if (!decalLight)
+        {
+            float toonVolume = 0.0f;
+            toonRadiance = ApplyAtmosphereToLightCommon(worldPos, singleDir, toonRadiance, toonVolume);
+        }
+        acc.PbrDirect += sampleWeight * EvaluateLiveToonLightStyled(
+            albedo, normal, viewDir, singleDir, toonRadiance, shadowVisibility, decalLight ? 1.0f : lightPositionType.w,
+            g_LiveToonClass, materialData.g, g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
     }
 
     float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) *
@@ -174504,9 +176054,9 @@ void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, fl
         }
         if (IsLiveToonClass(g_LiveToonClass))
         {
-            pbrDirectLight = EvaluateLiveToonLight(
-                albedo, normal, viewDir, lightDir, lightColor, g_LiveToonClass, materialData.g,
-                g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
+            pbrDirectLight = EvaluateLiveToonLightStyled(
+                albedo, normal, viewDir, lightDir, lightColor, float3(1.0f, 1.0f, 1.0f), LightPositionType.w,
+                g_LiveToonClass, materialData.g, g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
         }
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
@@ -174704,6 +176254,7 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
 
 
 ===== FILE: shader\hlsl\TAA_BlendPS.hlsl =====

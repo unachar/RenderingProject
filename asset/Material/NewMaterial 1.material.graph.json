@@ -1,0 +1,295 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":580,\"y\":80}},\"node:10\":{\"location\":{\"x\":-340,\"y\":114}},\"node:13\":{\"location\":{\"x\":-328,\"y\":210}},\"node:16\":{\"location\":{\"x\":-328,\"y\":306}},\"node:19\":{\"location\":{\"x\":-328,\"y\":402}},\"node:25\":{\"location\":{\"x\":72,\"y\":-46}},\"node:35\":{\"location\":{\"x\":-472,\"y\":-46}},\"node:42\":{\"location\":{\"x\":-776,\"y\":82}},\"node:52\":{\"location\":{\"x\":-776,\"y\":-14}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-479.00006103515625,\"y\":-185.499984741210938},\"visible_rect\":{\"max\":{\"x\":895.2052001953125,\"y\":454.40264892578125},\"min\":{\"x\":-383.202239990234375,\"y\":-148.000869750976562}},\"zoom\":1.2499927282333374}}",
+  "links" : 
+  [
+    {
+      "id" : 15,
+      "source" : 14,
+      "target" : 3
+    },
+    {
+      "id" : 18,
+      "source" : 17,
+      "target" : 4
+    },
+    {
+      "id" : 21,
+      "source" : 20,
+      "target" : 6
+    },
+    {
+      "id" : 30,
+      "source" : 11,
+      "target" : 27
+    },
+    {
+      "id" : 31,
+      "source" : 28,
+      "target" : 2
+    },
+    {
+      "id" : 44,
+      "source" : 43,
+      "target" : 37
+    },
+    {
+      "id" : 45,
+      "source" : 38,
+      "target" : 26
+    },
+    {
+      "id" : 54,
+      "source" : 53,
+      "target" : 36
+    }
+  ],
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        580.0,
+        80.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "height" : 61.200000762939453,
+      "id" : 10,
+      "inputs" : [],
+      "kind" : "Color Parameter",
+      "name" : "Base Color",
+      "output" : 11,
+      "position" : 
+      [
+        -340.0,
+        114.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0,
+        0.67100000381469727,
+        1.0,
+        1.0
+      ],
+      "width" : 299.39999389648438
+    },
+    {
+      "id" : 13,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 14,
+      "position" : 
+      [
+        -328.0,
+        210.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.28600001335144043,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 16,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 17,
+      "position" : 
+      [
+        -328.0,
+        306.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 19,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 20,
+      "position" : 
+      [
+        -328.0,
+        402.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 25,
+      "inputs" : 
+      [
+        26,
+        27
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 28,
+      "position" : 
+      [
+        72.0,
+        -46.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 35,
+      "inputs" : 
+      [
+        36,
+        37
+      ],
+      "kind" : "Dot Product",
+      "name" : "Dot Product",
+      "output" : 38,
+      "position" : 
+      [
+        -472.0,
+        -46.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 42,
+      "inputs" : [],
+      "kind" : "Constant",
+      "name" : "Constant",
+      "output" : 43,
+      "position" : 
+      [
+        -776.0,
+        82.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.20000000298023224,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 52,
+      "inputs" : [],
+      "kind" : "Constant",
+      "name" : "Constant",
+      "output" : 53,
+      "position" : 
+      [
+        -776.0,
+        -14.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.17599999904632568,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "version" : 1
+}
