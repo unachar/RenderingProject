@@ -1181,6 +1181,15 @@ namespace SceneFile
         a("mekakureMaskPath", c.MekakureMaskPath);
         a("mekakureMaskStrength", c.MekakureMaskStrength);
         a("mekakureMaskInvert", c.MekakureMaskInvert);
+        a.FixedArray("mekakureParts", c.MekakureParts, [](Archive& s, MekakurePartParams& p) {
+            s("override", p.Initialized); // キー名は前版のシーンと互換
+            s("opacity", p.Opacity);
+            s("depth", p.Depth);
+            s("fadeStart", p.FadeStart);
+            s("fadeEnd", p.FadeEnd);
+            s("maskStrength", p.MaskStrength);
+            s("skinOcclusion", p.SkinOcclusion);
+        });
         a("liveToonDefPath", c.LiveToonDefPath);
         a("liveToonDefStrength", c.LiveToonDefStrength);
         a("liveToonFacePath", c.LiveToonFacePath);
@@ -1461,5 +1470,6 @@ namespace SceneFile
         });
     }
 } // 名前空間 SceneFile の終わり。
+
 
 

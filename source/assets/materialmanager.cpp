@@ -11,6 +11,10 @@
 #include "gpuscene/gpuscenechanges.h"
 #include <json/json.h>
 #include <fstream>
+#include <chrono>
+#include "materialgraph.h"
+#include "materialgraphcompiler.h"
+#include "frameconstants.h"
 
 namespace
 {
@@ -199,6 +203,7 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     }
     auto binding = BuildPreviewBinding(material, descriptors);
     binding.RuntimeHandle = runtime.Handle;
+    binding.GraphProgramID = runtime.GraphPublished ? runtime.GraphProgramSrv : -1;
     binding.Noise = noise;
     runtime.SourceError = sourceError;
     // リビジョン変更時は、共有マテリアルレコードとそのフレーム定数バッファだけを無効化する。
@@ -221,6 +226,146 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
         runtime.TextureDescriptors = descriptors;
         ++runtime.Revision;
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// マテリアルグラフの描画時評価
+// ---------------------------------------------------------------------------------------------
+namespace
+{
+    void DisableGraphProgram(MaterialRuntime& runtime)
+    {
+        runtime.GraphActive = false;
+        runtime.GraphProgramHash = 0;
+        if (runtime.GraphPublished)
+        {
+            runtime.GraphPublished = false;
+            runtime.Binding.GraphProgramID = -1;
+            ++runtime.Revision; // マテリアル定数（AssetTextures.w）を作り直す
+        }
+    }
+}
+
+void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* graph)
+{
+    if (handle == 0)
+    {
+        return;
+    }
+    auto& runtime = GetRuntime(handle);
+    runtime.GraphChecked = true;
+    if (!graph)
+    {
+        runtime.GraphStatus.clear();
+        DisableGraphProgram(runtime);
+        return;
+    }
+    if (!graph->Settings.RuntimeEvaluation)
+    {
+        runtime.GraphStatus = "描画時評価はオフです（ベイクした値を使います）";
+        DisableGraphProgram(runtime);
+        return;
+    }
+    const auto program = MaterialGraphVm::Compile(*graph, &MaterialManager::ResolveGraphTexture);
+    if (!program.Success)
+    {
+        runtime.GraphStatus = program.Error;
+        DisableGraphProgram(runtime);
+        return;
+    }
+    runtime.GraphStatus.clear();
+    runtime.GraphInstructions = program.Instructions;
+    runtime.GraphRegisters = program.Registers;
+    if (runtime.GraphActive && runtime.GraphProgramHash == program.Hash)
+    {
+        return;
+    }
+    if (runtime.GraphProgramSrv < 0)
+    {
+        runtime.GraphProgramSrv = TextureManager::CreateDataTexture("MaterialGraphProgram", MaterialGraphVm::kMaxTexels);
+        if (runtime.GraphProgramSrv < 0)
+        {
+            runtime.GraphStatus = "プログラム用のテクスチャを作れません（テクスチャ表が一杯です）";
+            DisableGraphProgram(runtime);
+            return;
+        }
+    }
+    TextureManager::UpdateDataTexture(runtime.GraphProgramSrv, 0, program.Texels);
+    runtime.GraphProgramHash = program.Hash;
+    runtime.GraphHeader = program.Texels[0];
+    runtime.GraphUsesTime = program.UsesTime;
+    runtime.GraphActive = true;
+}
+
+void MaterialManager::UpdateGraphPrograms()
+{
+    static const auto start = std::chrono::steady_clock::now();
+    const float time = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+    for (auto& [handle, runtimePointer] : runtimes)
+    {
+        auto& runtime = *runtimePointer;
+        if (!runtime.GraphChecked && !runtime.Missing && handle != 0)
+        {
+            // エディターで開いていないマテリアル：保存済みのグラフ（<マテリアル>.graph.json）を読む
+            runtime.GraphChecked = true;
+            auto path = registry.Resolve(handle);
+            if (!path.empty())
+            {
+                path += ".graph.json";
+                std::error_code error;
+                if (std::filesystem::exists(path, error))
+                {
+                    MaterialGraph graph;
+                    string loadError;
+                    if (MaterialGraph::Load(path, graph, loadError))
+                    {
+                        SetGraphProgram(handle, &graph);
+                    }
+                    else
+                    {
+                        runtime.GraphStatus = loadError;
+                    }
+                }
+            }
+        }
+        if (!runtime.GraphActive || runtime.GraphProgramSrv < 0)
+        {
+            continue;
+        }
+        if (!runtime.GraphPublished && TextureManager::IsDataTextureReady(runtime.GraphProgramSrv))
+        {
+            // プログラムの最初の書き込みが記録された後に、マテリアル定数へ反映する
+            runtime.GraphPublished = true;
+            runtime.Binding.GraphProgramID = runtime.GraphProgramSrv;
+            ++runtime.Revision;
+        }
+        if (runtime.GraphUsesTime)
+        {
+            auto header = runtime.GraphHeader;
+            header[0] = time;
+            TextureManager::UpdateDataTexture(runtime.GraphProgramSrv, 0, {header});
+        }
+    }
+}
+
+int MaterialManager::ResolveGraphTexture(AssetHandle texture, MaterialSamplerType sampler)
+{
+    const auto path = registry.Resolve(texture);
+    if (path.empty() || registry.TypeOf(texture) != AssetType::Texture)
+    {
+        return -1;
+    }
+    // エンジンのベースカラーと同じく、格納値をそのまま読む（Normal は法線マップとして読み込む）
+    const int srv = sampler == MaterialSamplerType::Normal ? TextureManager::LoadNormalTexture(path.generic_string().c_str())
+                                                           : TextureManager::LoadTexture(path, TextureUsage::Color);
+    const int index = srv - static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX);
+    return index >= 0 && index < 512 ? index : -1;
+}
+
+bool MaterialManager::IsGraphProgramActive(AssetHandle handle)
+{
+    const auto* runtime = FindRuntime(handle);
+    return runtime && runtime->GraphActive;
 }
 
 AssetHandle MaterialManager::SlotHandle(const MaterialComponent& material, size_t slot)
@@ -390,3 +535,4 @@ void MaterialManager::NotifyAssignmentsChanged()
         }
     }
 }
+

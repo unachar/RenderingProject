@@ -95,6 +95,31 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     float4 assetEmissionAO;
     ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
+    // マテリアルグラフの描画時評価（3D 位置で評価。GPU 駆動 / Visibility 解決でも同じ）
+    float3 graphGeometryNormal = In.Normal.xyz * ((FlipNormal != 0) ? -1.0f : 1.0f);
+    MaterialGraphVmOutput materialGraph = (MaterialGraphVmOutput)0;
+    [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
+    {
+        MaterialGraphVmInput graphInput;
+        graphInput.WorldPos = In.WorldPos;
+        graphInput.PixelPos = In.Position.xy;
+#ifdef SHADER_GPU_DRIVEN
+        GPUInstanceData graphInstance = gSceneInstances[In.InstanceID];
+        MaterialGraphSetObject(graphInput, graphInstance.World, graphInstance.LocalCenter.xyz,
+                               graphInstance.LocalExtents.xyz, graphInstance.Entity, graphInstance.Entity != 0xFFFFFFFFu);
+#else
+        MaterialGraphSetObject(graphInput, World, ObjectBoundsCenter.xyz,
+                               ObjectBoundsExtents.w > 0.5f ? ObjectBoundsExtents.xyz : float3(0, 0, 0),
+                               (uint)ObjectBoundsCenter.w, ObjectBoundsExtents.w > 0.5f || ObjectBoundsCenter.w > 0.5f);
+#endif
+        graphInput.Normal = graphGeometryNormal;
+        graphInput.CameraPos = In.CameraPos;
+        graphInput.UV = materialUv;
+        graphInput.VertexColor = In.Diffuse;
+        materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, g_SamplerState);
+        ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
+                                  assetEmissionAO);
+    }
 #ifndef SHADER_VISIBILITY_RESOLVE
     clip(baseColor.a - 0.01f);
 #endif
@@ -136,6 +161,7 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
         normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
     }
     normal = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
+    normal = ApplyMaterialGraphNormal(materialGraph, assetMaterial, normal, graphGeometryNormal, In.WorldPos, In.TexCoord);
 
     GBufferOutput output;
     output.EmissionAO = assetEmissionAO;
@@ -223,4 +249,5 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 #endif
+
 

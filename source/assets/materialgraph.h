@@ -101,7 +101,122 @@ enum class MaterialNodeKind
     FlattenNormal,
     BumpOffset,
     RotateAboutAxis,
-    BlackBody
+    BlackBody,
+    // ---- プロシージャルスタジオのノイズ（ProcStudio::FractalNoise / TextureNoise::Noise と同じ計算）
+    ProceduralNoise, // 単体ノイズ（フラクタルなし）。Value = {基底, シード, タイル, 0}
+    FractalNoise,    // フラクタルノイズ。Value = {基底, フラクタル種別, シード, タイル}
+    NoiseCombine,    // 2 つのノイズの合成。Value = {合成モード, 0..1 に収める, 0, 0}
+    NoiseLayers,     // 最大 4 層の重み付き平均（スタジオの Composite と同じ）
+    // ---- テクスチャ（色画像 → 高さ / 法線。プロシージャルスタジオの「画像から高さ・法線」と同じ式）
+    ConvertToNormalHeight, // 旧（1 ノードで切り替え）。読み込み互換のためだけに残す（追加メニューには出さない）
+    ConvertToHeight,       // 色画像 → 高さ（Scalar）。Value = {0, チャンネル, 反転, 0}
+    ConvertToNormal,       // 色画像 → 接空間法線（Vector3）。Value = {1, チャンネル, 反転, Sobel}
+    BreakVector,           // ベクトルを X / Y / Z / W に分ける（UE の BreakOutFloat4Components）。出力は常に分割
+    ConvertToTexture,      // 入力（ノイズなど）をテクスチャに焼いて使う。Value = {サンプラー, 解像度, 0, 0}
+                           // Texture が空のあいだは入力をそのまま通す
+    // ---- ソリッドテクスチャ（プロシージャルスタジオの立体テクスチャ。3D 座標で評価する）
+    SolidTexture,    // 色（Vector3）。Value = {種類, 基底, フラクタル, シード}
+    SolidPattern,    // 値 0〜1（Scalar）。Value = {種類, 基底, フラクタル, シード}
+    SolidCoordinate, // 立体テクスチャ用の 0〜1 座標（Vector3）= (Position * 0.5 + 0.5) * Scale + Offset
+    ThreeColorRamp,  // 値 → A / B / C の 3 色ランプ（スタジオの配色と同じ）
+    // 普通のテクスチャ / ノイズ（2D）からソリッドテクスチャ（3D）を作る。Texture = 元画像（ドロップ / Value から作成）
+    // Value = {方式（MaterialSolidConvertMethod）, サンプラー（Color / Linear）, シード, グレースケール}
+    ConvertToSolid,
+    // ---- マテリアルシェーディング用の便利ノード（2026-11）
+    LocalPosition,    // 表面の点のローカル（オブジェクト）空間の位置（UE の Local Position）。旧名 Object Position
+    VertexColor,      // 頂点カラー（RGBA）
+    CameraDistance,   // カメラからの距離（ワールド単位）
+    SlopeMask,        // 面の向き（法線と Up の角度）のマスク。雪・苔・砂の積もり
+    HeightLerp,       // 高さで 2 つを混ぜる（UE の HeightLerp）
+    ColorAdjust,      // 明るさ / コントラスト / 彩度
+    TriplanarTexture, // テクスチャを 3 方向から投影（UV 不要、継ぎ目なし）。Value = {サンプラー, 0, 0, 0}
+    // ---- オブジェクト / カメラの情報（UE の Object / Coordinates ノード）
+    ObjectPosition,    // オブジェクト原点のワールド座標（オブジェクトごとに 1 つ）
+    ObjectScale,       // ワールドでのスケール（XYZ）
+    ObjectOrientation, // オブジェクトのローカル +Y（上）方向（ワールド）
+    ObjectRadius,      // 範囲の半径（ワールド）
+    ObjectBounds,      // ローカルの範囲。Value[0] = 出力：0 大きさ / 1 中心 / 2 最小 / 3 最大
+    BoundingBoxUVW,    // 範囲内の 0〜1 座標（ローカル。UE の BoundingBoxBased_0-1_UVW）
+    PerInstanceRandom, // オブジェクトごとに固定の 0〜1 の乱数
+    TransformVector,   // 方向の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル / 2 ワールド→ビュー / 3 ビュー→ワールド
+    TransformPosition, // 位置の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル
+    CameraPosition,    // カメラのワールド座標
+    PixelDepth,        // カメラからの奥行き（ビュー空間の Z）
+    ScreenPosition,    // 画面上の 0〜1 座標
+    DitherOpacity,     // ディザ（4x4）で不透明度を 0 / 1 にする（Masked のフェード）
+    DistanceFade,      // カメラ距離で 0（Start）→ 1（End）
+    HeightGradient     // 高さで 0（Start）→ 1（End）。Value[0] = 0 ワールド Y / 1 ローカル Y / 2 範囲内 0〜1
+};
+
+// Convert To Solid の方式（node.Value[0]）
+enum class MaterialSolidConvertMethod : int
+{
+    Stochastic = 0, // 3 方向投影 + ヘックス タイル（タイルごとにランダムな位置 / 回転で混ぜる）：繰り返し・縞が出ない（既定）
+    Triplanar = 1,  // 3 方向（YZ / XZ / XY）から投影し、法線で混ぜる（元画像の見た目を保つ。拡大すると繰り返す）
+    Volume = 2,     // スタジオの「画像からボリューム」と同じ（互換用。拡大すると繰り返し、面によって縞が出る）
+    Count
+};
+// 旧ファイル（solidMethods < 2）の値 0 は Volume だったが、繰り返しの問題があるため Stochastic として読む
+
+// ソリッドテクスチャの種類（node.Value[0]）。スタジオの IsSolidCapable と同じ 6 種
+enum class MaterialSolidKind : int
+{
+    FractalNoise = 0,
+    Marble,
+    Wood,
+    Granite,
+    Voronoi,
+    Cloud,
+    Count
+};
+
+// ノードがテクスチャ（node.Texture）を持つ / 読むか
+inline bool IsConvertTextureNode(MaterialNodeKind kind);
+inline bool UsesNodeTexture(MaterialNodeKind kind)
+{
+    return kind == MaterialNodeKind::TextureSample || kind == MaterialNodeKind::ConvertToTexture ||
+           kind == MaterialNodeKind::ConvertToSolid || kind == MaterialNodeKind::TriplanarTexture ||
+           IsConvertTextureNode(kind);
+}
+
+// Convert ノードか（新旧どちらも）
+inline bool IsConvertTextureNode(MaterialNodeKind kind)
+{
+    return kind == MaterialNodeKind::ConvertToNormalHeight || kind == MaterialNodeKind::ConvertToHeight ||
+           kind == MaterialNodeKind::ConvertToNormal;
+}
+
+// Convert To Normal / Height の出力（node.Value[0]）
+enum class MaterialConvertOutput : int
+{
+    Height = 0, // Scalar（POM の Height へ）
+    Normal = 1  // Vector3 接空間法線（Normal へ）
+};
+
+// Noise Combine の合成モード（node.Value[0]）
+enum class MaterialNoiseCombineMode : int
+{
+    Mix,
+    Add,
+    Subtract,
+    Multiply,
+    Screen,
+    Overlay,
+    Min,
+    Max,
+    Difference,
+    HeightBlend,
+    Count
+};
+
+// マテリアルモード（UE の Blend Mode + 屈折に相当）。Material Output の接続できるピンが変わる
+enum class MaterialGraphMode : int
+{
+    Opaque = 0,
+    Masked = 1,
+    Translucent = 2,
+    Glass = 3, // Translucent + 屈折 / 透過 / 吸収
+    Count
 };
 
 // Material Output の入力ピン（順番はシリアライズ済みグラフのピン順なので変更しない。追加は末尾）
@@ -159,6 +274,7 @@ enum class MaterialBlendMode : int
 // グラフ全体の設定（UE のマテリアルの Details に相当）。-1 / 負値は「マテリアルアセットの設定を使う」
 struct MaterialGraphSettings
 {
+    int Mode = -1;             // MaterialGraphMode（-1 = 旧グラフ：すべてのピンを使える）
     int Surface = -1;          // 0 Opaque / 1 Masked / 2 Transparent
     int Cull = -1;             // 0 Back / 1 None（両面）/ 2 Front
     int ShadingModel = -1;     // 0 標準 / 1 クリアコート / 2 布 / 3 肌 / 4 髪 / 5 異方性
@@ -167,6 +283,14 @@ struct MaterialGraphSettings
     int BakeResolution = 512;  // ピクセルごとの式をテクスチャへ焼くときの解像度
     float BakeTime = 0.0f;     // Time ノードを焼くときの時刻（秒）
     bool AutoBake = true;      // グラフ変更後に自動でテクスチャを焼き直す
+    // ライブ更新：Time を使う式を、実行中に焼いたテクスチャへ連続で書き込む（マテリアルが動く）
+    bool LiveUpdate = true;
+    int LiveResolution = 256; // ライブ更新の解像度（ベイク解像度とは別。CPU 負荷とのトレードオフ）
+    float LiveRate = 30.0f;   // 1 秒あたりの更新回数（上限）
+    // 描画時評価（GPU）：グラフを GPU プログラムにして、エンジンのシェーダーが画素ごとに 3D 位置で評価する。
+    // ソリッドテクスチャ / ノイズが UV に依存せず継ぎ目なく貼られる。対応外のノードがあるとベイクに戻る
+    bool RuntimeEvaluation = true;
+    int SolidSpace = 0; // ソリッドテクスチャ / ノイズの既定の座標：0 オブジェクト空間 / 1 ワールド空間
     bool operator==(const MaterialGraphSettings&) const = default;
 };
 
@@ -199,6 +323,32 @@ struct MaterialGraphNode
     float Width = 0.0f;  // ノード本体の幅（0 = 既定）。右端 / 右下のグリップで変更する
     float Height = 0.0f; // ノード本体の高さ（0 = 内容に合わせる）。下端 / 右下のグリップで変更する
     std::string Comment; // ノードの上に表示するコメント（UE のノードコメント）
+    // 出力ピンの分割（UE の Split Struct Pin）。空 = 分割なし。要素 = X / Y / Z / W の出力ピン
+    // 分割中は OutputPin（まとめた出力）は表示されず、接続もできない
+    std::vector<uint64_t> SplitPins;
+    // 未接続の入力ピンの値（UE と同じく、ピンの横のボックスで編集する）。添字 = 入力ピン。NaN = 定義の既定値
+    std::vector<float> PinValues;
+
+    // pin がこのノードの出力（まとめた出力 / 分割した成分）か
+    bool OwnsOutput(uint64_t pin) const
+    {
+        if (pin == 0)
+        {
+            return false;
+        }
+        if (pin == OutputPin)
+        {
+            return true;
+        }
+        for (const auto split : SplitPins)
+        {
+            if (split == pin)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 struct MaterialGraphLink
@@ -222,15 +372,47 @@ class MaterialGraph
     static std::span<const MaterialNodeDefinition> Definitions();
     static const MaterialNodeDefinition& Definition(MaterialNodeKind kind);
     static MaterialGraph FromMaterial(const MaterialAssetData& material);
+    // マテリアルアセットの値からマテリアルモードを決める（Transmission > 0 = Glass）
+    static MaterialGraphMode ModeFromMaterial(const MaterialAssetData& material);
+    // ---- 入力ピン横の数値ボックス（UE と同じ）
+    // Scalar / Numeric で、UV / Time / 位置などの特別な既定値が無いピンだけ
+    static bool IsPinValueEditable(MaterialNodeKind kind, size_t input);
+    // 未接続の入力ピンの値（ボックスで設定した値、無ければ定義の既定値）
+    static std::array<float, 4> UnconnectedInputValue(const MaterialGraphNode& node, size_t input);
+    static bool HasPinValue(const MaterialGraphNode& node, size_t input);
+    // ---- 出力ピンの分割（UE の Split Struct Pin / Recombine）
+    // 出力ピンの成分番号：-1 = まとめた出力、0〜3 = X / Y / Z / W
+    int OutputComponent(uint64_t pin) const;
+    // 出力ピンの型（成分ピンは Scalar）
+    MaterialGraphType PinOutputType(uint64_t pin) const;
+    bool CanSplitOutput(uint64_t node) const;
+    // 分割する（まとめた出力の接続は外れる）。成分数は今の出力の型から決まる
+    // forcedCount > 0：成分数を指定して分割する（コピー＆ペーストで、接続前の型に関係なく同じ分割を作る）
+    bool SplitOutput(uint64_t node, std::string& error, int forcedCount = 0);
+    // 統合する（成分ピンの接続は外れる）。Break Vector は常に分割なので統合できない
+    bool RecombineOutput(uint64_t node);
+    // マテリアルモード / シェーディングモデルで Material Output のピンが使えるか（UE の灰色ピン）
+    static bool IsOutputPinActive(MaterialOutputPin pin, const MaterialGraphSettings& settings);
+    bool IsOutputPinActive(size_t index) const;
+    // 使えない理由（ツールチップ用）。使えるなら nullptr
+    static const char* OutputPinInactiveReason(MaterialOutputPin pin, const MaterialGraphSettings& settings);
+    // マテリアルモードを設定する（Blend Mode も合わせる）
+    void SetMode(MaterialGraphMode mode);
     uint64_t AddNode(MaterialNodeKind kind, float x, float y);
     bool RemoveNode(uint64_t node);
     bool CanConnect(uint64_t source, uint64_t target, std::string& error) const;
+    // エディターでの新規接続用：CanConnect に加えて、マテリアルモードで使えないピンを拒否する
+    bool CanConnectActive(uint64_t source, uint64_t target, std::string& error) const;
     bool Connect(uint64_t source, uint64_t target, std::string& error);
     bool RemoveLink(uint64_t link);
     MaterialGraphNode* FindNode(uint64_t node);
     const MaterialGraphNode* FindNode(uint64_t node) const;
     const MaterialGraphNode* FindPinNode(uint64_t pin, bool* input = nullptr, size_t* index = nullptr) const;
+    // 入力ピンに繋がっているリンク。マテリアルモードで使えない Material Output のピンへのリンクは
+    // 「無いもの」として扱う（リンク自体は残す：モードを戻すと復活する。UE と同じ）
     const MaterialGraphLink* InputLink(uint64_t pin) const;
+    // モードに関係なく、実際に存在するリンク
+    const MaterialGraphLink* RawInputLink(uint64_t pin) const;
     // ノード出力の型（Numeric の演算は入力から決まる。Append / Component Mask は成分数から決まる）
     MaterialGraphType ResolveOutputType(uint64_t node) const;
     bool Validate(std::string& error) const;
@@ -243,5 +425,9 @@ class MaterialGraph
     uint64_t m_NextId = 1;
     bool Reaches(uint64_t startNode, uint64_t targetNode) const;
     MaterialGraphType OutputType(uint64_t node, std::vector<uint64_t>& visiting) const;
+    MaterialGraphType SourcePinType(uint64_t pin, std::vector<uint64_t>& visiting) const;
 };
+
+
+
 

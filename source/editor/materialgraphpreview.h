@@ -1,7 +1,10 @@
 #pragma once
 // ============================================================================
 // MaterialGraphPreview：マテリアルグラフのノードプレビュー（Unreal Engine のノードプレビュー風）
-//  ・各ノードの出力を CPU で評価して画像にする（UV 平面、法線などに依存する場合は球）
+//  ・各ノードの出力を GPU で評価して画像にする（MaterialGraphGpu。エンジンの描画と同じ命令列）。
+//    GPU で評価できないノード（DDX / DDY / Normal From Height / Bump Offset）に依存するものだけ CPU で評価する
+//  ・UV 平面、法線などに依存する場合は球
+//  ・定数 / パラメーター / Time / オブジェクト・カメラの情報など、画像にしても意味の無いノードにはプレビューを出さない
 //  ・Material Output は簡易 PBR で球にシェーディング（Normal / Normal Intensity / Height(POM) / テクスチャも反映）
 //  ・Texture Sample は実際のテクスチャを CPU に読み込んでサンプリングする（Sampler Type 対応）
 //  ・画像は ImGui 1.92 の ImTextureData で GPU に送る（未対応バックエンドでは矩形描画）
@@ -69,3 +72,4 @@ namespace MaterialGraphPreview
     // グラフドキュメントを破棄するときに呼ぶ（キャッシュと GPU 画像の解放）
     void Forget(const MaterialGraph& graph);
 } // namespace MaterialGraphPreview
+

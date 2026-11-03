@@ -245,3 +245,32 @@ inline bool MeshSemanticKeyMatchesFilter(string_view key, string_view filter)
     }
     return false;
 }
+
+
+// メカクレのパーツ番号（MekakurePart と同じ並び：0 目, 1 目ハイライト, 2 眉, 3 まつ毛, 4 顔, 5 追加対象名）。
+// 対象マスクで有効なビットのうち、細かい部位を優先する（ハイライト > まつ毛 > 眉 > 目 > 顔）。
+inline int ResolveMekakurePartIndex(uint32_t semanticFlags, uint32_t targetMask)
+{
+    const uint32_t flags = semanticFlags & targetMask;
+    if (flags & MeshSemantic_EyeHighlight)
+    {
+        return 1;
+    }
+    if (flags & MeshSemantic_Lash)
+    {
+        return 3;
+    }
+    if (flags & MeshSemantic_Brow)
+    {
+        return 2;
+    }
+    if (flags & MeshSemantic_Eye)
+    {
+        return 0;
+    }
+    if (flags & MeshSemantic_Face)
+    {
+        return 4;
+    }
+    return 5;
+}

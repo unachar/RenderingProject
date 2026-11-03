@@ -207,9 +207,18 @@ const char* GetModelPsPath(EntityID entity)
 // メカクレ（前髪越しに目・眉を透かす）
 // HDR 半透明パスの最後に、対象メッシュ（読み込み時に分類した目 / 眉 / まつ毛）だけを
 // 「深度をカメラ側へ寄せた」状態でアルファ合成する（MekakureVS / MekakurePS）。
-//  - 深度は書かない・ステンシル不要・ルートシグネチャ変更なし
+//
+// 透過は「髪だけ」に限定する（プロセカ 3 周年アップデートの考え方：
+// 『目の手前にあるのが自キャラの髪のときだけ透かす』をキャラ単位で判定）。
+// ステンシルの代わりに、キャラごとに R32G32 のマスクを作る（DSV は D32 でステンシルが無いため）：
+//   R = 自キャラの「髪以外」（顔・瞼・肌・体）の最も手前の距離（-距離を MAX 合成）
+//       → 目より手前に皮膚があるピクセル（瞼・横顔の頬や鼻）は透かさない
+//   G = 画面上で一番手前に見えている自キャラの髪の被覆（0: 髪なし / 1〜2: 髪あり、2 - G = 透け具合）
+//       → 手前に見えているのが髪のときだけ透かす（他キャラの髪・背景越しには透けない）
+//  - 深度は書かない・ルートシグネチャ変更なし・既存パラメーターの意味は変更なし
 //  - 対象メッシュの判定は読み込み時の SemanticFlags（ビット演算のみ）。名前フィルターが空なら
 //    毎フレームの文字列処理は発生しない
+//  - 髪メッシュが分類できないモデルでは髪の被覆判定を省略し、皮膚の遮蔽判定だけを行う
 // ---------------------------------------------------------------------------------------------
 template <typename TMeshData> static bool IsMekakureTargetMesh(const MaterialComponent& material, const TMeshData& mesh)
 {
@@ -228,14 +237,30 @@ template <typename TMeshData> static bool IsMekakureTargetMesh(const MaterialCom
 
 namespace
 {
-    // ---- メカクレ用の GPU リソース（PSO・髪マスク） ----
+    // ---- メカクレ用の GPU リソース（PSO・キャラ単位マスク） ----
     constexpr UINT kMekakureMaskSrvIndex = RendererState::g_kQUALITY_DESCRIPTOR_START + 12;
-    constexpr float kMekakureHairPush = 0.002f; // 髪マスク：深度の誤差で自分の髪に負けないよう少しだけ手前へ
+    constexpr float kMekakureHairPush = 0.002f; // 髪の被覆：深度の誤差で自分の髪に負けないよう少しだけ手前へ
+    constexpr DXGI_FORMAT kMekakureMaskFormat = DXGI_FORMAT_R32G32_FLOAT;
+    constexpr float kMekakureMaskClear[4] = {-1.0e30f, 0.0f, 0.0f, 0.0f}; // R: 遮蔽なし, G: 髪なし
+
+    // MekakureMaskPS のモード（ConstantBuffer3D::MaterialPadding）
+    constexpr float kMaskModeHairAlpha = 0.0f;   // 髪テクスチャのアルファで透け具合
+    constexpr float kMaskModeHairRed = 1.0f;     // 専用マスク画像の R で透け具合
+    constexpr float kMaskModeHairCoverage = 2.0f; // 透け具合の制限なし（被覆だけ）
+    constexpr float kMaskModeOccluder = 3.0f;    // 髪以外（皮膚など）の距離
+
+    enum class MekakurePsoKind
+    {
+        Overlay,  // 目・眉・まつ毛をシーンへ合成
+        Hair,     // 髪の被覆（深度テストあり：手前に見えている髪だけ）
+        Occluder, // 髪以外の距離（深度テストなし：自キャラ内の前後関係だけを見る）
+    };
 
     struct MekakureGpu
     {
         ComPtr<ID3D12PipelineState> OverlayPso;
-        ComPtr<ID3D12PipelineState> MaskPso;
+        ComPtr<ID3D12PipelineState> HairPso;
+        ComPtr<ID3D12PipelineState> OccluderPso;
         DXGI_FORMAT OverlayFormat = DXGI_FORMAT_UNKNOWN;
         ComPtr<ID3D12Resource> Mask;
         ComPtr<ID3D12Resource> Retired[RendererState::g_kFRAME_COUNT + 1];
@@ -252,7 +277,8 @@ namespace
         return gpu;
     }
 
-    ID3D12PipelineState* CreateMekakurePso(const char* vsPath, const char* psPath, DXGI_FORMAT format, bool overlay)
+    ID3D12PipelineState* CreateMekakurePso(const char* vsPath, const char* psPath, DXGI_FORMAT format,
+                                           MekakurePsoKind kind)
     {
         ComPtr<ID3DBlob> vs;
         ComPtr<ID3DBlob> ps;
@@ -271,6 +297,7 @@ namespace
             {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
+        const bool overlay = kind == MekakurePsoKind::Overlay;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
         desc.pRootSignature = ShaderPipelines::GetModelRootSignature();
         desc.VS = CD3DX12_SHADER_BYTECODE(vs.Get());
@@ -293,17 +320,18 @@ namespace
         }
         else
         {
-            // 髪が重なったら一番「透かさない」値を残す
+            // R: 一番手前の皮膚（-距離の最大）, G: 髪が重なったら一番「透かさない」値（2 - 透け具合の最大）
             blend.SrcBlend = D3D12_BLEND_ONE;
             blend.DestBlend = D3D12_BLEND_ONE;
-            blend.BlendOp = D3D12_BLEND_OP_MIN;
+            blend.BlendOp = D3D12_BLEND_OP_MAX;
             blend.SrcBlendAlpha = D3D12_BLEND_ONE;
             blend.DestBlendAlpha = D3D12_BLEND_ONE;
-            blend.BlendOpAlpha = D3D12_BLEND_OP_MIN;
+            blend.BlendOpAlpha = D3D12_BLEND_OP_MAX;
         }
-        blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        blend.RenderTargetWriteMask = overlay ? D3D12_COLOR_WRITE_ENABLE_ALL
+                                              : (D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN);
         desc.SampleMask = UINT_MAX;
-        desc.DepthStencilState.DepthEnable = TRUE;
+        desc.DepthStencilState.DepthEnable = kind == MekakurePsoKind::Occluder ? FALSE : TRUE;
         desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
         desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL; // 逆 Z
         desc.DepthStencilState.StencilEnable = FALSE;
@@ -329,11 +357,22 @@ namespace
         if (!gpu.PsoFailed && (!gpu.OverlayPso || gpu.OverlayFormat != sceneFormat))
         {
             gpu.OverlayPso.Attach(CreateMekakurePso("shader/hlsl/build/MekakureVS.cso",
-                                                    "shader/hlsl/build/MekakurePS.cso", sceneFormat, true));
-            gpu.MaskPso.Attach(CreateMekakurePso("shader/hlsl/build/MekakureVS.cso",
-                                                 "shader/hlsl/build/MekakureMaskPS.cso", DXGI_FORMAT_R8_UNORM, false));
+                                                    "shader/hlsl/build/MekakurePS.cso", sceneFormat,
+                                                    MekakurePsoKind::Overlay));
+            if (!gpu.HairPso)
+            {
+                gpu.HairPso.Attach(CreateMekakurePso("shader/hlsl/build/MekakureVS.cso",
+                                                     "shader/hlsl/build/MekakureMaskPS.cso", kMekakureMaskFormat,
+                                                     MekakurePsoKind::Hair));
+            }
+            if (!gpu.OccluderPso)
+            {
+                gpu.OccluderPso.Attach(CreateMekakurePso("shader/hlsl/build/MekakureVS.cso",
+                                                         "shader/hlsl/build/MekakureMaskPS.cso", kMekakureMaskFormat,
+                                                         MekakurePsoKind::Occluder));
+            }
             gpu.OverlayFormat = sceneFormat;
-            gpu.PsoFailed = !gpu.OverlayPso || !gpu.MaskPso;
+            gpu.PsoFailed = !gpu.OverlayPso || !gpu.HairPso || !gpu.OccluderPso;
         }
         if (gpu.PsoFailed)
         {
@@ -358,12 +397,15 @@ namespace
                 gpu.RetiredCursor = (gpu.RetiredCursor + 1) % _countof(gpu.Retired);
                 gpu.Mask.Reset();
             }
-            const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8_UNORM, width, height, 1, 1, 1, 0,
+            const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(kMekakureMaskFormat, width, height, 1, 1, 1, 0,
                                                            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
             const CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
             D3D12_CLEAR_VALUE clear{};
-            clear.Format = DXGI_FORMAT_R8_UNORM;
-            clear.Color[0] = 1.0f;
+            clear.Format = kMekakureMaskFormat;
+            clear.Color[0] = kMekakureMaskClear[0];
+            clear.Color[1] = kMekakureMaskClear[1];
+            clear.Color[2] = kMekakureMaskClear[2];
+            clear.Color[3] = kMekakureMaskClear[3];
             if (FAILED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
                                                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
                                                        IID_PPV_ARGS(&gpu.Mask))))
@@ -373,7 +415,7 @@ namespace
             gpu.Mask->SetName(L"MekakureHairMask");
             device->CreateRenderTargetView(gpu.Mask.Get(), nullptr, gpu.RtvHeap->GetCPUDescriptorHandleForHeapStart());
             D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-            srv.Format = DXGI_FORMAT_R8_UNORM;
+            srv.Format = kMekakureMaskFormat;
             srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             srv.Texture2D.MipLevels = 1;
@@ -394,7 +436,9 @@ namespace
         AnimationModelResource* Animated = nullptr;
         StaticModelResource* Static = nullptr;
         vector<UINT> EyeMeshes;
+        vector<int> EyeParts; // EyeMeshes と同じ並び。MekakurePart の番号
         vector<UINT> HairMeshes;
+        vector<UINT> OccluderMeshes; // 髪・透過対象以外（顔・瞼・肌・体）。目より手前なら透かさない
     };
 } // namespace
 
@@ -414,21 +458,28 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
     // ---- 対象の収集（ビット演算のみ。名前フィルターが空なら文字列処理なし） ----
     static vector<MekakureEntityDraw> draws;
     draws.clear();
-    bool anyMask = false;
     auto collect = [&](EntityID entity, auto* model) {
         if (!model || !ComponentManager::HasComponent<MaterialComponent>(entity))
         {
             return;
         }
         const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-        if (!source.MekakureEnabled || source.MekakureOpacity <= 0.001f)
+        if (!source.MekakureEnabled)
+        {
+            return;
+        }
+        bool anyVisiblePart = false;
+        for (const auto& part : source.MekakureParts)
+        {
+            anyVisiblePart |= (part.Initialized ? part.Opacity : source.MekakureOpacity) > 0.001f;
+        }
+        if (!anyVisiblePart)
         {
             return;
         }
         MekakureEntityDraw draw;
         draw.Entity = entity;
         draw.Source = &source;
-        const bool useMask = source.MekakureMaskSource != 0 && source.MekakureMaskStrength > 0.001f;
         for (UINT m = 0; m < model->GetMeshCount(); ++m)
         {
             const auto& mesh = model->GetMeshData(m);
@@ -439,17 +490,28 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
             if (IsMekakureTargetMesh(source, mesh))
             {
                 draw.EyeMeshes.push_back(m);
+                draw.EyeParts.push_back(
+                    ResolveMekakurePartIndex(mesh.SemanticFlags, static_cast<uint32_t>(source.MekakureTargetMask)));
             }
-            else if (useMask && (mesh.SemanticFlags & MeshSemantic_Hair) != 0)
+            else if ((mesh.SemanticFlags & MeshSemantic_Hair) != 0)
             {
-                draw.HairMeshes.push_back(m);
+                draw.HairMeshes.push_back(m); // 透け具合のマスクが無くても「髪の被覆」として常に使う
+            }
+            else if ((mesh.SemanticFlags & MeshSemantic_Accessory) == 0)
+            {
+                // 半透明スロット（頬染め・涙などの重ね板）は目を隠さない
+                if (!source.MaterialSlots.empty() &&
+                    MaterialSystem::IsTransparentMaterial(MaterialManager::Resolve(source, m)))
+                {
+                    continue;
+                }
+                draw.OccluderMeshes.push_back(m);
             }
         }
         if (draw.EyeMeshes.empty())
         {
             return;
         }
-        anyMask |= !draw.HairMeshes.empty();
         if constexpr (std::is_same_v<std::decay_t<decltype(*model)>, AnimationModelResource>)
         {
             draw.Animated = model;
@@ -508,6 +570,10 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
         {
             addBarrier(m);
         }
+        for (UINT m : draw.OccluderMeshes)
+        {
+            addBarrier(m);
+        }
     }
     if (!barriers.empty())
     {
@@ -532,6 +598,7 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
     const UINT increment = FrameConstants::GetCbvIncrementSize();
     const int defaultTexture = TextureManager::GetDefaultTextureIndex();
     const auto handle = [&](int index) { return CD3DX12_GPU_DESCRIPTOR_HANDLE(heapStart, index, increment); };
+    const D3D12_CPU_DESCRIPTOR_HANDLE maskRtv = gpu.RtvHeap->GetCPUDescriptorHandleForHeapStart();
 
     auto baseConstants = [&](EntityID entity) {
         const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
@@ -562,98 +629,152 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
             texture = mesh.TextureIndex;
         }
     };
+    auto drawMesh = [&](const MekakureEntityDraw& draw, UINT m, int textureOverride, int fallbackTexture) {
+        D3D12_VERTEX_BUFFER_VIEW vb{};
+        D3D12_INDEX_BUFFER_VIEW ib{};
+        UINT count = 0;
+        int texture = -1;
+        meshGeometry(draw, m, vb, ib, count, texture);
+        texture = textureOverride >= 0 ? textureOverride : (texture >= 0 ? texture : fallbackTexture);
+        TextureManager::TouchTexture(texture);
+        commandList->SetGraphicsRootDescriptorTable(1, handle(texture));
+        commandList->IASetVertexBuffers(0, 1, &vb);
+        commandList->IASetIndexBuffer(&ib);
+        commandList->DrawIndexedInstanced(count, 1, 0, 0, 0);
+    };
 
-    // ---- 1. 髪マスク ----
-    const bool maskReady = anyMask;
-    if (maskReady)
-    {
-        auto toRt = CD3DX12_RESOURCE_BARRIER::Transition(gpu.Mask.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                                                         D3D12_RESOURCE_STATE_RENDER_TARGET);
-        commandList->ResourceBarrier(1, &toRt);
-        const D3D12_CPU_DESCRIPTOR_HANDLE maskRtv = gpu.RtvHeap->GetCPUDescriptorHandleForHeapStart();
-        const float clear[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-        commandList->ClearRenderTargetView(maskRtv, clear, 0, nullptr);
-        commandList->OMSetRenderTargets(1, &maskRtv, FALSE, &depthDsv);
-        commandList->SetPipelineState(gpu.MaskPso.Get());
-        for (const auto& draw : draws)
-        {
-            if (draw.HairMeshes.empty())
-            {
-                continue;
-            }
-            const MaterialComponent& source = *draw.Source;
-            ConstantBuffer3D cb = baseConstants(draw.Entity);
-            cb.ToonOutlineWidth = kMekakureHairPush;
-            cb.MaterialPadding = source.MekakureMaskSource == 2 ? 1.0f : 0.0f; // 0: アルファ, 1: R
-            cb.ConstantPadding = source.MekakureMaskInvert ? 1.0f : 0.0f;
-            cb.MaterialAlpha = std::clamp(source.MekakureMaskStrength, 0.0f, 1.0f);
-            commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
-            const int maskTexture =
-                source.MekakureMaskSource == 2 ? LiveToonTextures::ResolveDescriptor(source.MekakureMaskPath) : -1;
-            const MaterialComponent& material = MaterialManager::Resolve(source);
-            for (UINT m : draw.HairMeshes)
-            {
-                D3D12_VERTEX_BUFFER_VIEW vb{};
-                D3D12_INDEX_BUFFER_VIEW ib{};
-                UINT count = 0;
-                int texture = -1;
-                meshGeometry(draw, m, vb, ib, count, texture);
-                if (source.MekakureMaskSource == 2)
-                {
-                    texture = maskTexture;
-                }
-                else if (texture < 0)
-                {
-                    texture = (material.UseTexture && material.TextureID >= 0) ? material.TextureID : -1;
-                }
-                if (texture < 0)
-                {
-                    continue; // マスクの元が無い髪はマスクを書かない（クリア値 1 = 従来どおり透過）
-                }
-                TextureManager::TouchTexture(texture);
-                commandList->SetGraphicsRootDescriptorTable(1, handle(texture));
-                commandList->IASetVertexBuffers(0, 1, &vb);
-                commandList->IASetIndexBuffer(&ib);
-                commandList->DrawIndexedInstanced(count, 1, 0, 0, 0);
-            }
-        }
-        auto toSrv = CD3DX12_RESOURCE_BARRIER::Transition(gpu.Mask.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        commandList->ResourceBarrier(1, &toSrv);
-    }
-
-    // ---- 2. 目・眉・まつ毛の重ね描き ----
-    commandList->OMSetRenderTargets(1, &sceneRtv, FALSE, &depthDsv);
-    commandList->SetGraphicsRootDescriptorTable(8, handle(kMekakureMaskSrvIndex)); // t3 をマスクとして使う
+    // ---- キャラ単位：1. マスク（皮膚の距離 + 髪の被覆） → 2. 目・眉・まつ毛の重ね描き ----
+    // 他キャラの髪や顔が手前にあっても、自キャラのマスクには載らないので透けない。
     for (const auto& draw : draws)
     {
         const MaterialComponent& source = *draw.Source;
         const MaterialComponent& material = MaterialManager::Resolve(source);
-        ConstantBuffer3D cb = baseConstants(draw.Entity);
-        cb.UseTexture = static_cast<int>(material.UseTexture);
-        cb.MaterialMetallic = material.Metallic;
-        cb.MaterialRoughness = material.Roughness;
-        cb.MaterialFresnel = material.Fresnel;
-        cb.MaterialMode = static_cast<int>(material.ShaderClassMode);
-        cb.ShaderClass = static_cast<int>(material.ShaderClass);
-        cb.MaterialAlpha = std::clamp(source.MekakureOpacity, 0.0f, 1.0f) * material.Alpha;
-        cb.ToonOutlineWidth = max(source.MekakureDepth, 0.0f);
-        cb.ToonOutlineScreenWidth = source.MekakureFadeStart;
-        cb.ConstantPadding = source.MekakureFadeEnd;
-        cb.MaterialPadding = (maskReady && !draw.HairMeshes.empty()) ? 1.0f : 0.0f; // 髪マスクを使う
+        const int entityTexture = (material.UseTexture && material.TextureID >= 0) ? material.TextureID : defaultTexture;
+        const bool hairCoverage = !draw.HairMeshes.empty();
+
+        // 1. マスク
+        {
+            auto toRt = CD3DX12_RESOURCE_BARRIER::Transition(
+                gpu.Mask.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            commandList->ResourceBarrier(1, &toRt);
+            commandList->ClearRenderTargetView(maskRtv, kMekakureMaskClear, 0, nullptr);
+            commandList->OMSetRenderTargets(1, &maskRtv, FALSE, &depthDsv);
+
+            // 1-a. 髪以外（顔・瞼・肌・体）の最も手前の距離。深度テストなし（自キャラ内の前後だけを見る）
+            if (!draw.OccluderMeshes.empty())
+            {
+                commandList->SetPipelineState(gpu.OccluderPso.Get());
+                ConstantBuffer3D cb = baseConstants(draw.Entity);
+                cb.ToonOutlineWidth = 0.0f; // 押し出さない（実際の位置で比較する）
+                cb.MaterialPadding = kMaskModeOccluder;
+                commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
+                for (UINT m : draw.OccluderMeshes)
+                {
+                    drawMesh(draw, m, -1, entityTexture);
+                }
+            }
+
+            // 1-b. 手前に見えている自キャラの髪（シーン深度でテスト）。透け具合のマスク設定もここで反映
+            if (hairCoverage)
+            {
+                commandList->SetPipelineState(gpu.HairPso.Get());
+                const bool useMask = source.MekakureMaskSource != 0 && source.MekakureMaskStrength > 0.001f;
+                ConstantBuffer3D cb = baseConstants(draw.Entity);
+                cb.ToonOutlineWidth = kMekakureHairPush;
+                cb.MaterialPadding = !useMask                         ? kMaskModeHairCoverage
+                                     : source.MekakureMaskSource == 2 ? kMaskModeHairRed
+                                                                      : kMaskModeHairAlpha;
+                cb.ConstantPadding = source.MekakureMaskInvert ? 1.0f : 0.0f;
+                cb.MaterialAlpha = useMask ? 1.0f : 0.0f; // 効きはパーツ別に重ね描きで掛ける
+                commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
+                int maskTexture = -1;
+                if (useMask && source.MekakureMaskSource == 2)
+                {
+                    maskTexture = LiveToonTextures::ResolveDescriptor(source.MekakureMaskPath);
+                    if (maskTexture < 0)
+                    {
+                        // マスク画像が読めない場合は制限なし（被覆だけ）で描く
+                        cb.MaterialPadding = kMaskModeHairCoverage;
+                        cb.MaterialAlpha = 0.0f;
+                        commandList->SetGraphicsRootDescriptorTable(
+                            0, FrameConstants::AllocateTransientConstantBuffer(cb));
+                    }
+                }
+                for (UINT m : draw.HairMeshes)
+                {
+                    drawMesh(draw, m, maskTexture, entityTexture);
+                }
+            }
+
+            auto toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                gpu.Mask.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            commandList->ResourceBarrier(1, &toSrv);
+        }
+
+        // 2. 目・眉・まつ毛の重ね描き（パーツごとに定数を切り替える）
+        commandList->OMSetRenderTargets(1, &sceneRtv, FALSE, &depthDsv);
+        commandList->SetPipelineState(gpu.OverlayPso.Get());
+        commandList->SetGraphicsRootDescriptorTable(8, handle(kMekakureMaskSrvIndex)); // t3 をマスクとして使う
+        const bool useMask = source.MekakureMaskSource != 0 && source.MekakureMaskStrength > 0.001f;
+        const float globalMaskStrength = useMask ? std::clamp(source.MekakureMaskStrength, 0.0f, 1.0f) : 0.0f;
         int normalTexture = defaultTexture;
         if (material.NormalMapID >= 0)
         {
-            cb.UseNormalMap = 1;
             normalTexture = material.NormalMapID;
         }
-        const int entityTexture = (material.UseTexture && material.TextureID >= 0) ? material.TextureID : defaultTexture;
-        commandList->SetPipelineState(gpu.OverlayPso.Get());
-        commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
         commandList->SetGraphicsRootDescriptorTable(6, handle(normalTexture));
         MaterialBindings::SetMaterial(draw.Entity, material);
-        for (UINT m : draw.EyeMeshes)
+
+        // パーツの定数はそのパーツの最初のメッシュで 1 回だけ作る
+        D3D12_GPU_DESCRIPTOR_HANDLE partCbv[MekakurePart_Count]{};
+        bool partReady[MekakurePart_Count]{};
+        bool partVisible[MekakurePart_Count]{};
+        auto partConstants = [&](int part) {
+            if (partReady[part])
+            {
+                return partVisible[part];
+            }
+            partReady[part] = true;
+            const MekakurePartParams& params = source.MekakureParts[part];
+            // パーツ個別の値。未移行（古いシーン）のパーツだけ旧共通設定を使う
+            const bool own = params.Initialized;
+            const float opacity = own ? params.Opacity : source.MekakureOpacity;
+            const float depth = own ? params.Depth : source.MekakureDepth;
+            const float fadeStart = own ? params.FadeStart : source.MekakureFadeStart;
+            const float fadeEnd = own ? params.FadeEnd : source.MekakureFadeEnd;
+            const float maskStrength = std::clamp(params.MaskStrength, 0.0f, 1.0f);
+            const bool skinOcclusion = params.SkinOcclusion;
+            if (opacity <= 0.001f)
+            {
+                return false;
+            }
+            ConstantBuffer3D cb = baseConstants(draw.Entity);
+            cb.UseTexture = static_cast<int>(material.UseTexture);
+            cb.UseNormalMap = material.NormalMapID >= 0 ? 1 : 0;
+            cb.MaterialMetallic = material.Metallic;
+            cb.MaterialRoughness = material.Roughness;
+            cb.MaterialFresnel = material.Fresnel;
+            cb.MaterialMode = static_cast<int>(material.ShaderClassMode);
+            cb.ShaderClass = static_cast<int>(material.ShaderClass);
+            cb.MaterialAlpha = std::clamp(opacity, 0.0f, 1.0f) * material.Alpha;
+            cb.ToonOutlineWidth = max(depth, 0.0f);
+            cb.ToonOutlineScreenWidth = fadeStart;
+            cb.ConstantPadding = fadeEnd;
+            // 0: 髪の被覆なし、1〜2: 髪の被覆がある所だけ透かす（小数部 = 透過マスクの効き）
+            cb.MaterialPadding = hairCoverage ? 1.0f + globalMaskStrength * maskStrength : 0.0f;
+            cb.ToonOutlineUseScreenSpace = skinOcclusion ? 1 : 0; // bit0: 皮膚で隠す
+            partCbv[part] = FrameConstants::AllocateTransientConstantBuffer(cb);
+            partVisible[part] = true;
+            return true;
+        };
+        for (size_t e = 0; e < draw.EyeMeshes.size(); ++e)
         {
+            const UINT m = draw.EyeMeshes[e];
+            const int part = std::clamp(draw.EyeParts[e], 0, static_cast<int>(MekakurePart_Count) - 1);
+            if (!partConstants(part))
+            {
+                continue;
+            }
             if (!source.MaterialSlots.empty())
             {
                 const auto& slotMaterial = MaterialManager::Resolve(source, m);
@@ -663,17 +784,8 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
                 }
                 MaterialBindings::BindAssetSlot(draw.Entity, slotMaterial);
             }
-            D3D12_VERTEX_BUFFER_VIEW vb{};
-            D3D12_INDEX_BUFFER_VIEW ib{};
-            UINT count = 0;
-            int texture = -1;
-            meshGeometry(draw, m, vb, ib, count, texture);
-            texture = texture >= 0 ? texture : entityTexture;
-            TextureManager::TouchTexture(texture);
-            commandList->SetGraphicsRootDescriptorTable(1, handle(texture));
-            commandList->IASetVertexBuffers(0, 1, &vb);
-            commandList->IASetIndexBuffer(&ib);
-            commandList->DrawIndexedInstanced(count, 1, 0, 0, 0);
+            commandList->SetGraphicsRootDescriptorTable(0, partCbv[part]);
+            drawMesh(draw, m, -1, entityTexture);
         }
     }
 
@@ -1056,6 +1168,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             cb.View = transposedView;
             cb.Projection = transposedProj;
             cb.UseTexture = 0;
+            MaterialBindings::FillObjectConstants(cb, i);
 
             int srvIndex = defaultTextureIndex;
             int normalSrvIndex = defaultNormalIndex;
@@ -1437,6 +1550,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             cb.View = transposedView;
             cb.Projection = transposedProj;
             cb.UseTexture = 0;
+            MaterialBindings::FillObjectConstants(cb, i);
 
             int srvIndex = defaultTextureIndex;
             int normalSrvIndex = defaultNormalIndex;
@@ -1692,3 +1806,5 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
     }
 
 }
+
+

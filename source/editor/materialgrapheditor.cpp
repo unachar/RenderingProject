@@ -1,4 +1,8 @@
 #include "pch.h"
+#include <cstdarg>
+#include <imgui_internal.h>
+#include <limits>
+#include <functional>
 #include "materialgrapheditor.h"
 #include "materialgraph.h"
 #include "materialgraphcompiler.h"
@@ -54,6 +58,7 @@ namespace
         char Search[128]{};
         char Rename[256]{};
         uint64_t ContextNode = 0;
+        uint64_t ContextPin = 0; // 右クリックしたピン
         MaterialGraphProgram Program;
         MaterialGraphShader Shader;
         std::future<MaterialGraphShader> ShaderJob;
@@ -88,9 +93,20 @@ namespace
         bool BakeRequested = false;
         std::string BakeStatus;
         std::vector<std::string> BakeWarnings;
+        // ライブ更新（Time を使う式を実行中に動かす）
+        uint64_t LiveSignature = 0;
+        // Convert To Texture の変換
+        AssetHandle Material = 0;
+        std::future<MaterialGraphBake::NodeResult> NodeJob;
+        uint64_t NodeJobNode = 0;
+        std::string NodeStatus;
 
         ~GraphDocument()
         {
+            if (NodeJob.valid())
+            {
+                NodeJob.wait();
+            }
             if (BakeJob.valid())
             {
                 BakeJob.wait(); // ワーカーはグラフのコピーで動くので、待つだけでよい
@@ -226,6 +242,7 @@ namespace
         }
         slot = std::make_unique<GraphDocument>();
         auto& document = *slot;
+        document.Material = material;
         document.Path = MaterialManager::Registry().Resolve(material);
         document.Path += ".graph.json";
         document.RecoveryPath =
@@ -236,6 +253,32 @@ namespace
         {
             document.LoadFailed = !ReadDocument(document.Path, document.Graph, document.Layout, document.Error);
         }
+        // 旧グラフ（マテリアルモード未設定）：マテリアルの値からモードを決める（ピンの有効 / 無効に使う）
+        const auto& asset = MaterialManager::GetRuntime(material).Editing;
+        const auto migrateMode = [&](MaterialGraph& graph) {
+            if (graph.Settings.Mode >= 0)
+            {
+                return;
+            }
+            MaterialGraphMode mode = MaterialGraph::ModeFromMaterial(asset);
+            if (graph.Settings.Surface == 0)
+            {
+                mode = MaterialGraphMode::Opaque;
+            }
+            else if (graph.Settings.Surface == 1)
+            {
+                mode = MaterialGraphMode::Masked;
+            }
+            else if (graph.Settings.Surface == 2 && mode != MaterialGraphMode::Glass)
+            {
+                mode = MaterialGraphMode::Translucent;
+            }
+            graph.Settings.Mode = static_cast<int>(mode);
+        };
+        if (!document.LoadFailed)
+        {
+            migrateMode(document.Graph);
+        }
         document.SavedGraph = document.Graph;
         if (!document.LoadFailed && std::filesystem::exists(document.RecoveryPath, error))
         {
@@ -243,6 +286,7 @@ namespace
             std::string recoveredLayout;
             if (ReadDocument(document.RecoveryPath, recovered, recoveredLayout, document.Error))
             {
+                migrateMode(recovered);
                 document.Graph = std::move(recovered);
                 document.Layout = std::move(recoveredLayout);
                 document.Dirty = document.Graph.Serialize() != document.SavedGraph.Serialize();
@@ -342,7 +386,13 @@ namespace
             case Kind::ColorParameter:
                 return {"Parameters", IM_COL32(42, 140, 96, 255)};
             case Kind::TextureSample:
+            case Kind::TriplanarTexture:
+            case Kind::ConvertToTexture:
+            case Kind::ConvertToHeight:
+            case Kind::ConvertToNormal:
                 return {"Texture", IM_COL32(48, 92, 168, 255)};
+            case Kind::ConvertToNormalHeight:
+                return {"Legacy", IM_COL32(48, 92, 168, 255)}; // 追加メニューには出さない
             case Kind::UV:
             case Kind::TextureCoordinate:
             case Kind::Panner:
@@ -351,7 +401,24 @@ namespace
             case Kind::WorldNormal:
             case Kind::CameraVector:
             case Kind::ReflectionVector:
+            case Kind::SolidCoordinate:
+            case Kind::LocalPosition:
+            case Kind::VertexColor:
+            case Kind::CameraDistance:
+            case Kind::CameraPosition:
+            case Kind::PixelDepth:
+            case Kind::ScreenPosition:
                 return {"Coordinates", IM_COL32(150, 62, 62, 255)};
+            case Kind::ObjectPosition:
+            case Kind::ObjectScale:
+            case Kind::ObjectOrientation:
+            case Kind::ObjectRadius:
+            case Kind::ObjectBounds:
+            case Kind::BoundingBoxUVW:
+            case Kind::PerInstanceRandom:
+            case Kind::TransformVector:
+            case Kind::TransformPosition:
+                return {"Object", IM_COL32(170, 110, 50, 255)};
             case Kind::Normalize:
             case Kind::Dot:
             case Kind::CrossProduct:
@@ -359,6 +426,7 @@ namespace
             case Kind::Length:
             case Kind::AppendVector:
             case Kind::ComponentMask:
+            case Kind::BreakVector:
                 return {"Vector", IM_COL32(108, 78, 146, 255)};
             case Kind::Fresnel:
             case Kind::Desaturation:
@@ -368,16 +436,30 @@ namespace
             case Kind::Noise:
             case Kind::Reroute:
             case Kind::StaticSwitch:
+            case Kind::SlopeMask:
+            case Kind::HeightLerp:
+            case Kind::DitherOpacity:
+            case Kind::DistanceFade:
+            case Kind::HeightGradient:
                 return {"Utility", IM_COL32(140, 104, 40, 255)};
             case Kind::Pi:
                 return {"Constants", IM_COL32(56, 118, 70, 255)};
             case Kind::HueShift:
             case Kind::Blend:
+            case Kind::ColorAdjust:
             case Kind::BlackBody:
                 return {"Color", IM_COL32(170, 70, 120, 255)};
             case Kind::LinearGradient:
             case Kind::RadialGradient:
             case Kind::Voronoi:
+            case Kind::ProceduralNoise:
+            case Kind::FractalNoise:
+            case Kind::NoiseCombine:
+            case Kind::NoiseLayers:
+            case Kind::SolidTexture:
+            case Kind::SolidPattern:
+            case Kind::ThreeColorRamp:
+            case Kind::ConvertToSolid:
                 return {"Procedural", IM_COL32(60, 128, 140, 255)};
             case Kind::NormalFromHeight:
             case Kind::BlendAngleCorrectedNormals:
@@ -457,6 +539,7 @@ namespace
         std::unordered_map<uint64_t, uint64_t> InputSource; // 入力ピン → 接続元のピン
         std::unordered_set<uint64_t> ConnectedPins;
         std::unordered_map<uint64_t, MaterialGraphType> OutputTypes;
+        std::unordered_map<uint64_t, MaterialGraphType> PinTypes; // 出力ピン → 型（分割した成分は Scalar）
         std::unordered_set<uint64_t> Selected;
         uint64_t Hovered = 0;
     };
@@ -471,6 +554,12 @@ namespace
             {
                 info.PinOwner[node.OutputPin] = &node;
                 info.OutputTypes[node.Id] = graph.ResolveOutputType(node.Id);
+                info.PinTypes[node.OutputPin] = info.OutputTypes[node.Id];
+            }
+            for (const auto pin : node.SplitPins)
+            {
+                info.PinOwner[pin] = &node;
+                info.PinTypes[pin] = MaterialGraphType::Scalar;
             }
             for (const auto pin : node.InputPins)
             {
@@ -583,10 +672,47 @@ namespace
     }
 
     // UE のマテリアル Details に相当する設定（グラフに保存。「マテリアルの設定」はアセット側の値を使う）
-    void DrawGraphSettings(GraphDocument& document)
+    void DrawGraphSettings(GraphDocument& document, AssetHandle material)
     {
         auto& settings = document.Graph.Settings;
         const float width = ImGui::GetContentRegionAvail().x * 0.55f;
+        // ---- マテリアルモード（UE の Blend Mode に相当）。Material Output の使えるピンが変わる
+        {
+            static const char* modes[] = {"Opaque（不透明）", "Masked（切り抜き）", "Translucent（半透明）",
+                                          "Glass（屈折・透過）"};
+            static const char* tooltips[] = {
+                "不透明。Opacity / Opacity Mask / 屈折系のピンは使えません",
+                "アルファで切り抜き。Opacity Mask と Opacity Mask Clip を使います",
+                "半透明。Opacity を使います（POM は使えません）",
+                "ガラス。IOR / Transmission / Transmission Roughness / Thickness / Absorption を使います"};
+            const MaterialGraphSettings before = settings;
+            const int current = settings.Mode;
+            ImGui::SetNextItemWidth(width);
+            bool changed = false;
+            if (ImGui::BeginCombo("マテリアルモード", current >= 0 && current <= 3 ? modes[current] : "（未設定：すべてのピン）"))
+            {
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (ImGui::Selectable(modes[i], i == current))
+                    {
+                        if (i != current)
+                        {
+                            document.Graph.SetMode(static_cast<MaterialGraphMode>(i));
+                            if (i == static_cast<int>(MaterialGraphMode::Masked) && settings.AlphaCutoff < 0.0f)
+                            {
+                                settings.AlphaCutoff = 0.3333f;
+                            }
+                            changed = true;
+                        }
+                    }
+                    ImGui::SetItemTooltip("%s", tooltips[i]);
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("UE の Blend Mode と同じく、モードに合わない Material Output のピンは灰色になり接続できません。\n"
+                                  "既存の接続は残り、モードを戻すと再び有効になります。");
+            TrackSettingsEdit(document, before, changed);
+        }
         const auto combo = [&](const char* label, int& value, const char* const* names, int count, const char* tooltip) {
             const MaterialGraphSettings before = settings;
             int index = value + 1; // 0 = マテリアルの設定
@@ -615,7 +741,11 @@ namespace
         static const char* models[] = {"マテリアルの設定", "Default Lit", "Clear Coat", "Cloth", "Subsurface (Skin)", "Hair",
                                        "Anisotropic"};
         static const char* shadows[] = {"マテリアルの設定", "None", "Opaque", "Alpha Test", "Transmittance", "Auto"};
-        combo("Blend Mode", settings.Surface, surfaces, 3, "Opacity / Opacity Mask を繋ぐと自動で Translucent / Masked になります");
+        if (settings.Mode < 0)
+        {
+            // 旧グラフ（マテリアルモード未設定）だけ、従来の Blend Mode を直接選べる
+            combo("Blend Mode", settings.Surface, surfaces, 3, "Opacity / Opacity Mask を繋ぐと自動で Translucent / Masked になります");
+        }
         combo("Two Sided", settings.Cull, culls, 3, nullptr);
         combo("Shading Model", settings.ShadingModel, models, 6, nullptr);
         combo("Shadow", settings.ShadowMode, shadows, 5, nullptr);
@@ -639,6 +769,84 @@ namespace
             }
             TrackSettingsEdit(document, before, changed && useClip);
             ImGui::EndDisabled();
+        }
+        // マテリアルの現在の値（ガラス / 半透明 / テクスチャなど）から、ちゃんとしたグラフを作り直す
+        // ---- 描画時評価（GPU）
+        ImGui::SeparatorText("描画時評価（GPU）");
+        {
+            const MaterialGraphSettings before = settings;
+            bool changed = ImGui::Checkbox("描画時に評価する", &settings.RuntimeEvaluation);
+            ImGui::SetItemTooltip("グラフをエンジンのシェーダーで画素ごとに評価します（UE と同じ）。\n"
+                                  "3D 位置で計算するので、ソリッドテクスチャ / ノイズに UV の継ぎ目や伸びが出ません。\n"
+                                  "値を変えてもシェーダーの再コンパイルは不要です。\n"
+                                  "オフ、または対応外のノードがあるときは、ベイクしたテクスチャを使います。");
+            static const char* spaces[] = {"オブジェクト空間", "ワールド空間"};
+            int space = std::clamp(settings.SolidSpace, 0, 1);
+            ImGui::SetNextItemWidth(width);
+            if (ImGui::BeginCombo("ソリッドの座標", spaces[space]))
+            {
+                for (int i = 0; i < 2; ++i)
+                {
+                    if (ImGui::Selectable(spaces[i], i == space) && i != space)
+                    {
+                        settings.SolidSpace = i;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("Solid / Noise / Convert To Solid / Triplanar の Position が未接続のときの座標。\n"
+                                  "オブジェクト空間：動かしても模様が付いてくる（既定）\n"
+                                  "ワールド空間：複数のオブジェクトで模様がつながる（動かすと模様が流れる）");
+            TrackSettingsEdit(document, before, changed);
+        }
+        if (const auto* runtime = MaterialManager::FindRuntime(material))
+        {
+            if (runtime->GraphActive)
+            {
+                ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.50f, 1.0f), "● GPU で評価中（命令 %d / レジスタ %d%s）",
+                                   runtime->GraphInstructions, runtime->GraphRegisters,
+                                   runtime->GraphUsesTime ? " / Time" : "");
+            }
+            else if (!runtime->GraphStatus.empty())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.98f, 0.72f, 0.20f, 1.0f));
+                ImGui::TextWrapped("ベイクを使用：%s", runtime->GraphStatus.c_str());
+                ImGui::PopStyleColor();
+            }
+        }
+        if (ImGui::Button("マテリアルの値からグラフを再生成"))
+        {
+            ImGui::OpenPopup("RegenerateGraph");
+        }
+        ImGui::SetItemTooltip("マテリアルアセットの現在の値（色 / テクスチャ / POM / ガラスの屈折・透過 / モード）から\n"
+                              "グラフを作り直します（元に戻す: Ctrl+Z）");
+        if (ImGui::BeginPopup("RegenerateGraph"))
+        {
+            ImGui::TextUnformatted("今のグラフを、マテリアルの値から作り直しますか？");
+            if (ImGui::Button("再生成"))
+            {
+                const MaterialGraph before = document.Graph;
+                MaterialGraph regenerated = MaterialGraph::FromMaterial(MaterialManager::GetRuntime(material).Editing);
+                regenerated.Settings.BakeResolution = before.Settings.BakeResolution;
+                regenerated.Settings.BakeTime = before.Settings.BakeTime;
+                regenerated.Settings.AutoBake = before.Settings.AutoBake;
+                PushHistory(document, before);
+                document.Graph = std::move(regenerated);
+                ++document.Graph.Revision;
+                document.Dirty = true;
+                document.RecoveryDirty = true;
+                document.RestorePositions = true;
+                document.FramesUntilFit = 2;
+                document.Status = "マテリアルの値からグラフを再生成しました。";
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("キャンセル"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
         ImGui::SeparatorText("テクスチャベイク（エンジン反映）");
         {
@@ -706,6 +914,294 @@ namespace
         {
             ImGui::TextColored(ImVec4(0.98f, 0.72f, 0.20f, 1.0f), "⚠ %s", warning.c_str());
         }
+        // ---- ライブ更新（Time を使う式をマテリアル上で動かす）
+        ImGui::SeparatorText("ライブ更新（Time で動かす）");
+        {
+            const MaterialGraphSettings before = settings;
+            bool changed = ImGui::Checkbox("ライブ更新", &settings.LiveUpdate);
+            ImGui::SetItemTooltip("Time を使う式を、実行中に焼いたテクスチャへ書き込み続けてマテリアルを動かします\n"
+                                  "（ワーカースレッドで評価。保存したベイク画像は「ベイク時刻」の値のまま）");
+            static const int resolutions[] = {64, 128, 256, 512, 1024};
+            static const char* resolutionNames[] = {"64", "128", "256", "512", "1024"};
+            int current = 2;
+            for (int i = 0; i < 5; ++i)
+            {
+                current = resolutions[i] == settings.LiveResolution ? i : current;
+            }
+            ImGui::SetNextItemWidth(width);
+            if (ImGui::BeginCombo("ライブ解像度", resolutionNames[current]))
+            {
+                for (int i = 0; i < 5; ++i)
+                {
+                    if (ImGui::Selectable(resolutionNames[i], i == current) && i != current)
+                    {
+                        settings.LiveResolution = resolutions[i];
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("大きいほど細かいが CPU 負荷が増えます（ベイク解像度とは別）");
+            ImGui::SetNextItemWidth(width);
+            changed |= ImGui::SliderFloat("更新レート (回/秒)", &settings.LiveRate, 1.0f, 120.0f, "%.0f",
+                                          ImGuiSliderFlags_AlwaysClamp);
+            TrackSettingsEdit(document, before, changed);
+        }
+        if (const uint32_t live = MaterialGraphLive::ActiveSlots(material))
+        {
+            ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.50f, 1.0f), "● 更新中: %s（%.1f ms / 回）", SlotList(live).c_str(),
+                               MaterialGraphLive::LastSeconds(material) * 1000.0);
+        }
+        else if (MaterialGraphBake::TimeDependentSlots(document.Graph, document.PendingAlpha) != 0)
+        {
+            ImGui::TextDisabled(settings.LiveUpdate ? "ベイクが終わると動き始めます" : "ライブ更新はオフです");
+        }
+        else
+        {
+            ImGui::TextDisabled("Time を使う式はありません");
+        }
+    }
+
+    std::shared_ptr<MaterialGraphGpu::Job> SubmitNodeBake(const MaterialGraphBake::NodeRequest& request);
+    std::shared_ptr<MaterialGraphGpu::Job> SubmitBake(const MaterialGraphBake::Request& request);
+
+    // ============================================================ ズームしても文字をくっきり描く
+    // ノードエディターはキャンバスを頂点の拡大で描くので、文字は等倍で作ったグリフの拡大（ぼやけたラスター）になる。
+    // ImGui 1.92 の動的フォントで、ズーム率に合わせた密度でグリフを作り直す（ベクターのアウトラインから再ラスター化）
+    float CanvasFontDensity()
+    {
+        // 少しずつ変わるズームのたびにアトラスへ新しい大きさを焼かないよう、1/4 刻みに丸める
+        // GetCurrentZoom は「1 画面画素あたりのキャンバス単位」（1 未満 = 拡大表示）なので、拡大率はその逆数
+        const float zoom = Nodes::GetCurrentZoom();
+        const float magnification = std::isfinite(zoom) && zoom > 1e-4f ? 1.0f / zoom : 1.0f;
+        return std::clamp(std::ceil(magnification * 4.0f) / 4.0f, 1.0f, 4.0f);
+    }
+
+    void SetCanvasFontDensity(float density)
+    {
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19200
+        ImGui::SetFontRasterizerDensity(density);
+#else
+        (void)density;
+#endif
+    }
+
+    // ============================================================ ノード内のプルダウン / ツールチップ
+    // ノードエディターのキャンバスは座標変換（パン / ズーム）されているので、ノードの中で
+    // BeginCombo / SetItemTooltip を開くと、ウィンドウがキャンバス座標の位置（画面の別の場所）に出てしまう。
+    // ノード内では「開く要求」だけを記録し、Nodes::Suspend() の後（画面座標）で実際に開く。
+    struct CanvasPopupRequest
+    {
+        bool Open = false;
+        uint64_t Node = 0;
+        ImVec2 Position{};
+        float Width = 0.0f;
+        std::function<void(GraphDocument&, MaterialGraphNode&)> Body;
+    };
+    CanvasPopupRequest g_CanvasPopup;
+    std::string g_CanvasTooltip;
+    constexpr const char* kCanvasPopupId = "##MaterialNodeCombo";
+
+    // ノード内のツールチップ（SetItemTooltip の代わり）
+    void CanvasTooltip(const char* format, ...)
+    {
+        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+        {
+            return;
+        }
+        char buffer[1024];
+        va_list arguments;
+        va_start(arguments, format);
+        vsnprintf(buffer, sizeof(buffer), format, arguments);
+        va_end(arguments);
+        g_CanvasTooltip = buffer;
+    }
+
+    // ノード内のプルダウン。ボタンを押したら、項目の一覧を画面座標のポップアップで開く
+    void NodeCombo(MaterialGraphNode& node, const char* id, size_t valueIndex, int count, const char* (*name)(int),
+                   const char* prefix, float width)
+    {
+        const int current = std::clamp(static_cast<int>(node.Value[valueIndex]), 0, count - 1);
+        const std::string label = std::string(prefix) + name(current) + "  ▾##" + id;
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+        const bool clicked = ImGui::Button(label.c_str(), ImVec2(width, 0.0f));
+        ImGui::PopStyleVar();
+        if (!clicked)
+        {
+            return;
+        }
+        const ImVec2 min = Nodes::CanvasToScreen(ImGui::GetItemRectMin());
+        const ImVec2 max = Nodes::CanvasToScreen(ImGui::GetItemRectMax());
+        g_CanvasPopup.Open = true;
+        g_CanvasPopup.Node = node.Id;
+        g_CanvasPopup.Position = ImVec2(min.x, max.y);
+        g_CanvasPopup.Width = max.x - min.x;
+        g_CanvasPopup.Body = [valueIndex, count, name](GraphDocument& document, MaterialGraphNode& target) {
+            const int selected = std::clamp(static_cast<int>(target.Value[valueIndex]), 0, count - 1);
+            for (int i = 0; i < count; ++i)
+            {
+                if (ImGui::Selectable(name(i), i == selected) && i != selected)
+                {
+                    PushHistory(document, document.Graph);
+                    target.Value[valueIndex] = static_cast<float>(i);
+                    ++document.Graph.Revision;
+                    ++document.Graph.ParameterRevision;
+                    document.Dirty = true;
+                    document.RecoveryDirty = true;
+                }
+                if (i == selected && ImGui::IsWindowAppearing())
+                {
+                    ImGui::SetScrollHereY();
+                }
+            }
+        };
+    }
+
+    // Nodes::Suspend() と Resume() の間（画面座標）で呼ぶ
+    void DrawCanvasOverlays(GraphDocument& document)
+    {
+        if (g_CanvasPopup.Open)
+        {
+            g_CanvasPopup.Open = false;
+            ImGui::OpenPopup(kCanvasPopupId);
+            ImGui::SetNextWindowPos(g_CanvasPopup.Position, ImGuiCond_Always);
+        }
+        ImGui::SetNextWindowSizeConstraints(ImVec2(g_CanvasPopup.Width, 0.0f),
+                                            ImVec2(FLT_MAX, ImGui::GetTextLineHeightWithSpacing() * 16.0f));
+        if (ImGui::BeginPopup(kCanvasPopupId))
+        {
+            auto* node = document.Graph.FindNode(g_CanvasPopup.Node);
+            if (node && g_CanvasPopup.Body)
+            {
+                g_CanvasPopup.Body(document, *node);
+            }
+            else
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if (!g_CanvasTooltip.empty())
+        {
+            if (!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
+            {
+                ImGui::SetTooltip("%s", g_CanvasTooltip.c_str());
+            }
+            g_CanvasTooltip.clear();
+        }
+    }
+
+    // 分割した出力ピンの名前（色を出すノードは R / G / B / A、それ以外は X / Y / Z / W）
+    const char* SplitPinName(const MaterialGraphNode& node, size_t component)
+    {
+        static const char* xyzw[] = {"X", "Y", "Z", "W"};
+        static const char* rgba[] = {"R", "G", "B", "A"};
+        const bool color = node.Kind == Kind::TextureSample || node.Kind == Kind::ColorParameter ||
+                           node.Kind == Kind::BlackBody || node.Kind == Kind::HueShift || node.Kind == Kind::Blend;
+        return (color ? rgba : xyzw)[(std::min)(component, size_t{3})];
+    }
+
+    // 分割した出力ピン 1 行分（右寄せ：「名前 ○」）。sameRow = 入力ピンと同じ行に置く
+    void DrawSplitOutputPin(GraphDocument& document, const MaterialGraphNode& node, size_t component,
+                            const FrameInfo& frame, float nodeLeft, float width, float rowY, bool sameRow)
+    {
+        const uint64_t pin = node.SplitPins[component];
+        const char* name = SplitPinName(node, component);
+        const int available = static_cast<int>(document.Graph.ResolveOutputType(node.Id));
+        const bool missing = node.Kind != Kind::BreakVector ? component >= static_cast<size_t>((std::max)(available, 1))
+                                                            : available > 1 && component >= static_cast<size_t>(available);
+        const float iconWidth = ImGui::GetTextLineHeight() * 0.72f;
+        const float labelWidth = ImGui::CalcTextSize(name).x;
+        const float right = nodeLeft + width;
+        float x = right - labelWidth - 4.0f - iconWidth;
+        if (sameRow)
+        {
+            ImGui::SameLine(0.0f, 0.0f);
+            x = (std::max)(x, ImGui::GetCursorScreenPos().x + 12.0f);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(x, rowY));
+        Nodes::BeginPin(Nodes::PinId(pin), Nodes::PinKind::Output);
+        Nodes::PinPivotAlignment(ImVec2(1.0f, 0.5f));
+        Nodes::PinPivotSize(ImVec2(0, 0));
+        const bool connected = frame.ConnectedPins.contains(pin);
+        if (missing)
+        {
+            ImGui::TextDisabled("%s", name);
+        }
+        else if (connected)
+        {
+            ImGui::TextUnformatted(name);
+        }
+        else
+        {
+            ImGui::TextDisabled("%s", name);
+        }
+        ImGui::SameLine(0.0f, 4.0f);
+        PinIcon(missing ? IM_COL32(90, 90, 96, 255) : TypeColor(MaterialGraphType::Scalar), connected);
+        document.PinY[pin] = PinCenterY();
+        Nodes::EndPin();
+        CanvasTooltip("%s（Scalar）%s%s", name, missing ? "\n今の出力にはこの成分がありません（0 になります）" : "",
+                      node.Kind == Kind::BreakVector ? "" : "\n右クリック →「ピンを統合」で元に戻します");
+    }
+
+    // 入力ピン横の数値ボックス。ドラッグ / ダブルクリックで入力。既定に戻すのはピンの右クリックメニュー
+    void DrawPinValueBox(GraphDocument& document, MaterialGraphNode& node, size_t input)
+    {
+        const auto& definition = MaterialGraph::Definition(node.Kind);
+        const float defaultValue = definition.Inputs[input].Default[0];
+        const bool overridden = MaterialGraph::HasPinValue(node, input);
+        float value = overridden ? node.PinValues[input] : defaultValue;
+        const float before = value;
+        ImGui::SameLine(0.0f, 6.0f);
+        ImGui::PushID(static_cast<int>(input));
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 3.6f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 0.0f));
+        if (!overridden)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        }
+        const bool changed = ImGui::DragFloat("##PinValue", &value, 0.01f, 0.0f, 0.0f, "%.3g");
+        if (!overridden)
+        {
+            ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleVar();
+        // 編集の開始で 1 回だけ履歴の元を取る（ドラッグ中の全フレームを Undo に積まない）
+        if (ImGui::IsItemActivated())
+        {
+            FinishEdits(document);
+            document.PendingEdit = document.Graph;
+            if (auto* original = document.PendingEdit->FindNode(node.Id); original && original->PinValues.size() > input)
+            {
+                original->PinValues[input] = overridden ? before : std::numeric_limits<float>::quiet_NaN();
+            }
+            document.PendingValueNode = node.Id;
+            document.ValueChanged = false;
+        }
+        if (changed && std::isfinite(value))
+        {
+            if (!document.PendingEdit)
+            {
+                document.PendingEdit = document.Graph;
+                document.PendingValueNode = node.Id;
+            }
+            if (node.PinValues.size() <= input)
+            {
+                node.PinValues.resize(input + 1, std::numeric_limits<float>::quiet_NaN());
+            }
+            node.PinValues[input] = value;
+            ++document.Graph.Revision;
+            document.ValueChanged = true;
+            document.Dirty = true;
+            document.RecoveryDirty = true;
+        }
+        if (document.PendingEdit && document.PendingValueNode == node.Id && ImGui::IsItemDeactivated())
+        {
+            FinishValueEdit(document);
+        }
+        CanvasTooltip("%s: 未接続のときの値（既定 %.3g）\nドラッグ / ダブルクリックで入力。ピンの右クリックで既定に戻す",
+                      definition.Inputs[input].Name, defaultValue);
+        ImGui::PopID();
     }
 
     void DrawValueEditors(GraphDocument& document, MaterialGraphNode& node, float width)
@@ -764,14 +1260,15 @@ namespace
                 }
                 break;
             }
-            case Kind::TextureSample: {
+            case Kind::TextureSample:
+            case Kind::TriplanarTexture: {
                 auto path = MaterialManager::Registry().Resolve(node.Texture).filename().string();
                 if (path.empty())
                 {
                     path = "Textureをドロップ";
                 }
                 ImGui::Button(path.c_str(), ImVec2(width, 0));
-                ImGui::SetItemTooltip("Content Browser からテクスチャをドロップ");
+                CanvasTooltip("Content Browser からテクスチャをドロップ");
                 if (ImGui::BeginDragDropTarget())
                 {
                     if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
@@ -800,7 +1297,351 @@ namespace
                     node.Value[0] = static_cast<float>(sampler);
                 }
                 TrackValueEdit(document, node, before, changed);
-                ImGui::SetItemTooltip("Color: カラー（sRGB）\nNormal: 法線マップ（-1〜1 に展開）\nLinear: マスク / 高さ / ラフネス");
+                CanvasTooltip("Color: カラー（sRGB）\nNormal: 法線マップ（-1〜1 に展開）\nLinear: マスク / 高さ / ラフネス");
+                break;
+            }
+            // ---- オブジェクト / カメラ
+            case Kind::ObjectBounds:
+                NodeCombo(node, "BoundsOutput", 0, 4, &MaterialGraphMath::ObjectBoundsOutputName, "出力: ", width);
+                CanvasTooltip("オブジェクトのローカルの範囲（AABB）。プレビューでは -1〜1 として評価します");
+                break;
+            case Kind::TransformVector:
+                NodeCombo(node, "TransformVectorMode", 0, 4, &MaterialGraphMath::TransformVectorModeName, "", width);
+                CanvasTooltip("方向（法線など）を変換します（平行移動は含まない）。プレビューでは変換しません");
+                break;
+            case Kind::TransformPosition:
+                NodeCombo(node, "TransformPositionMode", 0, 2, &MaterialGraphMath::TransformPositionModeName, "", width);
+                CanvasTooltip("位置を変換します（平行移動を含む）。プレビューでは変換しません");
+                break;
+            case Kind::HeightGradient:
+                NodeCombo(node, "HeightSpace", 0, 3, &MaterialGraphMath::HeightGradientSpaceName, "基準: ", width);
+                CanvasTooltip("ワールド Y：地面からの高さ\nローカル Y：オブジェクトの原点からの高さ\n"
+                              "範囲内 0〜1：オブジェクトの下端 = 0、上端 = 1（Start 0 / End 1 で根元→先端）");
+                break;
+            case Kind::ConvertToSolid: {
+                // 元画像：Content Browser からドロップ、または Value の入力から作成
+                auto path = MaterialManager::Registry().Resolve(node.Texture).filename().string();
+                if (path.empty())
+                {
+                    path = "Textureをドロップ";
+                }
+                ImGui::Button(path.c_str(), ImVec2(width, 0));
+                CanvasTooltip("元にする 2D テクスチャ（Content Browser からドロップ）\n"
+                              "ノイズなどは Value に繋いで「Value から作成」を押してください");
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+                    {
+                        if (payload->DataSize == sizeof(AssetDragPayload))
+                        {
+                            const auto& asset = *static_cast<const AssetDragPayload*>(payload->Data);
+                            if (asset.Type == AssetType::Texture &&
+                                MaterialManager::Registry().TypeOf(asset.Handle) == AssetType::Texture)
+                            {
+                                PushHistory(document, document.Graph);
+                                node.Texture = asset.Handle;
+                                ++document.Graph.Revision;
+                                document.Dirty = true;
+                                document.RecoveryDirty = true;
+                            }
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                NodeCombo(node, "SolidMethod", 0, static_cast<int>(MaterialSolidConvertMethod::Count),
+                          &MaterialGraphMath::SolidConvertMethodName, "", width);
+                CanvasTooltip("ストキャスティック（既定）: 3 方向から投影し、各面をヘックス タイルでランダムにずらして混ぜる。\n"
+                              "  拡大しても同じ模様が並ばず、面による縞も出ない（Sharpness / Randomness / Seed を使用）\n"
+                              "トライプラナー: 3 方向から投影して法線で混ぜる。元画像の見た目を保つが、拡大すると繰り返す\n"
+                              "ボリューム（スタジオ互換）: スタジオの「画像からボリューム」と同じ。繰り返し・面による縞が出る\n"
+                              "  （Octaves / Vertical Variation / Seed を使用）");
+                {
+                    // Normal は立体にすると向きが崩れるので Color / Linear のみ
+                    const auto beforeSampler = node.Value;
+                    int sampler = static_cast<int>(node.Value[1]) == static_cast<int>(MaterialSamplerType::Color) ? 0 : 1;
+                    static const char* samplers[] = {"形式: Color（sRGB）", "形式: Linear"};
+                    ImGui::SetNextItemWidth(width);
+                    const bool samplerChanged = ImGui::SliderInt("##SolidSampler", &sampler, 0, 1, samplers[sampler]);
+                    if (samplerChanged)
+                    {
+                        node.Value[1] = static_cast<float>(sampler == 0 ? MaterialSamplerType::Color : MaterialSamplerType::Linear);
+                    }
+                    TrackValueEdit(document, node, beforeSampler, samplerChanged);
+                    CanvasTooltip("Color: 色の画像（sRGB）\nLinear: ノイズ / マスク / 高さ");
+                }
+                if (static_cast<int>(node.Value[0]) != static_cast<int>(MaterialSolidConvertMethod::Triplanar))
+                {
+                    const auto beforeSeed = node.Value;
+                    int seed = static_cast<int>((std::max)(node.Value[2], 0.0f));
+                    ImGui::SetNextItemWidth(width);
+                    const bool seedChanged = ImGui::DragInt("##ConvertSolidSeed", &seed, 1.0f, 0, 16777215, "Seed %d");
+                    if (seedChanged)
+                    {
+                        node.Value[2] = static_cast<float>(std::clamp(seed, 0, 16777215));
+                    }
+                    TrackValueEdit(document, node, beforeSeed, seedChanged);
+                }
+                {
+                    bool gray = node.Value[3] > 0.5f;
+                    if (ImGui::Checkbox("グレースケール", &gray))
+                    {
+                        PushHistory(document, document.Graph);
+                        node.Value[3] = gray ? 1.0f : 0.0f;
+                        ++document.Graph.Revision;
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                    CanvasTooltip("RGB の平均（スタジオのボリューム = 密度と同じ）");
+                }
+                // Value（ノイズなど）→ 元画像を作る（UV 0〜1 で焼く。タイルできるノイズだと継ぎ目が出ない）
+                const bool running = document.NodeJob.valid() && document.NodeJobNode == node.Id;
+                ImGui::BeginDisabled(document.NodeJob.valid() || !document.Graph.InputLink(node.InputPins[0]));
+                if (ImGui::Button(running ? "作成中..." : "Value から作成", ImVec2(width, 0)))
+                {
+                    const auto materialPath = MaterialManager::Registry().Resolve(document.Material);
+                    if (materialPath.empty())
+                    {
+                        document.NodeStatus = "作成失敗: マテリアルのパスが見つかりません";
+                    }
+                    else
+                    {
+                        MaterialGraphBake::NodeRequest request;
+                        request.Graph = document.Graph;
+                        request.Node = node.Id;
+                        request.Resolution = std::clamp(document.Graph.Settings.BakeResolution, 128, 2048);
+                        request.Time = document.Graph.Settings.BakeTime;
+                        request.Sampler = static_cast<int>(node.Value[1]) == static_cast<int>(MaterialSamplerType::Color)
+                                              ? MaterialSamplerType::Color
+                                              : MaterialSamplerType::Linear;
+                        const auto stem = materialPath.stem().string();
+                        request.File = materialPath.parent_path() / (stem + "_GraphBake") /
+                                       (stem + "_Solid" + std::to_string(node.Id) + ".png");
+                        if (auto* self = request.Graph.FindNode(node.Id))
+                        {
+                            self->Texture = 0;
+                        }
+                        for (const auto& item : request.Graph.Nodes)
+                        {
+                            if (UsesNodeTexture(item.Kind) && item.Texture != 0 &&
+                                !request.TexturePaths.contains(item.Texture))
+                            {
+                                const auto texturePath = MaterialManager::Registry().Resolve(item.Texture);
+                                if (!texturePath.empty())
+                                {
+                                    request.TexturePaths[item.Texture] = texturePath;
+                                }
+                            }
+                        }
+                        document.NodeJobNode = node.Id;
+                        document.NodeStatus = "作成中...";
+                        request.Gpu = SubmitNodeBake(request);
+                        document.NodeJob = std::async(std::launch::async, [request = std::move(request)] {
+                            return MaterialGraphBake::RunNode(request);
+                        });
+                    }
+                }
+                ImGui::EndDisabled();
+                CanvasTooltip("Value に繋いだノイズなどを、UV 0〜1 の 2D 画像（ベイク解像度）に焼いて元画像にします\n"
+                              "（入力を変えたら押し直し。タイル可能なノイズにすると継ぎ目が出ません）");
+                if (node.Texture != 0)
+                {
+                    if (ImGui::Button("元画像を外す", ImVec2(width, 0)))
+                    {
+                        PushHistory(document, document.Graph);
+                        node.Texture = 0;
+                        ++document.Graph.Revision;
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                }
+                else
+                {
+                    ImGui::TextDisabled("元画像なし（Value をそのまま通す）");
+                }
+                if (document.NodeJobNode == node.Id && !document.NodeStatus.empty())
+                {
+                    ImGui::TextDisabled("%s", document.NodeStatus.c_str());
+                }
+                break;
+            }
+            case Kind::SolidTexture:
+            case Kind::SolidPattern: {
+                // プロシージャルスタジオの「立体テクスチャ」と同じ種類 / 基底 / フラクタル / シード
+                NodeCombo(node, "SolidKind", 0, static_cast<int>(MaterialSolidKind::Count),
+                          &MaterialGraphMath::SolidKindName, "", width);
+                CanvasTooltip("立体テクスチャの種類（スタジオで立体に対応している 6 種）\n"
+                              "大理石 / 木目: Turbulence・Ring Count、雲: Coverage・Softness を使います");
+                const int kind = static_cast<int>(node.Value[0]);
+                if (kind != static_cast<int>(MaterialSolidKind::Voronoi))
+                {
+                    NodeCombo(node, "SolidBasis", 1, MaterialGraphMath::kNoiseBasisCount,
+                              &MaterialGraphMath::NoiseBasisName, "基底: ", width);
+                    CanvasTooltip("ノイズの基底（御影石の粒、雲の形に使います）");
+                    if (kind != static_cast<int>(MaterialSolidKind::Cloud))
+                    {
+                        NodeCombo(node, "SolidFractal", 2, MaterialGraphMath::kNoiseFractalCount,
+                                  &MaterialGraphMath::NoiseFractalName, "フラクタル: ", width);
+                    }
+                }
+                {
+                    const auto beforeSeed = node.Value;
+                    int seed = static_cast<int>((std::max)(node.Value[3], 0.0f));
+                    ImGui::SetNextItemWidth(width);
+                    const bool seedChanged = ImGui::DragInt("##SolidSeed", &seed, 1.0f, 0, 16777215, "Seed %d");
+                    if (seedChanged)
+                    {
+                        node.Value[3] = static_cast<float>(std::clamp(seed, 0, 16777215));
+                    }
+                    TrackValueEdit(document, node, beforeSeed, seedChanged);
+                }
+                break;
+            }
+            case Kind::ConvertToTexture: {
+                static const auto samplerName = [](int index) -> const char* {
+                    static const char* names[] = {"Color（sRGB）", "Normal", "Linear"};
+                    return names[std::clamp(index, 0, 2)];
+                };
+                static const auto resolutionName = [](int index) -> const char* {
+                    static const char* names[] = {"256", "512", "1024", "2048"};
+                    return names[std::clamp(index, 0, 3)];
+                };
+                NodeCombo(node, "ConvertSampler", 0, 3, +samplerName, "形式: ", width);
+                CanvasTooltip("Color: 色（sRGB で保存）\nNormal: 法線（-1〜1 → 0〜1 で保存し、法線として読む）\n"
+                              "Linear: ノイズ / マスク / 高さ（そのまま保存）");
+                NodeCombo(node, "ConvertResolution", 1, 4, +resolutionName, "解像度: ", width);
+                const bool running = document.NodeJob.valid() && document.NodeJobNode == node.Id;
+                ImGui::BeginDisabled(document.NodeJob.valid());
+                if (ImGui::Button(running ? "変換中..." : (node.Texture ? "テクスチャを更新" : "テクスチャに変換"),
+                                  ImVec2(width, 0)))
+                {
+                    const auto materialPath = MaterialManager::Registry().Resolve(document.Material);
+                    if (materialPath.empty())
+                    {
+                        document.NodeStatus = "変換失敗: マテリアルのパスが見つかりません";
+                    }
+                    else
+                    {
+                        static const int resolutions[] = {256, 512, 1024, 2048};
+                        MaterialGraphBake::NodeRequest request;
+                        request.Graph = document.Graph;
+                        request.Node = node.Id;
+                        request.Resolution = resolutions[std::clamp(static_cast<int>(node.Value[1]), 0, 3)];
+                        request.Time = document.Graph.Settings.BakeTime;
+                        request.Sampler =
+                            static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                        const auto stem = materialPath.stem().string();
+                        request.File = materialPath.parent_path() / (stem + "_GraphBake") /
+                                       (stem + "_Node" + std::to_string(node.Id) + ".png");
+                        // 入力側は「未変換」として焼く（自分自身のテクスチャを読まない）
+                        if (auto* self = request.Graph.FindNode(node.Id))
+                        {
+                            self->Texture = 0;
+                        }
+                        for (const auto& item : request.Graph.Nodes)
+                        {
+                            if (UsesNodeTexture(item.Kind) &&
+                                item.Texture != 0 && !request.TexturePaths.contains(item.Texture))
+                            {
+                                const auto path = MaterialManager::Registry().Resolve(item.Texture);
+                                if (!path.empty())
+                                {
+                                    request.TexturePaths[item.Texture] = path;
+                                }
+                            }
+                        }
+                        document.NodeJobNode = node.Id;
+                        document.NodeStatus = "変換中...";
+                        request.Gpu = SubmitNodeBake(request);
+                        document.NodeJob = std::async(std::launch::async, [request = std::move(request)] {
+                            return MaterialGraphBake::RunNode(request);
+                        });
+                    }
+                }
+                ImGui::EndDisabled();
+                CanvasTooltip("Value の入力を UV 0〜1 でテクスチャに焼き、以後はそのテクスチャを読みます\n"
+                              "（重いノイズを 1 枚の画像にする。Time は「ベイク時刻」の値で固定）");
+                if (node.Texture != 0)
+                {
+                    if (ImGui::Button("変換を解除", ImVec2(width, 0)))
+                    {
+                        PushHistory(document, document.Graph);
+                        node.Texture = 0;
+                        ++document.Graph.Revision;
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                    CanvasTooltip("テクスチャを使わず、入力をそのまま通します");
+                }
+                else
+                {
+                    ImGui::TextDisabled("未変換（入力をそのまま通す）");
+                }
+                if (document.NodeJobNode == node.Id && !document.NodeStatus.empty())
+                {
+                    ImGui::TextDisabled("%s", document.NodeStatus.c_str());
+                }
+                break;
+            }
+            case Kind::ConvertToNormalHeight:
+            case Kind::ConvertToHeight:
+            case Kind::ConvertToNormal: {
+                // テクスチャのドロップ（Texture Sample と同じ）
+                auto path = MaterialManager::Registry().Resolve(node.Texture).filename().string();
+                if (path.empty())
+                {
+                    path = "Textureをドロップ";
+                }
+                ImGui::Button(path.c_str(), ImVec2(width, 0));
+                CanvasTooltip("Content Browser から色画像（アルベドなど）をドロップ");
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+                    {
+                        if (payload->DataSize == sizeof(AssetDragPayload))
+                        {
+                            const auto& asset = *static_cast<const AssetDragPayload*>(payload->Data);
+                            if (asset.Type == AssetType::Texture &&
+                                MaterialManager::Registry().TypeOf(asset.Handle) == AssetType::Texture)
+                            {
+                                PushHistory(document, document.Graph);
+                                node.Texture = asset.Handle;
+                                ++document.Graph.Revision;
+                                document.Dirty = true;
+                                document.RecoveryDirty = true;
+                            }
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (node.Kind == Kind::ConvertToNormalHeight)
+                {
+                    ImGui::TextDisabled("旧ノード: %s", node.Value[0] > 0.5f ? "Normal 出力" : "Height 出力");
+                    CanvasTooltip("今は Convert To Height / Convert To Normal に分かれています。\n"
+                                  "このノードは読み込み互換のために残しています");
+                }
+                NodeCombo(node, "ConvertChannel", 1, MaterialGraphMath::kConvertChannelCount,
+                          &MaterialGraphMath::ConvertChannelName, "チャンネル: ", width);
+                CanvasTooltip("高さの元にするチャンネル（プロシージャルスタジオと同じ）");
+                const auto toggle = [&](const char* label, size_t index, const char* tooltip) {
+                    bool value = node.Value[index] > 0.5f;
+                    if (ImGui::Checkbox(label, &value))
+                    {
+                        PushHistory(document, document.Graph);
+                        node.Value[index] = value ? 1.0f : 0.0f;
+                        ++document.Graph.Revision;
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                    CanvasTooltip("%s", tooltip);
+                };
+                toggle("反転", 2, "明るい所を低く（凹）する");
+                const bool normal = node.Kind == Kind::ConvertToNormal ||
+                                    (node.Kind == Kind::ConvertToNormalHeight && node.Value[0] > 0.5f);
+                if (normal)
+                {
+                    ImGui::SameLine();
+                    toggle("Sobel", 3, "オン: 3x3（ノイズに強い） / オフ: 中央差分（鋭い）");
+                }
                 break;
             }
             case Kind::StaticSwitch: {
@@ -837,6 +1678,68 @@ namespace
                     node.Value[0] = static_cast<float>(direction);
                 }
                 TrackValueEdit(document, node, before, changed);
+                break;
+            }
+            case Kind::ProceduralNoise:
+            case Kind::FractalNoise: {
+                // プロシージャルスタジオと同じ基底 / フラクタル / シード / タイル
+                const bool fractal = node.Kind == Kind::FractalNoise;
+                NodeCombo(node, "Basis", 0, MaterialGraphMath::kNoiseBasisCount, &MaterialGraphMath::NoiseBasisName, "",
+                          width);
+                CanvasTooltip("ノイズの基底（プロシージャルスタジオと同じ）");
+                if (fractal)
+                {
+                    NodeCombo(node, "Fractal", 1, MaterialGraphMath::kNoiseFractalCount,
+                              &MaterialGraphMath::NoiseFractalName, "", width);
+                    CanvasTooltip("フラクタルの種類（Domain Warp は Warp Strength、Ridged 系は Ridge Offset を使います）");
+                }
+                {
+                    const size_t seedIndex = fractal ? 2 : 1;
+                    const auto beforeSeed = node.Value;
+                    int seed = static_cast<int>((std::max)(node.Value[seedIndex], 0.0f));
+                    ImGui::SetNextItemWidth(width);
+                    const bool seedChanged = ImGui::DragInt("##Seed", &seed, 1.0f, 0, 16777215, "Seed %d");
+                    if (seedChanged)
+                    {
+                        node.Value[seedIndex] = static_cast<float>(std::clamp(seed, 0, 16777215));
+                    }
+                    TrackValueEdit(document, node, beforeSeed, seedChanged);
+                }
+                {
+                    const size_t tileIndex = fractal ? 3 : 2;
+                    bool tileable = node.Value[tileIndex] > 0.5f;
+                    if (ImGui::Checkbox("タイル", &tileable))
+                    {
+                        PushHistory(document, document.Graph);
+                        node.Value[tileIndex] = tileable ? 1.0f : 0.0f;
+                        ++document.Graph.Revision;
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                    CanvasTooltip("UV 0〜1 で継ぎ目なく繰り返す（Frequency / Lacunarity は整数に丸めます）");
+                }
+                break;
+            }
+            case Kind::NoiseCombine: {
+                int mode = std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialNoiseCombineMode::Count) - 1);
+                changed = ImGui::SliderInt("##CombineMode", &mode, 0, static_cast<int>(MaterialNoiseCombineMode::Count) - 1,
+                                           MaterialGraphMath::NoiseCombineModeName(mode));
+                if (changed)
+                {
+                    node.Value[0] = static_cast<float>(mode);
+                }
+                TrackValueEdit(document, node, before, changed);
+                CanvasTooltip("Mix: Factor で A→B\nAdd〜Difference: A に B を合成し、Factor で効き具合\n"
+                                      "Height Blend: 高い方を残す（Factor = 境界の幅）");
+                bool clampResult = node.Value[1] > 0.5f;
+                if (ImGui::Checkbox("0〜1 に収める", &clampResult))
+                {
+                    PushHistory(document, document.Graph);
+                    node.Value[1] = clampResult ? 1.0f : 0.0f;
+                    ++document.Graph.Revision;
+                    document.Dirty = true;
+                    document.RecoveryDirty = true;
+                }
                 break;
             }
             case Kind::Voronoi: {
@@ -954,7 +1857,7 @@ namespace
                     node.Height = 0.0f;
                 }
             }
-            ImGui::SetItemTooltip("%s", handle.Tooltip);
+            CanvasTooltip("%s", handle.Tooltip);
             if (hot && handle.Axes != (Horizontal | Vertical))
             {
                 // 辺のハイライト
@@ -1111,16 +2014,16 @@ namespace
             }
             ImGui::PopStyleColor();
             ImGui::PopStyleVar();
-            ImGui::SetItemTooltip(previewCollapsed ? "プレビューを表示" : "プレビューを隠す");
+            CanvasTooltip(previewCollapsed ? "プレビューを表示" : "プレビューを隠す");
             ImGui::SameLine(0.0f, 4.0f);
         }
         ImGui::TextUnformatted(node.Name.c_str());
         if (node.Name != definition.Name)
         {
-            ImGui::SetItemTooltip("%s", definition.Name);
+            CanvasTooltip("%s", definition.Name);
         }
         float headerBottom = ImGui::GetItemRectMax().y;
-        if (node.OutputPin)
+        if (node.OutputPin && node.SplitPins.empty()) // 分割中は右側の X / Y / Z / W に置き換わる
         {
             const auto typeFound = frame.OutputTypes.find(node.Id);
             const auto type = typeFound != frame.OutputTypes.end() ? typeFound->second : MaterialGraphType::Numeric;
@@ -1134,7 +2037,8 @@ namespace
             PinIcon(TypeColor(type), frame.ConnectedPins.contains(node.OutputPin));
             document.PinY[node.OutputPin] = PinCenterY();
             Nodes::EndPin();
-            ImGui::SetItemTooltip("出力: %s", TypeName(type));
+            CanvasTooltip("出力: %s%s", TypeName(type),
+                          document.Graph.CanSplitOutput(node.Id) ? "\n右クリック →「ピンを分割」で X / Y / Z / W に分けられます" : "");
             headerBottom = (std::max)(headerBottom, ImGui::GetItemRectMax().y);
         }
         ImGui::Dummy(ImVec2(width, 4.0f)); // ヘッダーの下の余白（ノード幅もここで確定）
@@ -1142,9 +2046,16 @@ namespace
         // ---- 値の編集
         DrawValueEditors(document, node, width);
 
-        // ---- 入力ピン
-        for (size_t i = 0; i < node.InputPins.size(); ++i)
+        // ---- 入力ピン（左）と、分割した出力ピン（右：UE の Split Struct Pin と同じ並び）
+        const size_t rowCount = (std::max)(node.InputPins.size(), node.SplitPins.size());
+        for (size_t i = 0; i < rowCount; ++i)
         {
+            const float rowY = ImGui::GetCursorScreenPos().y;
+            if (i >= node.InputPins.size())
+            {
+                DrawSplitOutputPin(document, node, i, frame, start.x, width, rowY, false);
+                continue;
+            }
             const uint64_t pin = node.InputPins[i];
             const bool connected = frame.ConnectedPins.contains(pin);
             MaterialGraphType type = definition.Inputs[i].Type;
@@ -1153,21 +2064,28 @@ namespace
                 const auto source = frame.InputSource.find(pin);
                 if (source != frame.InputSource.end())
                 {
-                    const auto owner = frame.PinOwner.find(source->second);
-                    if (owner != frame.PinOwner.end())
-                    {
-                        const auto found = frame.OutputTypes.find(owner->second->Id);
-                        type = found != frame.OutputTypes.end() ? found->second : type;
-                    }
+                    const auto found = frame.PinTypes.find(source->second);
+                    type = found != frame.PinTypes.end() ? found->second : type;
                 }
             }
+            // Material Output：マテリアルモードで使えないピンは灰色（接続も不可。既存の接続は無効になる）
+            const char* inactiveReason =
+                node.Kind == Kind::Output && i < static_cast<size_t>(MaterialOutputPin::Count)
+                    ? MaterialGraph::OutputPinInactiveReason(static_cast<MaterialOutputPin>(i), document.Graph.Settings)
+                    : nullptr;
             Nodes::BeginPin(Nodes::PinId(pin), Nodes::PinKind::Input);
             Nodes::PinPivotAlignment(ImVec2(0.0f, 0.5f));
             Nodes::PinPivotSize(ImVec2(0, 0));
-            PinIcon(TypeColor(type), connected);
+            PinIcon(inactiveReason ? IM_COL32(90, 90, 96, 255) : TypeColor(type), connected);
             document.PinY[pin] = PinCenterY();
             ImGui::SameLine(0.0f, 4.0f);
-            if (connected)
+            if (inactiveReason)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.45f, 1.0f));
+                ImGui::TextUnformatted(definition.Inputs[i].Name);
+                ImGui::PopStyleColor();
+            }
+            else if (connected)
             {
                 ImGui::TextUnformatted(definition.Inputs[i].Name);
             }
@@ -1176,6 +2094,19 @@ namespace
                 ImGui::TextDisabled("%s", definition.Inputs[i].Name);
             }
             Nodes::EndPin();
+            if (inactiveReason)
+            {
+                CanvasTooltip("%s%s", inactiveReason, connected ? "\n（接続は残っていますが使われません）" : "");
+            }
+            // 未接続の Scalar ピン：横に数値ボックス（UE と同じ。接続すると隠れる）
+            if (!connected && MaterialGraph::IsPinValueEditable(node.Kind, i))
+            {
+                DrawPinValueBox(document, node, i);
+            }
+            if (i < node.SplitPins.size())
+            {
+                DrawSplitOutputPin(document, node, i, frame, start.x, width, rowY, true);
+            }
         }
 
         // ---- プレビュー（高さを指定している場合は、残りの高さをプレビュー / 余白に使う）
@@ -1217,6 +2148,85 @@ namespace
         DrawNodeComment(node);
     }
 
+    // ピンの右クリックメニュー（UE と同じ：出力は「ピンを分割 / 統合」、入力は「既定値に戻す」）
+    void DrawPinMenu(GraphDocument& document)
+    {
+        bool input = false;
+        size_t index = 0;
+        const auto* pinNode = document.Graph.FindPinNode(document.ContextPin, &input, &index);
+        if (!pinNode)
+        {
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        const uint64_t nodeId = pinNode->Id;
+        if (!input)
+        {
+            if (index == 0)
+            {
+                const int count = static_cast<int>(document.Graph.ResolveOutputType(nodeId));
+                static const char* labels[] = {"ピンを分割", "ピンを分割", "ピンを分割（X / Y）", "ピンを分割（X / Y / Z）",
+                                               "ピンを分割（X / Y / Z / W）"};
+                if (ImGui::MenuItem(labels[std::clamp(count, 0, 4)], nullptr, false,
+                                    document.Graph.CanSplitOutput(nodeId)))
+                {
+                    const auto before = document.Graph;
+                    if (document.Graph.SplitOutput(nodeId, document.Error))
+                    {
+                        PushHistory(document, before);
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                }
+                ImGui::SetItemTooltip("float2 以上の出力を、同じノードの X / Y / Z / W ピンに分けます\n"
+                                      "（今の出力の接続は外れます。Ctrl+Z で戻せます）");
+            }
+            else
+            {
+                if (ImGui::MenuItem("ピンを統合", nullptr, false, pinNode->Kind != Kind::BreakVector))
+                {
+                    const auto before = document.Graph;
+                    if (document.Graph.RecombineOutput(nodeId))
+                    {
+                        PushHistory(document, before);
+                        document.Dirty = true;
+                        document.RecoveryDirty = true;
+                    }
+                }
+                ImGui::SetItemTooltip(pinNode->Kind == Kind::BreakVector ? "Break Vector は常に分割されています"
+                                                                         : "X / Y / Z / W を 1 つの出力に戻します\n"
+                                                                           "（成分ピンの接続は外れます）");
+            }
+        }
+        else if (ImGui::MenuItem("既定値に戻す", nullptr, false, MaterialGraph::HasPinValue(*pinNode, index)))
+        {
+            PushHistory(document, document.Graph);
+            if (auto* node = document.Graph.FindNode(nodeId))
+            {
+                node->PinValues[index] = std::numeric_limits<float>::quiet_NaN();
+            }
+            ++document.Graph.Revision;
+            document.Dirty = true;
+            document.RecoveryDirty = true;
+        }
+        bool linked = false;
+        for (const auto& link : document.Graph.Links)
+        {
+            linked |= link.SourcePin == document.ContextPin || link.TargetPin == document.ContextPin;
+        }
+        if (ImGui::MenuItem("接続を切る", nullptr, false, linked))
+        {
+            const auto before = document.Graph;
+            std::erase_if(document.Graph.Links, [&](const auto& link) {
+                return link.SourcePin == document.ContextPin || link.TargetPin == document.ContextPin;
+            });
+            ++document.Graph.Revision;
+            PushHistory(document, before);
+            document.Dirty = true;
+            document.RecoveryDirty = true;
+        }
+    }
+
     void CopySelection(GraphDocument& document)
     {
         copiedNodes.clear();
@@ -1229,6 +2239,7 @@ namespace
                 copiedNodes.push_back(node);
                 pins.insert(node.OutputPin);
                 pins.insert(node.InputPins.begin(), node.InputPins.end());
+                pins.insert(node.SplitPins.begin(), node.SplitPins.end());
             }
         }
         for (const auto& link : document.Graph.Links)
@@ -1265,7 +2276,19 @@ namespace
             destination->Width = source.Width;
             destination->Height = source.Height;
             destination->Comment = source.Comment;
+            destination->PinValues = source.PinValues;
+            if (!source.SplitPins.empty() && destination->SplitPins.empty())
+            {
+                // 分割をそのまま複製する（接続前で型が決まっていなくても、同じ成分数で分ける）
+                std::string splitError;
+                candidate.SplitOutput(id, splitError, static_cast<int>(source.SplitPins.size()));
+                destination = candidate.FindNode(id);
+            }
             remappedPins[source.OutputPin] = destination->OutputPin;
+            for (size_t i = 0; i < source.SplitPins.size() && i < destination->SplitPins.size(); ++i)
+            {
+                remappedPins[source.SplitPins[i]] = destination->SplitPins[i];
+            }
             for (size_t i = 0; i < source.InputPins.size(); ++i)
             {
                 remappedPins[source.InputPins[i]] = destination->InputPins[i];
@@ -1274,7 +2297,13 @@ namespace
         }
         for (const auto& link : copiedLinks)
         {
-            if (!candidate.Connect(remappedPins.at(link.SourcePin), remappedPins.at(link.TargetPin), document.Error))
+            const auto sourcePin = remappedPins.find(link.SourcePin);
+            const auto targetPin = remappedPins.find(link.TargetPin);
+            if (sourcePin == remappedPins.end() || targetPin == remappedPins.end())
+            {
+                continue; // 複製先で成分数が合わなかった分割ピン
+            }
+            if (!candidate.Connect(sourcePin->second, targetPin->second, document.Error))
             {
                 return;
             }
@@ -1432,7 +2461,7 @@ namespace
                 float best = 1e9f;
                 for (const auto& link : graph.Links)
                 {
-                    if (link.SourcePin == node->OutputPin)
+                    if (node->OwnsOutput(link.SourcePin))
                     {
                         const auto found = document.PinY.find(link.TargetPin);
                         if (found != document.PinY.end())
@@ -1515,7 +2544,7 @@ namespace
                 const MaterialGraphLink* outgoing = nullptr;
                 for (const auto& link : document.Graph.Links)
                 {
-                    if (node.OutputPin && link.SourcePin == node.OutputPin)
+                    if (node.OwnsOutput(link.SourcePin))
                     {
                         outgoing = &link;
                         break;
@@ -1528,7 +2557,7 @@ namespace
                 if (outgoing)
                 {
                     const float target = pinY(outgoing->TargetPin);
-                    const float source = pinY(node.OutputPin);
+                    const float source = pinY(outgoing->SourcePin);
                     if (std::isfinite(target) && std::isfinite(source))
                     {
                         MoveNode(node, ImVec2(rect.Position.x, rect.Position.y + (target - source)));
@@ -1546,7 +2575,7 @@ namespace
                         continue;
                     }
                     const float target = pinY(pin);
-                    const float source = pinY(upstream->OutputPin);
+                    const float source = pinY(link->SourcePin);
                     if (std::isfinite(target) && std::isfinite(source))
                     {
                         const ImVec2 position = Nodes::GetNodePosition(Nodes::NodeId(upstream->Id));
@@ -1673,7 +2702,7 @@ namespace
     }
 
     // ============================================================ ノード追加（UE のパレット）
-    const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture",         "Coordinates", "Math",
+    const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture",         "Coordinates", "Object", "Math",
                                           "Vector",     "Color",     "Normal / Height", "Procedural",  "Utility",
                                           "Comment"};
 
@@ -1703,17 +2732,29 @@ namespace
                 {
                     for (const auto target : added->InputPins)
                     {
-                        if (document.Graph.CanConnect(document.PendingConnectPin, target, error))
+                        if (document.Graph.CanConnectActive(document.PendingConnectPin, target, error))
                         {
                             document.Graph.Connect(document.PendingConnectPin, target, error);
                             break;
                         }
                     }
                 }
-                else if (added->OutputPin &&
-                         document.Graph.CanConnect(added->OutputPin, document.PendingConnectPin, error))
+                else
                 {
-                    document.Graph.Connect(added->OutputPin, document.PendingConnectPin, error);
+                    // 分割ノード（Break Vector）は X から順に、それ以外はまとめた出力から繋ぐ
+                    std::vector<uint64_t> outputs = added->SplitPins;
+                    if (added->SplitPins.empty() && added->OutputPin)
+                    {
+                        outputs.push_back(added->OutputPin);
+                    }
+                    for (const auto output : outputs)
+                    {
+                        if (document.Graph.CanConnectActive(output, document.PendingConnectPin, error))
+                        {
+                            document.Graph.Connect(output, document.PendingConnectPin, error);
+                            break;
+                        }
+                    }
                 }
             }
             document.PendingConnectPin = 0;
@@ -1743,7 +2784,8 @@ namespace
             bool first = true;
             for (const auto& definition : MaterialGraph::Definitions())
             {
-                if (definition.Kind == Kind::Output || !filter.PassFilter(label(definition)))
+                if (definition.Kind == Kind::Output || definition.Kind == Kind::ConvertToNormalHeight ||
+                    !filter.PassFilter(label(definition)))
                 {
                     continue;
                 }
@@ -1866,6 +2908,8 @@ namespace
         Nodes::PushStyleVar(Nodes::StyleVar_LinkStrength, 120.0f);
         Nodes::PushStyleVar(Nodes::StyleVar_FlowDuration, 1.2f);
         Nodes::Begin("MaterialGraphCanvas");
+        const float canvasFontDensity = CanvasFontDensity();
+        SetCanvasFontDensity(canvasFontDensity); // キャンバス内の文字（ノード名 / ピン名 / 数値）
         const bool canvasHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
         const bool canvasFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
         if (document.RestorePositions)
@@ -1915,8 +2959,8 @@ namespace
             const auto target = frame.PinOwner.find(link.TargetPin);
             const uint64_t sourceNode = source != frame.PinOwner.end() ? source->second->Id : 0;
             const uint64_t targetNode = target != frame.PinOwner.end() ? target->second->Id : 0;
-            const auto typeFound = frame.OutputTypes.find(sourceNode);
-            const auto type = typeFound != frame.OutputTypes.end() ? typeFound->second : MaterialGraphType::Numeric;
+            const auto typeFound = frame.PinTypes.find(link.SourcePin);
+            const auto type = typeFound != frame.PinTypes.end() ? typeFound->second : MaterialGraphType::Numeric;
             const bool highlight = frame.Selected.contains(sourceNode) || frame.Selected.contains(targetNode) ||
                                    (frame.Hovered != 0 && (frame.Hovered == sourceNode || frame.Hovered == targetNode));
             const bool dim = !frame.Selected.empty() && !highlight;
@@ -1953,7 +2997,7 @@ namespace
                     std::swap(source, target);
                 }
                 std::string error;
-                if (document.Graph.CanConnect(source, target, error))
+                if (document.Graph.CanConnectActive(source, target, error))
                 {
                     if (Nodes::AcceptNewItem(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), 3.0f))
                     {
@@ -2082,7 +3126,21 @@ namespace
         Nodes::NodeId context;
         const bool nodeMenu = Nodes::ShowNodeContextMenu(&context);
         const bool backgroundMenu = Nodes::ShowBackgroundContextMenu();
+        Nodes::PinId contextPin;
+        const bool pinMenu = Nodes::ShowPinContextMenu(&contextPin);
         Nodes::Suspend();
+        SetCanvasFontDensity(1.0f); // ポップアップ / ツールチップは画面座標（等倍）
+        DrawCanvasOverlays(document);
+        if (pinMenu)
+        {
+            document.ContextPin = contextPin.Get();
+            ImGui::OpenPopup("MaterialPinMenu");
+        }
+        if (ImGui::BeginPopup("MaterialPinMenu"))
+        {
+            DrawPinMenu(document);
+            ImGui::EndPopup();
+        }
         if (backgroundMenu || document.OpenAddMenu)
         {
             if (backgroundMenu)
@@ -2196,7 +3254,7 @@ namespace
                 PasteSelection(document);
             }
             const auto* sourceNode = document.Graph.FindNode(document.ContextNode);
-            if (sourceNode && sourceNode->OutputPin && ImGui::BeginMenu("出力の接続先"))
+            if (sourceNode && sourceNode->OutputPin && sourceNode->SplitPins.empty() && ImGui::BeginMenu("出力の接続先"))
             {
                 const auto sourcePin = sourceNode->OutputPin;
                 for (const auto& target : document.Graph.Nodes)
@@ -2206,7 +3264,7 @@ namespace
                     {
                         const auto pin = target.InputPins[i];
                         std::string error;
-                        const bool compatible = document.Graph.CanConnect(sourcePin, pin, error);
+                        const bool compatible = document.Graph.CanConnectActive(sourcePin, pin, error);
                         const auto label = target.Name + " / " + definition.Inputs[i].Name;
                         ImGui::PushID(std::to_string(pin).c_str());
                         if (ImGui::MenuItem(label.c_str(), nullptr, false, compatible))
@@ -2237,7 +3295,9 @@ namespace
             }
         }
         Nodes::Resume();
+        SetCanvasFontDensity(canvasFontDensity);
         Nodes::End();
+        SetCanvasFontDensity(1.0f);
         Nodes::PopStyleVar(5);
         Nodes::PopStyleColor(9);
         if (document.FramesUntilFit > 0 && --document.FramesUntilFit == 0)
@@ -2303,8 +3363,8 @@ namespace
         document.Baked = baked;
         AssetThumbnailManager::MarkDirty(material);
         char status[160];
-        snprintf(status, sizeof(status), "ベイク完了: %s（%dpx / %.2f 秒）", SlotList(baked.Mask).c_str(), result.Resolution,
-                 result.Seconds);
+        snprintf(status, sizeof(status), "ベイク完了: %s（%dpx / %.2f 秒 / %s）", SlotList(baked.Mask).c_str(),
+                 result.Resolution, result.Seconds, result.Gpu ? "GPU" : "CPU");
         document.BakeStatus = status;
         return true;
     }
@@ -2313,6 +3373,66 @@ namespace
     {
         uint64_t hash = MixHash(contentSignature, document.PendingBakeMask);
         return MixHash(hash, static_cast<uint64_t>(document.PendingAlpha) + 1);
+    }
+
+    // ---- GPU 評価（ベイク / ノードの作成）。命令列を作れないグラフ（対応外のノード）は nullptr = CPU で評価
+    std::shared_ptr<MaterialGraphGpu::Job> SubmitNodeBake(const MaterialGraphBake::NodeRequest& request)
+    {
+        if (!MaterialGraphGpu::IsAvailable())
+        {
+            return nullptr;
+        }
+        MaterialGraphVm::Options options;
+        options.TargetNode = request.Node; // 自分自身のテクスチャは外してあるので、入力（Value）がそのまま出る
+        const auto program = MaterialGraphVm::Compile(request.Graph, &MaterialManager::ResolveGraphTexture, options);
+        if (!program.Success)
+        {
+            return nullptr;
+        }
+        MaterialGraphGpu::BakeDesc desc;
+        desc.Program = program.Texels;
+        desc.JobMode = MaterialGraphGpu::Mode::BakeNode;
+        desc.Resolution = request.Resolution;
+        desc.Time = request.Time;
+        desc.Flags = request.Sampler == MaterialSamplerType::Normal ? 1u : 0u;
+        desc.SlotMask = static_cast<uint32_t>(program.TargetDims) << 4u;
+        return MaterialGraphGpu::Submit(std::move(desc));
+    }
+
+    std::shared_ptr<MaterialGraphGpu::Job> SubmitBake(const MaterialGraphBake::Request& request)
+    {
+        if (!MaterialGraphGpu::IsAvailable() || request.Mask == 0)
+        {
+            return nullptr;
+        }
+        MaterialGraphVm::Options options;
+        options.IncludeDefaults = true; // 未接続の出力も CPU のベイクと同じ既定値にする
+        const auto program = MaterialGraphVm::Compile(request.Graph, &MaterialManager::ResolveGraphTexture, options);
+        if (!program.Success)
+        {
+            return nullptr;
+        }
+        // 旧グラフの「Color サンプラーの法線マップ」（CPU のベイクと同じ判定）
+        bool legacyColorNormal = false;
+        for (const auto& node : request.Graph.Nodes)
+        {
+            if (node.Kind != Kind::Output)
+            {
+                continue;
+            }
+            const auto* source = MaterialGraphEval::ResolveSource(request.Graph, node, static_cast<size_t>(MaterialOutputPin::Normal));
+            legacyColorNormal = source && source->SplitPins.empty() && source->Kind == Kind::TextureSample &&
+                                static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color);
+            break;
+        }
+        MaterialGraphGpu::BakeDesc desc;
+        desc.Program = program.Texels;
+        desc.JobMode = MaterialGraphGpu::Mode::Bake;
+        desc.Resolution = request.Resolution;
+        desc.Time = request.Time;
+        desc.Flags = static_cast<uint32_t>(request.Alpha) | (legacyColorNormal ? 4u : 0u);
+        desc.SlotMask = request.Mask;
+        return MaterialGraphGpu::Submit(std::move(desc));
     }
 
     // 変更が落ち着いたら（または手動で）ピクセルごとの式をテクスチャへ焼く
@@ -2363,7 +3483,8 @@ namespace
         request.Directory = materialPath.parent_path() / (request.Stem + "_GraphBake");
         for (const auto& node : document.Graph.Nodes)
         {
-            if (node.Kind == Kind::TextureSample && node.Texture != 0 && !request.TexturePaths.contains(node.Texture))
+            if (UsesNodeTexture(node.Kind) &&
+                node.Texture != 0 && !request.TexturePaths.contains(node.Texture))
             {
                 const auto path = MaterialManager::Registry().Resolve(node.Texture);
                 if (!path.empty())
@@ -2375,9 +3496,48 @@ namespace
         document.BakeJobSignature = signature;
         document.BakeRequested = false;
         document.BakeStatus = "ベイク中: " + SlotList(request.Mask) + "...";
+        request.Gpu = SubmitBake(request); // GPU で評価（できないグラフは CPU）
         document.BakeJob = std::async(std::launch::async, [request = std::move(request)] {
             return MaterialGraphBake::Run(request);
         });
+    }
+
+    // Convert To Texture の変換結果を受け取り、ノードにテクスチャを割り当てる
+    void PollNodeJob(GraphDocument& document)
+    {
+        if (!document.NodeJob.valid() ||
+            document.NodeJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        {
+            return;
+        }
+        const auto result = document.NodeJob.get();
+        if (!result.Success)
+        {
+            document.NodeStatus = "変換失敗: " + result.Error;
+            return;
+        }
+        std::string error;
+        const AssetHandle handle = MaterialManager::Registry().Register(result.File, AssetType::Texture, error);
+        if (handle == 0)
+        {
+            document.NodeStatus = "変換失敗: " + error;
+            return;
+        }
+        TextureManager::RequestReload(result.File); // 再変換：同じパス・同じ SRV のまま中身を差し替える
+        MaterialGraphTextures::Invalidate(handle);
+        AssetThumbnailManager::MarkDirty(handle);
+        if (auto* node = document.Graph.FindNode(result.Node))
+        {
+            PushHistory(document, document.Graph);
+            node->Texture = handle;
+            ++document.Graph.Revision;
+            ++document.Graph.ParameterRevision;
+            document.Dirty = true;
+            document.RecoveryDirty = true;
+        }
+        char status[128];
+        snprintf(status, sizeof(status), "変換完了（%.2f 秒）", result.Seconds);
+        document.NodeStatus = status;
     }
 
     // グラフ → マテリアルアセット（エンジンが描画に使う値）へ焼き込む
@@ -2456,8 +3616,28 @@ namespace
             {
                 MaterialManager::SetEditing(material, baked.Data);
             }
+            // 描画時評価（GPU）：グラフをプログラムにしてエンジンのシェーダーへ渡す（値の変更でも再コンパイル不要）
+            MaterialManager::SetGraphProgram(material, &document.Graph);
         }
         ScheduleBake(material, document, signature);
+        PollNodeJob(document);
+        // ライブ更新：Time を使う式を、ベイク済みテクスチャへ書き込み続ける（内容かベイクが変わったときだけ登録し直す）
+        const uint64_t liveSignature = MixHash(MixHash(signature, document.Baked.Signature),
+                                               static_cast<uint64_t>(document.PendingAlpha) + 1);
+        if (liveSignature != document.LiveSignature && !document.BakeJob.valid())
+        {
+            document.LiveSignature = liveSignature;
+            std::array<std::filesystem::path, MaterialGraphBake::kSlotCount> files{};
+            for (size_t slot = 0; slot < MaterialGraphBake::kSlotCount; ++slot)
+            {
+                if ((document.Baked.Mask & (1u << slot)) && document.Baked.Textures[slot] != 0)
+                {
+                    files[slot] = MaterialManager::Registry().Resolve(document.Baked.Textures[slot]);
+                }
+            }
+            MaterialGraphLive::Register(material, document.Graph, files, document.Baked.EmissivePeak,
+                                        document.PendingAlpha);
+        }
     }
 } // namespace
 
@@ -2466,6 +3646,7 @@ void MaterialGraphEditor::BeginFrame()
     focusedMaterial = 0;
     for (auto& [handle, document] : documents)
     {
+        PollNodeJob(*document); // Convert To Texture の変換結果（エディターを描いていないフレームでも受け取る）
         // エディターを描いていないフレームでもベイク結果を受け取って反映する
         if (document->BakeJob.valid() &&
             document->BakeJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -2676,13 +3857,13 @@ void MaterialGraphEditor::DrawPreviewPanel(AssetHandle material)
     size_t textures = 0;
     for (const auto& node : document.Graph.Nodes)
     {
-        textures += node.Kind == Kind::TextureSample ? 1 : 0;
+        textures += (node.Kind == Kind::TextureSample || IsConvertTextureNode(node.Kind)) ? 1 : 0;
     }
     ImGui::TextDisabled("ノード %zu / 接続 %zu / テクスチャ %zu", document.Graph.Nodes.size(),
                         document.Graph.Links.size(), textures);
     if (!document.LoadFailed && ImGui::CollapsingHeader("マテリアル設定（Details）", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        DrawGraphSettings(document);
+        DrawGraphSettings(document, material);
     }
     ImGui::SeparatorText("マテリアルへの反映");
     if (document.ApplyNotes.empty())
@@ -2797,6 +3978,8 @@ void MaterialGraphEditor::Undo(bool redo)
 
 void MaterialGraphEditor::SaveRecovery()
 {
+    // 毎フレーム呼ばれるので、ここでライブ更新（Time で動くマテリアル）も進める
+    MaterialGraphLive::Update(ImGui::GetTime());
     if (ImGui::GetTime() < nextRecoverySave || ImGui::IsAnyItemActive())
     {
         return;
@@ -2821,9 +4004,14 @@ void MaterialGraphEditor::Shutdown()
             WriteDocument(*document, document->RecoveryPath);
         }
     }
+    MaterialGraphLive::Shutdown();
+    MaterialGraphGpu::Shutdown(); // GPU 待ちのワーカーを解放してから、ドキュメント（ジョブの future）を破棄する
     documents.clear();
     MaterialGraphTextures::Clear();
     focusedMaterial = 0;
     nextRecoverySave = 0;
 }
+
+
+
 

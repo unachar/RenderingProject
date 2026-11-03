@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "materialgraphevaluator.h"
 #include "materialgraphmath.h"
+#include "procedural/noise.h"
+#include "procedural/proceduralstudio.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -143,6 +145,19 @@ namespace MaterialGraphEval
                 case Kind::WorldNormal:
                     value |= 1;
                     break;
+                case Kind::SolidCoordinate:
+                case Kind::SolidTexture:
+                case Kind::SolidPattern:
+                case Kind::LocalPosition:
+                case Kind::SlopeMask:
+                case Kind::TriplanarTexture:
+                case Kind::BoundingBoxUVW:
+                case Kind::HeightGradient:
+                    value |= 1; // Position / 法線を使う
+                    break;
+                case Kind::ConvertToSolid:
+                    value |= node.Texture != 0 ? 1 : 0; // 位置 / 法線を使う
+                    break;
                 case Kind::CameraVector:
                 case Kind::Fresnel:
                 case Kind::ReflectionVector:
@@ -157,6 +172,12 @@ namespace MaterialGraphEval
             }
             for (size_t i = 0; i < node.InputPins.size(); ++i)
             {
+                // テクスチャに変換済みの Convert To Texture は入力（時間 / 位置）に依存しない
+                if ((node.Kind == Kind::ConvertToTexture || node.Kind == Kind::ConvertToSolid) && node.Texture != 0 &&
+                    i == 0)
+                {
+                    continue;
+                }
                 if (node.Kind == Kind::StaticSwitch)
                 {
                     const size_t selected = node.Value[0] > 0.5f ? 0 : 1;
@@ -249,12 +270,25 @@ namespace MaterialGraphEval
         {
             if (const auto* link = m_Graph.InputLink(node.InputPins[input]))
             {
-                if (const auto* source = m_Graph.FindPinNode(link->SourcePin))
+                size_t outputIndex = 0;
+                if (const auto* source = m_Graph.FindPinNode(link->SourcePin, nullptr, &outputIndex))
                 {
                     const auto found = m_Topology.Index.find(source->Id);
                     if (found != m_Topology.Index.end())
                     {
-                        return Node(found->second, depth + 1);
+                        Value value = Node(found->second, depth + 1);
+                        if (outputIndex > 0)
+                        {
+                            // 分割した出力（X / Y / Z / W）：成分を取り出す。無い成分は 0（スカラーは全成分同じ）
+                            const int component = static_cast<int>(outputIndex) - 1;
+                            const float scalar = value.N == 1 ? value.V[0]
+                                                 : component < value.N ? value.V[component]
+                                                                       : 0.0f;
+                            value = Value{};
+                            value.V[0] = scalar;
+                            value.N = 1;
+                        }
+                        return value;
                     }
                 }
             }
@@ -276,9 +310,10 @@ namespace MaterialGraphEval
         {
             const auto& pin = definition.Inputs[input];
             value.N = std::clamp(pin.Type == MaterialGraphType::Numeric ? 1 : static_cast<int>(pin.Type), 1, 4);
+            const auto defaults = MaterialGraph::UnconnectedInputValue(node, input); // ピン横のボックスの値
             for (int i = 0; i < 4; ++i)
             {
-                value.V[i] = pin.Default[i];
+                value.V[i] = defaults[i];
             }
         }
         return value;
@@ -381,9 +416,16 @@ namespace MaterialGraphEval
         switch (kind)
         {
             case Kind::Reroute:
+            case Kind::BreakVector: // 成分の取り出しは接続先の Input で行う
                 return Input(node, 0, depth);
+            case Kind::ConvertToTexture:
+                if (node.Texture == 0)
+                {
+                    return Promote(Input(node, 0, depth), 4); // 未変換：入力をそのまま通す
+                }
+                [[fallthrough]];
             case Kind::TextureSample: {
-                const Value uv = Promote(Input(node, 0, depth), 2);
+                const Value uv = Promote(Input(node, node.Kind == Kind::ConvertToTexture ? 1 : 0, depth), 2);
                 const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                 result.N = 4;
                 if (node.Texture != 0 && m_Sampler &&
@@ -579,6 +621,368 @@ namespace MaterialGraphEval
             }
             case Kind::WorldPosition:
                 return Make(m_Context.Position, 3);
+            // ---------------------------------------------------------------- ソリッドテクスチャ
+            case Kind::SolidCoordinate: {
+                const Value position = Promote(Input(node, 0, depth), 3);
+                const float scale = Input(node, 1, depth).V[0];
+                const Value offset = Promote(Input(node, 2, depth), 3);
+                const bool raw = m_Graph.InputLink(node.InputPins[0]) != nullptr; // 繋いだ座標はそのまま
+                float p[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    const float base = raw ? position.V[i] : position.V[i] * 0.5f + 0.5f;
+                    p[i] = base * scale + offset.V[i];
+                }
+                return Make(p, 3);
+            }
+            case Kind::SolidTexture:
+            case Kind::SolidPattern: {
+                // プロシージャルスタジオの立体テクスチャ（TextureScalar / TextureColor, solid = true）と同じ計算
+                static const ProcStudio::TextureKind kinds[] = {
+                    ProcStudio::TextureKind::FractalNoise, ProcStudio::TextureKind::Marble,
+                    ProcStudio::TextureKind::Wood,         ProcStudio::TextureKind::Granite,
+                    ProcStudio::TextureKind::Voronoi,      ProcStudio::TextureKind::FractalCloud};
+                Value position = Promote(Input(node, 0, depth), 3);
+                if (!m_Graph.InputLink(node.InputPins[0]))
+                {
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        position.V[i] = position.V[i] * 0.5f + 0.5f; // スタジオと同じ 0〜1 の座標
+                    }
+                }
+                ProcStudio::TextureParams params;
+                params.Kind = kinds[std::clamp(static_cast<int>(node.Value[0]), 0,
+                                               static_cast<int>(MaterialSolidKind::Count) - 1)];
+                params.Noise.BasisType = static_cast<ProcStudio::Basis>(
+                    std::clamp(static_cast<int>(node.Value[1]), 0, GraphMath::kNoiseBasisCount - 1));
+                params.Noise.Fractal = static_cast<ProcStudio::FractalType>(
+                    std::clamp(static_cast<int>(node.Value[2]), 0, GraphMath::kNoiseFractalCount - 1));
+                params.Noise.Seed = static_cast<uint32_t>((std::max)(node.Value[3], 0.0f));
+                params.Noise.Frequency = Input(node, 1, depth).V[0];
+                params.Noise.Octaves = std::clamp(static_cast<int>(Input(node, 2, depth).V[0]), 1, 12);
+                params.Noise.Lacunarity = Input(node, 3, depth).V[0];
+                params.Noise.Gain = Input(node, 4, depth).V[0];
+                params.Noise.WarpStrength = Input(node, 5, depth).V[0];
+                params.Noise.RidgeOffset = Input(node, 6, depth).V[0];
+                params.Turbulence = Input(node, 7, depth).V[0];
+                params.RingCount = Input(node, 8, depth).V[0];
+                params.Coverage = Input(node, 9, depth).V[0];
+                params.Softness = Input(node, 10, depth).V[0];
+                params.Contrast = Input(node, 11, depth).V[0];
+                params.Bias = Input(node, 12, depth).V[0];
+                params.Tileable = false;
+                float p[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    p[i] = std::isfinite(position.V[i]) ? std::clamp(position.V[i], -10000.0f, 10000.0f) : 0.0f;
+                }
+                if (node.Kind == Kind::SolidPattern)
+                {
+                    result.V[0] = ProcStudio::TextureScalar(params, p[0], p[1], p[2], true);
+                    return result;
+                }
+                for (int color = 0; color < 3; ++color)
+                {
+                    const Value c = Promote(Input(node, 13 + color, depth), 3);
+                    auto& target = color == 0 ? params.ColorA : color == 1 ? params.ColorB : params.ColorC;
+                    target = {c.V[0], c.V[1], c.V[2]};
+                }
+                const ProcStudio::Float3 c = ProcStudio::TextureColor(params, p[0], p[1], p[2], true);
+                return Make3(c.X, c.Y, c.Z);
+            }
+            // ---------------------------------------------------------------- 便利ノード（CPU プレビュー / ベイク）
+            case Kind::LocalPosition:
+                return Make(m_Context.Position, 3); // プレビュー / ベイクではワールド位置と同じ
+            // ---------------------------------------------------------------- オブジェクト / カメラ（プレビュー / ベイク用の値）
+            //  プレビューにはオブジェクトが無いので、原点 0・スケール 1・範囲 -1〜1・乱数 0.5 として評価する
+            case Kind::ObjectPosition:
+                return Make3(0.0f, 0.0f, 0.0f);
+            case Kind::ObjectScale:
+                return Make3(1.0f, 1.0f, 1.0f);
+            case Kind::ObjectOrientation:
+                return Make3(0.0f, 1.0f, 0.0f);
+            case Kind::ObjectRadius:
+                result.V[0] = 1.7320508f;
+                return result;
+            case Kind::ObjectBounds: {
+                const int mode = std::clamp(static_cast<int>(node.Value[0]), 0, 3);
+                const float value = mode == 0 ? 2.0f : mode == 1 ? 0.0f : mode == 2 ? -1.0f : 1.0f;
+                return Make3(value, value, value);
+            }
+            case Kind::BoundingBoxUVW:
+                return Make3(m_Context.Position[0] * 0.5f + 0.5f, m_Context.Position[1] * 0.5f + 0.5f,
+                             m_Context.Position[2] * 0.5f + 0.5f);
+            case Kind::PerInstanceRandom:
+                result.V[0] = 0.5f;
+                return result;
+            case Kind::TransformVector:
+            case Kind::TransformPosition:
+                return Promote(Input(node, 0, depth), 3); // プレビューはローカル = ワールド = ビュー
+            case Kind::CameraPosition:
+                return Make3(m_Context.Position[0] + m_Context.Camera[0] * 3.0f,
+                             m_Context.Position[1] + m_Context.Camera[1] * 3.0f,
+                             m_Context.Position[2] + m_Context.Camera[2] * 3.0f);
+            case Kind::PixelDepth:
+                result.V[0] = 3.0f;
+                return result;
+            case Kind::ScreenPosition: {
+                const float uv[2] = {m_Context.UV[0], m_Context.UV[1]};
+                return Make(uv, 2);
+            }
+            case Kind::DitherOpacity: {
+                const float opacity = Input(node, 0, depth).V[0];
+                const float pixels = 1.0f / (std::max)(m_Context.PixelSize, 1e-5f);
+                const int x = static_cast<int>(floorf(m_Context.UV[0] * pixels));
+                const int y = static_cast<int>(floorf(m_Context.UV[1] * pixels));
+                result.V[0] = opacity > GraphMath::BayerThreshold(x, y) ? 1.0f : 0.0f;
+                return result;
+            }
+            case Kind::DistanceFade: {
+                const float start = Input(node, 0, depth).V[0];
+                const float end = Input(node, 1, depth).V[0];
+                result.V[0] = GraphMath::Saturate((3.0f - start) / (fabsf(end - start) > 1e-6f ? end - start : 1e-6f));
+                return result;
+            }
+            case Kind::HeightGradient: {
+                const float start = Input(node, 0, depth).V[0];
+                const float end = Input(node, 1, depth).V[0];
+                const int mode = std::clamp(static_cast<int>(node.Value[0]), 0, 2);
+                const float y = mode == 2 ? m_Context.Position[1] * 0.5f + 0.5f : m_Context.Position[1];
+                result.V[0] = GraphMath::Saturate((y - start) / (fabsf(end - start) > 1e-6f ? end - start : 1e-6f));
+                return result;
+            }
+            case Kind::VertexColor: {
+                const float white[4] = {1, 1, 1, 1};
+                return Make(white, 4);
+            }
+            case Kind::CameraDistance:
+                result.V[0] = 3.0f; // プレビュー用の固定距離（エンジンでは実際の距離）
+                return result;
+            case Kind::SlopeMask: {
+                Value up = Promote(Input(node, 0, depth), 3);
+                const float fallback[3] = {0, 1, 0};
+                Normalize3(up.V, fallback);
+                const float threshold = Input(node, 1, depth).V[0];
+                const float softness = (std::max)(Input(node, 2, depth).V[0], 1e-4f);
+                const float d = Dot3(m_Context.Normal, up.V);
+                float t = GraphMath::Saturate((d - (threshold - softness)) / (2.0f * softness));
+                result.V[0] = t * t * (3.0f - 2.0f * t);
+                return result;
+            }
+            case Kind::HeightLerp: {
+                const Value a = Input(node, 0, depth);
+                const Value b = Input(node, 1, depth);
+                const int count = (std::max)(a.N, b.N);
+                const Value pa = Promote(a, count);
+                const Value pb = Promote(b, count);
+                const float height = Input(node, 2, depth).V[0];
+                const float phase = Input(node, 3, depth).V[0];
+                const float contrast = Input(node, 4, depth).V[0];
+                const float x = GraphMath::Saturate(height + phase * 2.0f - 1.0f);
+                const float t = GraphMath::Saturate(-contrast + (1.0f + 2.0f * contrast) * x);
+                result.N = count;
+                for (int i = 0; i < 4; ++i)
+                {
+                    result.V[i] = pa.V[i] + (pb.V[i] - pa.V[i]) * t;
+                }
+                return result;
+            }
+            case Kind::ColorAdjust: {
+                const Value color = Promote(Input(node, 0, depth), 3);
+                const float brightness = Input(node, 1, depth).V[0];
+                const float contrast = Input(node, 2, depth).V[0];
+                const float saturation = Input(node, 3, depth).V[0];
+                float c[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    c[i] = (color.V[i] * brightness - 0.5f) * contrast + 0.5f;
+                }
+                const float luminance = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+                for (int i = 0; i < 3; ++i)
+                {
+                    c[i] = luminance + (c[i] - luminance) * saturation;
+                }
+                return Make(c, 3);
+            }
+            case Kind::TriplanarTexture: {
+                const Value position = Promote(Input(node, 0, depth), 3);
+                const float scale = Input(node, 1, depth).V[0];
+                const float sharpness = (std::max)(Input(node, 2, depth).V[0], 0.01f);
+                const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                const bool raw = sampler != MaterialSamplerType::Color;
+                float p[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    const float v = position.V[i] * scale;
+                    p[i] = std::isfinite(v) ? std::clamp(v, -10000.0f, 10000.0f) : 0.0f;
+                }
+                float w[3];
+                float total = 0.0f;
+                for (int i = 0; i < 3; ++i)
+                {
+                    w[i] = powf(fabsf(m_Context.Normal[i]) + 1e-5f, sharpness);
+                    total += w[i];
+                }
+                const auto sample = [&](float u, float v, float* out) {
+                    if (node.Texture == 0 || !m_Sampler || !m_Sampler(node.Texture, u, v, raw, out))
+                    {
+                        out[0] = out[1] = out[2] = 0.5f;
+                        out[3] = 1.0f;
+                    }
+                };
+                float a[4], b[4], c[4];
+                sample(p[1], p[2], a);
+                sample(p[0], p[2], b);
+                sample(p[0], p[1], c);
+                result.N = 4;
+                for (int i = 0; i < 4; ++i)
+                {
+                    result.V[i] = (a[i] * w[0] + b[i] * w[1] + c[i] * w[2]) / total;
+                }
+                if (sampler == MaterialSamplerType::Normal)
+                {
+                    float n[3] = {result.V[0] * 2.0f - 1.0f, result.V[1] * 2.0f - 1.0f, result.V[2] * 2.0f - 1.0f};
+                    const float up[3] = {0, 0, 1};
+                    Normalize3(n, up);
+                    result.V[0] = n[0];
+                    result.V[1] = n[1];
+                    result.V[2] = n[2];
+                    result.V[3] = 1.0f;
+                }
+                return result;
+            }
+            case Kind::ConvertToSolid: {
+                if (node.Texture == 0)
+                {
+                    return Promote(Input(node, 0, depth), 4); // 元画像なし：入力をそのまま通す
+                }
+                Value position = Promote(Input(node, 1, depth), 3);
+                const bool raw = m_Graph.InputLink(node.InputPins[1]) != nullptr;
+                const float scale = Input(node, 2, depth).V[0];
+                float p[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    const float base = raw ? position.V[i] : position.V[i] * 0.5f + 0.5f;
+                    const float v = base * scale;
+                    p[i] = std::isfinite(v) ? std::clamp(v, -10000.0f, 10000.0f) : 0.0f;
+                }
+                const bool linear = static_cast<int>(node.Value[1]) != static_cast<int>(MaterialSamplerType::Color);
+                const auto sample = [&](float u, float v, float* out) {
+                    if (!m_Sampler || !m_Sampler(node.Texture, u, v, linear, out))
+                    {
+                        out[0] = out[1] = out[2] = 0.5f;
+                        out[3] = 1.0f;
+                    }
+                };
+                result.N = 4;
+                const int method = std::clamp(static_cast<int>(node.Value[0]), 0,
+                                              static_cast<int>(MaterialSolidConvertMethod::Count) - 1);
+                if (method == static_cast<int>(MaterialSolidConvertMethod::Stochastic))
+                {
+                    // 3 方向投影 × ヘックス タイル（タイルごとにランダムな位置 / 回転）。MGVM_SolidStochastic と同じ
+                    using ProcStudio::NoiseDetail::Hash;
+                    using ProcStudio::NoiseDetail::Unit;
+                    const float sharpness = (std::max)(Input(node, 5, depth).V[0], 0.01f);
+                    const float randomness = std::clamp(Input(node, 6, depth).V[0], 0.0f, 1.0f);
+                    const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[2], 0.0f));
+                    const float uvs[3][2] = {{p[1], p[2]}, {p[0], p[2]}, {p[0], p[1]}};
+                    float total = 0.0f;
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        const float weight = powf(fabsf(m_Context.Normal[axis]) + 1e-5f, sharpness);
+                        total += weight;
+                        const uint32_t planeSeed = Hash(seed + static_cast<uint32_t>(axis) * 0x9E3779B9u);
+                        const auto tiles = GraphMath::HexGrid(uvs[axis][0], uvs[axis][1]);
+                        for (int t = 0; t < 3; ++t)
+                        {
+                            const uint32_t h = Hash(planeSeed ^ Hash(static_cast<uint32_t>(tiles.Vertex[t][0]) * 0x8da6b343u ^
+                                                                     Hash(static_cast<uint32_t>(tiles.Vertex[t][1]) * 0xd8163841u)));
+                            const float angle = Unit(Hash(h ^ 0x68bc21ebu)) * 6.28318531f * randomness;
+                            const float c = cosf(angle), sn = sinf(angle);
+                            const float u = uvs[axis][0] * c - uvs[axis][1] * sn + Unit(h);
+                            const float v = uvs[axis][0] * sn + uvs[axis][1] * c + Unit(Hash(h));
+                            float texel[4];
+                            sample(u, v, texel);
+                            for (int i = 0; i < 4; ++i)
+                            {
+                                result.V[i] += texel[i] * tiles.Weight[t] * weight;
+                            }
+                        }
+                    }
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        result.V[i] /= (std::max)(total, 1e-6f);
+                    }
+                }
+                else if (method == static_cast<int>(MaterialSolidConvertMethod::Triplanar))
+                {
+                    const float sharpness = (std::max)(Input(node, 5, depth).V[0], 0.01f);
+                    float w[3];
+                    float total = 0.0f;
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        w[i] = powf(fabsf(m_Context.Normal[i]) + 1e-5f, sharpness);
+                        total += w[i];
+                    }
+                    float a[4], b[4], c[4];
+                    sample(p[1], p[2], a);
+                    sample(p[0], p[2], b);
+                    sample(p[0], p[1], c);
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        result.V[i] = (a[i] * w[0] + b[i] * w[1] + c[i] * w[2]) / total;
+                    }
+                }
+                else
+                {
+                    // ProcStudio::VolumeFromImage と同じ：x / z の平面を y でずらしながら、オクターブで重ねる
+                    using ProcStudio::NoiseDetail::Hash;
+                    using ProcStudio::NoiseDetail::Unit;
+                    const int octaves = std::clamp(static_cast<int>(Input(node, 3, depth).V[0]), 1, 6);
+                    const float variation = Input(node, 4, depth).V[0];
+                    const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[2], 0.0f));
+                    float sum[4]{};
+                    float norm = 0.0f;
+                    float amplitude = 1.0f;
+                    for (int o = 0; o < octaves; ++o)
+                    {
+                        const float octaveScale = static_cast<float>(1 << o);
+                        const uint32_t h = Hash(seed + static_cast<uint32_t>(o) * 977u);
+                        const float angle = p[1] * 2.0f * kPi;
+                        const float swing = std::round(variation * 2.0f) * 0.5f / octaveScale;
+                        const float ox = swing * cosf(angle) + Unit(h);
+                        const float oz = swing * sinf(angle) + Unit(Hash(h));
+                        float a[4], b[4];
+                        sample(p[0] * octaveScale + ox, p[2] * octaveScale + oz, a);
+                        sample(p[2] * octaveScale - oz + 0.37f, p[1] * octaveScale + ox, b);
+                        for (int i = 0; i < 4; ++i)
+                        {
+                            sum[i] += (a[i] * 0.7f + b[i] * 0.3f) * amplitude;
+                        }
+                        norm += amplitude;
+                        amplitude *= 0.5f;
+                    }
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        result.V[i] = sum[i] / norm;
+                    }
+                }
+                if (node.Value[3] > 0.5f) // グレースケール（スタジオのボリュームと同じ RGB 平均）
+                {
+                    const float gray = (result.V[0] + result.V[1] + result.V[2]) / 3.0f;
+                    result.V[0] = result.V[1] = result.V[2] = gray;
+                }
+                return result;
+            }
+            case Kind::ThreeColorRamp: {
+                const float t = Input(node, 0, depth).V[0];
+                const Value a = Promote(Input(node, 1, depth), 3);
+                const Value b = Promote(Input(node, 2, depth), 3);
+                const Value c = Promote(Input(node, 3, depth), 3);
+                float out[3];
+                GraphMath::ThreeColorRamp(t, a.V, b.V, c.V, out);
+                return Make(out, 3);
+            }
             case Kind::WorldNormal:
                 return Make(m_Context.Normal, 3);
             case Kind::CameraVector:
@@ -703,6 +1107,122 @@ namespace MaterialGraphEval
                 result.V[0] = powf(t, (std::max)(density, 0.0f));
                 return result;
             }
+            // ---------------------------------------------------------------- プロシージャルスタジオのノイズ
+            case Kind::ProceduralNoise:
+            case Kind::FractalNoise: {
+                const bool fractal = node.Kind == Kind::FractalNoise;
+                const Value uv = Promote(Input(node, 0, depth), 2);
+                const float z = Input(node, 1, depth).V[0];
+                ProcStudio::NoiseParams params;
+                params.BasisType = static_cast<ProcStudio::Basis>(
+                    std::clamp(static_cast<int>(node.Value[0]), 0, GraphMath::kNoiseBasisCount - 1));
+                params.Fractal = fractal ? static_cast<ProcStudio::FractalType>(std::clamp(
+                                               static_cast<int>(node.Value[1]), 0, GraphMath::kNoiseFractalCount - 1))
+                                         : ProcStudio::FractalType::None;
+                params.Seed = static_cast<uint32_t>((std::max)(node.Value[fractal ? 2 : 1], 0.0f));
+                const bool tileable = node.Value[fractal ? 3 : 2] > 0.5f;
+                params.Frequency = (std::max)(Input(node, 2, depth).V[0], 0.001f);
+                if (fractal)
+                {
+                    params.Octaves = std::clamp(static_cast<int>(Input(node, 3, depth).V[0]), 1, 12);
+                    params.Lacunarity = Input(node, 4, depth).V[0];
+                    params.Gain = Input(node, 5, depth).V[0];
+                    params.WarpStrength = Input(node, 6, depth).V[0];
+                    params.RidgeOffset = Input(node, 7, depth).V[0];
+                }
+                else
+                {
+                    params.Direction = Input(node, 3, depth).V[0];
+                    params.Anisotropy = std::clamp(Input(node, 4, depth).V[0], 1.0f, 8.0f);
+                    params.KernelFrequency = Input(node, 5, depth).V[0];
+                    params.Phase = Input(node, 6, depth).V[0];
+                }
+                const float x = std::isfinite(uv.V[0]) ? std::clamp(uv.V[0], -10000.0f, 10000.0f) : 0.0f;
+                const float y = std::isfinite(uv.V[1]) ? std::clamp(uv.V[1], -10000.0f, 10000.0f) : 0.0f;
+                const float w = std::isfinite(z) ? std::clamp(z, -10000.0f, 10000.0f) : 0.0f;
+                result.V[0] = ProcStudio::FractalNoise(params, x, y, w, tileable);
+                return result;
+            }
+            case Kind::ConvertToNormalHeight:
+            case Kind::ConvertToHeight:
+            case Kind::ConvertToNormal: {
+                // 色画像 → 高さ / 法線（格納値で計算。スタジオの「画像から高さ・法線」と同じ式）
+                const Value uv = Promote(Input(node, 0, depth), 2);
+                const float contrast = Input(node, 1, depth).V[0];
+                const float bias = Input(node, 2, depth).V[0];
+                const int channel = std::clamp(static_cast<int>(node.Value[1]), 0, GraphMath::kConvertChannelCount - 1);
+                const bool invert = node.Value[2] > 0.5f;
+                const bool normal = node.Kind == Kind::ConvertToNormal ||
+                                    (node.Kind == Kind::ConvertToNormalHeight && node.Value[0] > 0.5f);
+                const auto tap = [&](float du, float dv, float& height) {
+                    float texel[4]{};
+                    if (node.Texture == 0 || !m_Sampler || !m_Sampler(node.Texture, uv.V[0] + du, uv.V[1] + dv, true, texel))
+                    {
+                        return false;
+                    }
+                    height = GraphMath::ConvertHeight(texel, channel, invert, contrast, bias);
+                    return true;
+                };
+                if (!normal)
+                {
+                    float h = 0.5f;
+                    tap(0.0f, 0.0f, h);
+                    result.V[0] = h;
+                    return result;
+                }
+                const float strength = Input(node, 3, depth).V[0];
+                const float r = (std::max)(Input(node, 4, depth).V[0], 1e-5f);
+                float l = 0, rr = 0, u = 0, d = 0;
+                if (!tap(-r, 0, l) || !tap(r, 0, rr) || !tap(0, -r, u) || !tap(0, r, d))
+                {
+                    return Make3(0.0f, 0.0f, 1.0f); // 読み込み中 / 未設定は平らな法線
+                }
+                float dx = rr - l;
+                float dy = d - u;
+                if (node.Value[3] > 0.5f) // Sobel（中央差分と同じスケール）
+                {
+                    float lu = 0, ru = 0, ld = 0, rd = 0;
+                    tap(-r, -r, lu);
+                    tap(r, -r, ru);
+                    tap(-r, r, ld);
+                    tap(r, r, rd);
+                    dx = ((ru - lu) + dx * 2.0f + (rd - ld)) * 0.25f;
+                    dy = ((ld - lu) + dy * 2.0f + (rd - ru)) * 0.25f;
+                }
+                float n[3] = {-dx * strength, -dy * strength, 1.0f};
+                const float up[3] = {0.0f, 0.0f, 1.0f};
+                Normalize3(n, up);
+                return Make(n, 3);
+            }
+            case Kind::NoiseCombine: {
+                const float a = Input(node, 0, depth).V[0];
+                const float b = Input(node, 1, depth).V[0];
+                const float factor = Input(node, 2, depth).V[0];
+                result.V[0] = GraphMath::NoiseCombine(static_cast<int>(node.Value[0]), a, b, factor, node.Value[1] > 0.5f);
+                return result;
+            }
+            case Kind::NoiseLayers: {
+                // 繋がっている層だけを、重み（0 以下は無視）で平均する（スタジオの Composite と同じ）
+                float total = 0.0f;
+                float weightSum = 0.0f;
+                for (size_t layer = 0; layer < 4; ++layer)
+                {
+                    const size_t pin = layer * 2;
+                    if (pin + 1 >= node.InputPins.size() || !m_Graph.InputLink(node.InputPins[pin]))
+                    {
+                        continue;
+                    }
+                    const float weight = Input(node, pin + 1, depth).V[0];
+                    if (!std::isfinite(weight) || weight <= 0.0f)
+                    {
+                        continue;
+                    }
+                    total += Input(node, pin, depth).V[0] * weight;
+                    weightSum += weight;
+                }
+                result.V[0] = weightSum > 0.0f ? total / weightSum : 0.0f;
+                return result;
+            }
             case Kind::Voronoi: {
                 const Value uv = Promote(Input(node, 0, depth), 2);
                 const float scale = Input(node, 1, depth).V[0];
@@ -783,3 +1303,6 @@ namespace MaterialGraphEval
         }
     }
 } // namespace MaterialGraphEval
+
+
+

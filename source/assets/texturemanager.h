@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <array>
 #include <mutex>
 #include <future>
 #include <filesystem>
@@ -64,6 +65,19 @@ class TextureManager
     // ファイルを書き換えたテクスチャ（マテリアルグラフのベイク結果など）を、同じ SRV 番号のまま読み直す。
     // 実際の差し替えは次の UpdateStreaming（フレーム先頭、GPU アイドル待ち後）で行う。未読み込みなら何もしない。
     static void RequestReload(const filesystem::path& path);
+    // 読み込み済みテクスチャ（path）の中身を、同じ SRV 番号のまま CPU のピクセルで上書きする（マテリアルグラフのライブ更新）。
+    // 初回とサイズ / 形式が変わったときだけ GPU アイドル待ちで非圧縮の動的リソースへ差し替え、以降は毎フレームのコピーのみ。
+    // pixels：RGBA、行の詰めなし。bytesPerChannel = 1（8 ビット）/ 2（16 ビット UNORM）。
+    // srgbEncoded = true の 8 ビットは sRGB 値（元のテクスチャが sRGB 形式なら _SRGB で作る）。どのスレッドからでも呼べる
+    // ---- データテクスチャ（R32G32B32A32_FLOAT、高さ 1）。マテリアルグラフの描画時評価プログラムに使う
+    // テクスチャ表の SRV を 1 つ確保して返す（失敗は -1）。中身は UpdateDataTexture で書き込む
+    static int CreateDataTexture(const string& name, int width);
+    // texels を firstTexel から書き込む（実際のコピーは次の UpdateStreaming。同じ範囲の古い要求は上書き）
+    static void UpdateDataTexture(int srvIndex, uint32_t firstTexel, vector<array<float, 4>> texels);
+    // 一度でも書き込みが記録されたか（シェーダーから読んでよいか）
+    static bool IsDataTextureReady(int srvIndex);
+    static void UpdateDynamicPixels(const filesystem::path& path, int width, int height, int bytesPerChannel,
+                                    bool srgbEncoded, vector<uint8_t> pixels);
     static void UpdateStreaming(ID3D12GraphicsCommandList* commandList);
     static void OnFrameSubmitted(uint64_t fence);
     static bool IsReservedResourceStreamingSupported();
@@ -91,4 +105,6 @@ class TextureManager
     static void ReleaseUploadBuffer(ComPtr<ID3D12Resource> upload, UINT64 size, bool defer = false);
     static bool ExecuteCommandListAndSync(ID3D12GraphicsCommandList* cmdList, bool closeList = true);
 };
+
+
 

@@ -54,7 +54,30 @@ namespace MaterialGraphMath
         {
             return SpecialInput::WorldPosition;
         }
-        if ((kind == Kind::LinearGradient || kind == Kind::RadialGradient || kind == Kind::Voronoi) && input == 0)
+        if ((kind == Kind::LinearGradient || kind == Kind::RadialGradient || kind == Kind::Voronoi ||
+             kind == Kind::ProceduralNoise || kind == Kind::FractalNoise || IsConvertTextureNode(kind)) &&
+            input == 0)
+        {
+            return SpecialInput::UV;
+        }
+        // 立体テクスチャの Position（未接続 = 位置を 0〜1 にしたもの。ノード側で * 0.5 + 0.5 する）
+        if ((kind == Kind::SolidTexture || kind == Kind::SolidPattern || kind == Kind::SolidCoordinate) && input == 0)
+        {
+            return SpecialInput::WorldPosition;
+        }
+        if (kind == Kind::ConvertToSolid && input == 0)
+        {
+            return SpecialInput::UV; // 未変換：UV で評価した入力（= テクスチャに作る 2D の値）
+        }
+        if (kind == Kind::ConvertToSolid && input == 1)
+        {
+            return SpecialInput::WorldPosition;
+        }
+        if (kind == Kind::TriplanarTexture && input == 0)
+        {
+            return SpecialInput::WorldPosition;
+        }
+        if (kind == Kind::ConvertToTexture && input == 1)
         {
             return SpecialInput::UV;
         }
@@ -67,6 +90,221 @@ namespace MaterialGraphMath
             return SpecialInput::WorldPosition;
         }
         return SpecialInput::None;
+    }
+
+    // ---- プロシージャルスタジオのノイズ（名前は ProcStudio::Basis / FractalType の並び）
+    inline constexpr int kNoiseBasisCount = 22;
+    inline constexpr int kNoiseFractalCount = 9;
+    inline const char* NoiseBasisName(int index)
+    {
+        static const char* names[kNoiseBasisCount] = {
+            "Perlin",  "Value",          "Worley",     "Cell Edge",   "White",          "Simplex",
+            "Voronoi", "Cell",           "Gabor",      "Wavelet",     "Curl",           "Value Gradient",
+            "Sparse Convolution",        "Spot",       "Local Random", "Chevron",       "Lattice Free",
+            "Phasor",  "Anisotropic Gabor",            "Harmonic",    "Flow",           "Ridged"};
+        return names[std::clamp(index, 0, kNoiseBasisCount - 1)];
+    }
+    inline const char* NoiseFractalName(int index)
+    {
+        static const char* names[kNoiseFractalCount] = {"fBm",         "Ridged",      "Billow",
+                                                        "Turbulence",  "Hybrid Multifractal", "Domain Warp",
+                                                        "None",        "Multifractal", "Heterogeneous Multifractal"};
+        return names[std::clamp(index, 0, kNoiseFractalCount - 1)];
+    }
+    inline const char* NoiseCombineModeName(int index)
+    {
+        static const char* names[] = {"Mix",    "Add", "Subtract", "Multiply",   "Screen",
+                                      "Overlay", "Min", "Max",      "Difference", "Height Blend"};
+        static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MaterialNoiseCombineMode::Count));
+        return names[std::clamp(index, 0, static_cast<int>(MaterialNoiseCombineMode::Count) - 1)];
+    }
+
+    // Noise Combine（HLSL 側の MG_NoiseCombine と同じ計算）
+    //  Mix 以外は「A に B を合成した結果」へ Factor（不透明度）で寄せる。Height Blend は Factor = 境界の幅
+    inline float NoiseCombine(int mode, float a, float b, float factor, bool clampResult)
+    {
+        const auto saturate = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
+        float result = a;
+        switch (static_cast<MaterialNoiseCombineMode>(mode))
+        {
+            case MaterialNoiseCombineMode::Mix:
+                result = a + (b - a) * factor;
+                break;
+            case MaterialNoiseCombineMode::HeightBlend: {
+                const float width = (std::max)(factor, 1e-4f);
+                float t = saturate((b - a) / width * 0.5f + 0.5f);
+                t = t * t * (3.0f - 2.0f * t);
+                result = a + (b - a) * t;
+                break;
+            }
+            default: {
+                float op = a;
+                switch (static_cast<MaterialNoiseCombineMode>(mode))
+                {
+                    case MaterialNoiseCombineMode::Add:
+                        op = a + b;
+                        break;
+                    case MaterialNoiseCombineMode::Subtract:
+                        op = a - b;
+                        break;
+                    case MaterialNoiseCombineMode::Multiply:
+                        op = a * b;
+                        break;
+                    case MaterialNoiseCombineMode::Screen:
+                        op = 1.0f - (1.0f - a) * (1.0f - b);
+                        break;
+                    case MaterialNoiseCombineMode::Overlay:
+                        op = a < 0.5f ? 2.0f * a * b : 1.0f - 2.0f * (1.0f - a) * (1.0f - b);
+                        break;
+                    case MaterialNoiseCombineMode::Min:
+                        op = (std::min)(a, b);
+                        break;
+                    case MaterialNoiseCombineMode::Max:
+                        op = (std::max)(a, b);
+                        break;
+                    case MaterialNoiseCombineMode::Difference:
+                        op = std::fabs(a - b);
+                        break;
+                    default:
+                        break;
+                }
+                result = a + (op - a) * factor;
+                break;
+            }
+        }
+        return clampResult ? saturate(result) : result;
+    }
+
+    // ---- Convert To Normal / Height（プロシージャルスタジオ ImageMaps と同じ式）
+    inline constexpr int kConvertChannelCount = 7;
+    inline const char* ConvertChannelName(int index)
+    {
+        static const char* names[kConvertChannelCount] = {"輝度", "平均", "R", "G", "B", "A", "最大"};
+        return names[std::clamp(index, 0, kConvertChannelCount - 1)];
+    }
+    // 格納値（8 ビット画像なら sRGB 値）からチャンネルを取り出す
+    inline float ConvertChannel(const float* c, int channel)
+    {
+        switch (channel)
+        {
+            case 1:
+                return (c[0] + c[1] + c[2]) / 3.0f;
+            case 2:
+                return c[0];
+            case 3:
+                return c[1];
+            case 4:
+                return c[2];
+            case 5:
+                return c[3];
+            case 6:
+                return (std::max)({c[0], c[1], c[2]});
+            default:
+                return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+        }
+    }
+    // 高さ：反転 → (v - 0.5) * Contrast + 0.5 + Bias → 0..1
+    inline float ConvertHeight(const float* c, int channel, bool invert, float contrast, float bias)
+    {
+        float v = std::clamp(ConvertChannel(c, channel), 0.0f, 1.0f);
+        v = invert ? 1.0f - v : v;
+        return std::clamp((v - 0.5f) * contrast + 0.5f + bias, 0.0f, 1.0f);
+    }
+
+    // ---- ソリッドテクスチャ
+    inline const char* SolidKindName(int index)
+    {
+        static const char* names[] = {"フラクタルノイズ", "大理石 (Marble)", "木目 (Wood)", "御影石 (Granite)",
+                                      "ボロノイ",         "フラクタル雲"};
+        static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MaterialSolidKind::Count));
+        return names[std::clamp(index, 0, static_cast<int>(MaterialSolidKind::Count) - 1)];
+    }
+    // 3 色ランプ（スタジオの TextureColor の既定配色）
+    inline void ThreeColorRamp(float t, const float* a, const float* b, const float* c, float* out)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            out[i] = t < 0.5f ? a[i] + (b[i] - a[i]) * (t * 2.0f) : b[i] + (c[i] - b[i]) * ((t - 0.5f) * 2.0f);
+        }
+    }
+
+    inline const char* SolidConvertMethodName(int index)
+    {
+        static const char* names[] = {"ストキャスティック（繰り返しなし）", "トライプラナー", "ボリューム（スタジオ互換）"};
+        static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MaterialSolidConvertMethod::Count));
+        return names[std::clamp(index, 0, static_cast<int>(MaterialSolidConvertMethod::Count) - 1)];
+    }
+
+    // ---- オブジェクト / カメラのノードの選択肢
+    inline const char* ObjectBoundsOutputName(int index)
+    {
+        static const char* names[] = {"大きさ", "中心", "最小", "最大"};
+        return names[std::clamp(index, 0, 3)];
+    }
+    inline const char* TransformVectorModeName(int index)
+    {
+        static const char* names[] = {"ローカル → ワールド", "ワールド → ローカル", "ワールド → ビュー",
+                                      "ビュー → ワールド"};
+        return names[std::clamp(index, 0, 3)];
+    }
+    inline const char* TransformPositionModeName(int index)
+    {
+        static const char* names[] = {"ローカル → ワールド", "ワールド → ローカル"};
+        return names[std::clamp(index, 0, 1)];
+    }
+    inline const char* HeightGradientSpaceName(int index)
+    {
+        static const char* names[] = {"ワールド Y", "ローカル Y", "範囲内 0〜1"};
+        return names[std::clamp(index, 0, 2)];
+    }
+    // 4x4 の順序ディザの閾値（0〜1）
+    inline float BayerThreshold(int x, int y)
+    {
+        static const int table[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+        return (table[((y & 3) << 2) | (x & 3)] + 0.5f) / 16.0f;
+    }
+
+    // ---- ヘックス タイル（Heitz & Neyret 2018 の三角格子）。MaterialGraphVM.hlsli の MGVM_HexWeights と同じ
+    struct HexTiles
+    {
+        int Vertex[3][2];
+        float Weight[3];
+    };
+    inline HexTiles HexGrid(float u, float v)
+    {
+        const float sx = u * 3.4641016f;
+        const float sy = v * 3.4641016f;
+        const float kx = sx;
+        const float ky = -0.57735027f * sx + 1.15470054f * sy;
+        const int bx = static_cast<int>(floorf(kx));
+        const int by = static_cast<int>(floorf(ky));
+        const float tx = kx - bx;
+        const float ty = ky - by;
+        const float tz = 1.0f - tx - ty;
+        const float s = tz < 0.0f ? 1.0f : 0.0f;
+        const float s2 = 2.0f * s - 1.0f;
+        const int is = static_cast<int>(s);
+        HexTiles tiles;
+        tiles.Weight[0] = -tz * s2;
+        tiles.Weight[1] = s - ty * s2;
+        tiles.Weight[2] = s - tx * s2;
+        tiles.Vertex[0][0] = bx + is;
+        tiles.Vertex[0][1] = by + is;
+        tiles.Vertex[1][0] = bx + is;
+        tiles.Vertex[1][1] = by + 1 - is;
+        tiles.Vertex[2][0] = bx + 1 - is;
+        tiles.Vertex[2][1] = by + is;
+        float total = 0.0f;
+        for (float& w : tiles.Weight)
+        {
+            w = powf((std::max)(w, 0.0f), 4.0f); // 境界を締めて、混ぜた部分のコントラスト低下を抑える
+            total += w;
+        }
+        for (float& w : tiles.Weight)
+        {
+            w /= (std::max)(total, 1e-6f);
+        }
+        return tiles;
     }
 
     inline float Unary(Kind kind, float x)
@@ -429,6 +667,42 @@ namespace MaterialGraphMath
                "float3 MG_RotateAboutAxis(float3 axis, float angle, float3 pivot, float3 position) { axis = normalize(axis);\n"
                "  float3 closest = pivot + axis * dot(axis, position - pivot); float3 u = position - closest; float3 v = cross(axis, u);\n"
                "  float a = angle * 6.28318531; return closest + u * cos(a) + v * sin(a) - position; }\n"
+               "float MG_NoiseCombine(int mode, float a, float b, float factor, int clampResult) { float result = a;\n"
+               "  if (mode == 0) { result = lerp(a, b, factor); }\n"
+               "  else if (mode == 9) { float t = saturate((b - a) / max(factor, 1e-4) * 0.5 + 0.5); t = t * t * (3 - 2 * t); result = lerp(a, b, t); }\n"
+               "  else { float op = a; if (mode == 1) op = a + b; else if (mode == 2) op = a - b; else if (mode == 3) op = a * b;\n"
+               "    else if (mode == 4) op = 1 - (1 - a) * (1 - b); else if (mode == 5) op = a < 0.5 ? 2 * a * b : 1 - 2 * (1 - a) * (1 - b);\n"
+               "    else if (mode == 6) op = min(a, b); else if (mode == 7) op = max(a, b); else if (mode == 8) op = abs(a - b);\n"
+               "    result = lerp(a, op, factor); }\n"
+               "  return clampResult != 0 ? saturate(result) : result; }\n"
+               "float MG_ConvertHeight(float4 c, int channel, int invert, float contrast, float bias) {\n"
+               "  float v = channel == 1 ? (c.r + c.g + c.b) / 3 : channel == 2 ? c.r : channel == 3 ? c.g : channel == 4 ? c.b :\n"
+               "            channel == 5 ? c.a : channel == 6 ? max(c.r, max(c.g, c.b)) : dot(c.rgb, float3(0.2126, 0.7152, 0.0722));\n"
+               "  v = saturate(v); v = invert != 0 ? 1 - v : v; return saturate((v - 0.5) * contrast + 0.5 + bias); }\n"
+               "float MG_ConvertTap(Texture2D<float4> t, SamplerState s, float2 uv, int channel, int invert, float contrast, float bias) {\n"
+               "  return MG_ConvertHeight(t.SampleLevel(s, uv, 0), channel, invert, contrast, bias); }\n"
+               "float3 MG_ConvertNormal(Texture2D<float4> t, SamplerState s, float2 uv, int channel, int invert, float contrast, float bias,\n"
+               "  float strength, float radius, int sobel) { float r = max(radius, 1e-5); float dx, dy;\n"
+               "  float l = MG_ConvertTap(t, s, uv + float2(-r, 0), channel, invert, contrast, bias); float rr = MG_ConvertTap(t, s, uv + float2(r, 0), channel, invert, contrast, bias);\n"
+               "  float u = MG_ConvertTap(t, s, uv + float2(0, -r), channel, invert, contrast, bias); float d = MG_ConvertTap(t, s, uv + float2(0, r), channel, invert, contrast, bias);\n"
+               "  if (sobel != 0) {\n"
+               "    float lu = MG_ConvertTap(t, s, uv + float2(-r, -r), channel, invert, contrast, bias); float ru = MG_ConvertTap(t, s, uv + float2(r, -r), channel, invert, contrast, bias);\n"
+               "    float ld = MG_ConvertTap(t, s, uv + float2(-r, r), channel, invert, contrast, bias); float rd = MG_ConvertTap(t, s, uv + float2(r, r), channel, invert, contrast, bias);\n"
+               "    dx = ((ru - lu) + (rr - l) * 2 + (rd - ld)) * 0.25; dy = ((ld - lu) + (d - u) * 2 + (rd - ru)) * 0.25; }\n"
+               "  else { dx = rr - l; dy = d - u; }\n"
+               "  return normalize(float3(-dx * strength, -dy * strength, 1)); }\n"
+               "float3 MG_ThreeColorRamp(float t, float3 a, float3 b, float3 c) { return t < 0.5 ? lerp(a, b, t * 2) : lerp(b, c, (t - 0.5) * 2); }\n"
+               "float4 MG_SolidTriplanar(Texture2D<float4> t, SamplerState s, float3 p, float3 n, float sharpness) {\n"
+               "  float3 w = pow(abs(n) + 1e-5, max(sharpness, 0.01)); w /= dot(w, 1);\n"
+               "  return t.Sample(s, p.yz) * w.x + t.Sample(s, p.xz) * w.y + t.Sample(s, p.xy) * w.z; }\n"
+               "float MG_SlopeMask(float3 n, float3 up, float threshold, float softness) { float s = max(softness, 1e-4);\n"
+               "  float t = saturate((dot(n, normalize(up)) - (threshold - s)) / (2 * s)); return t * t * (3 - 2 * t); }\n"
+               "float MG_HeightLerpAlpha(float height, float phase, float contrast) {\n"
+               "  float x = saturate(height + phase * 2 - 1); return saturate(lerp(-contrast, 1 + contrast, x)); }\n"
+               "float3 MG_ColorAdjust(float3 c, float brightness, float contrast, float saturation) {\n"
+               "  c = (c * brightness - 0.5) * contrast + 0.5; float l = dot(c, float3(0.2126, 0.7152, 0.0722)); return lerp(l.xxx, c, saturation); }\n"
+               "float MG_Bayer(float2 pixel) { uint2 p = (uint2)pixel & 3u; uint t[16] = {0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};\n"
+               "  return (t[(p.y << 2) | p.x] + 0.5) / 16.0; }\n"
                "float3 MG_BlackBody(float kelvin) { float t = clamp(kelvin, 1000, 40000) / 100; float3 c;\n"
                "  if (t <= 66) c = float3(255, 99.4708025861*log(t) - 161.1195681661, t <= 19 ? 0 : 138.5177312231*log(t-10) - 305.0447927307);\n"
                "  else c = float3(329.698727446*pow(t-60,-0.1332047592), 288.1221695283*pow(t-60,-0.0755148492), 255);\n"
@@ -436,4 +710,7 @@ namespace MaterialGraphMath
                "float4 MG_UnpackNormal(float4 v) { float3 n = v.xyz * 2 - 1; if (v.z <= 0) n.z = sqrt(saturate(1 - dot(n.xy,n.xy))); return float4(n, 1); }\n";
     }
 } // namespace MaterialGraphMath
+
+
+
 

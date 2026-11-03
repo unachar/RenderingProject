@@ -3,6 +3,10 @@
 #include "noiseasset.h"
 #include "componentmanager.h"
 #include <functional>
+#include <array>
+
+class MaterialGraph;
+enum class MaterialSamplerType : int;
 
 struct MaterialRuntime
 {
@@ -24,6 +28,17 @@ struct MaterialRuntime
     ComPtr<ID3D12Resource> Constants;
     uint8_t* MappedConstants = nullptr;
     array<uint64_t, 3> UploadedRevision{};
+    // ---- マテリアルグラフの描画時評価（MaterialGraphVM.hlsli）
+    int GraphProgramSrv = -1;          // プログラムのデータテクスチャ（テクスチャ表の SRV）
+    uint64_t GraphProgramHash = 0;     // 書き込み済みのプログラム
+    std::array<float, 4> GraphHeader{}; // [0] テクセル（毎フレーム時刻を書き換える）
+    bool GraphUsesTime = false;
+    bool GraphActive = false;    // プログラムあり（コンパイル成功）
+    bool GraphPublished = false; // Binding.GraphProgramID に反映済み
+    bool GraphChecked = false;   // .graph.json を読んだ / エディターから受け取った
+    int GraphInstructions = 0;
+    int GraphRegisters = 0;
+    string GraphStatus; // 空 = 正常。描画時評価できない理由
 };
 
 class MaterialManager
@@ -51,7 +66,16 @@ class MaterialManager
     static void NotifyAssignmentsChanged();
     static bool SaveSceneReferences(const filesystem::path& path, string& error);
     static bool LoadSceneReferences(const filesystem::path& path, string& error);
+    // ---- マテリアルグラフの描画時評価（GPU）
+    // グラフをプログラムにしてエンジンのシェーダーへ渡す（nullptr / 設定オフ / 未対応ノードで無効 = ベイクの値）
+    static void SetGraphProgram(AssetHandle handle, const MaterialGraph* graph);
+    // 毎フレーム（描画の記録前）：保存済みグラフの読み込み、プログラムの反映、時刻の更新
+    static void UpdateGraphPrograms();
+    static bool IsGraphProgramActive(AssetHandle handle);
+    // グラフが参照するテクスチャを読み込み、マテリアルのテクスチャ表の番号（0〜511、失敗は -1）を返す
+    static int ResolveGraphTexture(AssetHandle texture, MaterialSamplerType sampler);
 
   private:
     static void UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material);
 };
+

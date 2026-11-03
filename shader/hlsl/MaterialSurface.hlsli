@@ -550,4 +550,6 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     }
     return normalize(tangentNormal);
 }
+// マテリアルグラフの描画時評価（GPU）。ScaleAssetNormal / LoadMaterialTexture の後に置く
+#include "MaterialGraphVM.hlsli"
 #endif

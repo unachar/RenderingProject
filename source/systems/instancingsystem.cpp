@@ -1486,6 +1486,7 @@ namespace
         // 参照するため、通常描画と同じく先頭エンティティの行列を入れる。
         cb.World = XMMatrixTranspose(world);
         cb.PreviousWorld = XMMatrixTranspose(previousWorld);
+        MaterialBindings::FillObjectConstants(cb, entity);
         cb.View = XMMatrixTranspose(ctx.view);
         cb.Projection = XMMatrixTranspose(ctx.projection);
         cb.PreviousViewProjection = XMMatrixTranspose(ctx.previousViewProjection);
@@ -1912,3 +1913,4 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         ImpostorRenderer::Flush(ctx.commandList, ctx.frameIndex);
     }
 }
+

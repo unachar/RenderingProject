@@ -4,6 +4,9 @@
 #include "materialgraphmath.h"
 #include "materialgraphevaluator.h"
 #include "materialgraphtextures.h"
+#include "materialgraphcompiler.h"
+#include "materialgraphshader.h"
+#include "materialmanager.h"
 #include <imgui_internal.h>
 #include <algorithm>
 #include <array>
@@ -132,8 +135,21 @@ namespace MaterialGraphPreview
             ImTextureData* Texture = nullptr;
         };
 
+        // GPU で評価するノード（命令列は MaterialGraphVm::Compile。エンジンの描画と同じ）
+        struct GpuNode
+        {
+            MaterialGraphGpu::Texels Program;
+            uint64_t Hash = 0;
+            MaterialGraphGpu::Mode PreviewMode = MaterialGraphGpu::Mode::NodePlane;
+            uint32_t Flags = 0;
+            uint32_t OutputPins = 0;
+            bool Animated = false;
+            int Resolution = 64;
+        };
+
         struct GraphCache
         {
+            std::unordered_map<uint64_t, GpuNode> Gpu; // GPU で評価できたノード（無いものは CPU）
             uint64_t Signature = ~0ull;
             int SignatureFrame = -1;
             double LastEvaluation = -1.0;
@@ -277,10 +293,19 @@ namespace MaterialGraphPreview
         bool IsColorNode(const MaterialGraph& graph, const MaterialGraphNode& node)
         {
             const auto colorSource = [](const MaterialGraphNode* source) {
-                return source && ((source->Kind == Kind::TextureSample &&
-                                   static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color)) ||
-                                  source->Kind == Kind::ColorParameter || source->Kind == Kind::BlackBody ||
-                                  source->Kind == Kind::HueShift || source->Kind == Kind::Blend);
+                // 分割したテクスチャは成分（スカラー）として使われるので色扱いしない
+                if (!source || !source->SplitPins.empty())
+                {
+                    return false;
+                }
+                const bool texture = source->Kind == Kind::TextureSample || source->Kind == Kind::TriplanarTexture ||
+                                     (source->Kind == Kind::ConvertToTexture && source->Texture != 0);
+                return (texture && static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color)) ||
+                       source->Kind == Kind::ColorParameter || source->Kind == Kind::BlackBody ||
+                       source->Kind == Kind::HueShift || source->Kind == Kind::Blend ||
+                       source->Kind == Kind::SolidTexture || source->Kind == Kind::ThreeColorRamp ||
+                       (source->Kind == Kind::ConvertToSolid && source->Texture != 0 && source->Value[3] <= 0.5f &&
+                        static_cast<int>(source->Value[1]) == static_cast<int>(MaterialSamplerType::Color));
             };
             if (colorSource(&node))
             {
@@ -306,7 +331,7 @@ namespace MaterialGraphPreview
         {
             const auto* source = ResolveSource(graph, output, PinIndex(Pin::Normal));
             tangent = MaterialGraphEval::Promote(tangent, 3);
-            if (source && source->Kind == Kind::TextureSample &&
+            if (source && source->SplitPins.empty() && source->Kind == Kind::TextureSample &&
                 static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color))
             {
                 for (int i = 0; i < 3; ++i)
@@ -507,7 +532,8 @@ namespace MaterialGraphPreview
                 {
                     const auto& node = graph.Nodes[i];
                     if (!HasPreview(node) || node.Kind == Kind::Output || (topology.Spatial[i] != 0) != sphere ||
-                        cache.Collapsed.contains(node.Id) || (timeOnly && !topology.TimeDependent[i]))
+                        cache.Collapsed.contains(node.Id) || (timeOnly && !topology.TimeDependent[i]) ||
+                        cache.Gpu.contains(node.Id))
                     {
                         continue;
                     }
@@ -551,7 +577,10 @@ namespace MaterialGraphPreview
                             const Kind kind = graph.Nodes[targets[t].first].Kind;
                             if (kind == Kind::NormalFromHeight || kind == Kind::BlendAngleCorrectedNormals ||
                                 kind == Kind::FlattenNormal ||
-                                (kind == Kind::TextureSample &&
+                                kind == Kind::ConvertToNormal ||
+                                (kind == Kind::ConvertToNormalHeight && graph.Nodes[targets[t].first].Value[0] > 0.5f) ||
+                                ((kind == Kind::TextureSample ||
+                                  (kind == Kind::ConvertToTexture && graph.Nodes[targets[t].first].Texture != 0)) &&
                                  static_cast<int>(graph.Nodes[targets[t].first].Value[0]) ==
                                      static_cast<int>(MaterialSamplerType::Normal)))
                             {
@@ -570,7 +599,7 @@ namespace MaterialGraphPreview
             for (const auto& node : graph.Nodes)
             {
                 if (node.Kind != Kind::Output || cache.Collapsed.contains(node.Id) ||
-                    (timeOnly && !topology.TimeDependent[topology.Index.at(node.Id)]))
+                    (timeOnly && !topology.TimeDependent[topology.Index.at(node.Id)]) || cache.Gpu.contains(node.Id))
                 {
                     continue;
                 }
@@ -591,6 +620,65 @@ namespace MaterialGraphPreview
                         }
                     }
                 }
+            }
+        }
+
+        bool IsNormalNode(const MaterialGraphNode& node)
+        {
+            const Kind kind = node.Kind;
+            return kind == Kind::NormalFromHeight || kind == Kind::BlendAngleCorrectedNormals || kind == Kind::FlattenNormal ||
+                   kind == Kind::ConvertToNormal || (kind == Kind::ConvertToNormalHeight && node.Value[0] > 0.5f) ||
+                   ((kind == Kind::TextureSample || kind == Kind::TriplanarTexture ||
+                     (kind == Kind::ConvertToTexture && node.Texture != 0)) &&
+                    static_cast<int>(node.Value[0]) == static_cast<int>(MaterialSamplerType::Normal));
+        }
+
+        // プレビューを GPU で評価できるノードの命令列を作る（対応外のノードに依存するものは CPU のまま）
+        void CompileGpuPreviews(const MaterialGraph& graph, GraphCache& cache)
+        {
+            cache.Gpu.clear();
+            if (!MaterialGraphGpu::IsAvailable())
+            {
+                return;
+            }
+            for (size_t i = 0; i < graph.Nodes.size(); ++i)
+            {
+                const auto& node = graph.Nodes[i];
+                if (!HasPreview(node) || cache.Collapsed.contains(node.Id))
+                {
+                    continue;
+                }
+                MaterialGraphVm::Options options;
+                const bool output = node.Kind == Kind::Output;
+                options.TargetNode = output ? 0 : node.Id;
+                options.IncludeDefaults = output;
+                const auto program =
+                    MaterialGraphVm::Compile(graph, &MaterialManager::ResolveGraphTexture, options);
+                if (!program.Success)
+                {
+                    continue;
+                }
+                GpuNode gpu;
+                gpu.Program = program.Texels;
+                gpu.Hash = program.Hash;
+                gpu.Animated = program.UsesTime;
+                if (output)
+                {
+                    gpu.PreviewMode = MaterialGraphGpu::Mode::OutputSphere;
+                    gpu.Resolution = kOutputResolution;
+                    gpu.OutputPins = (ResolveSource(graph, node, PinIndex(Pin::Normal)) ? 1u : 0u) |
+                                     (ResolveSource(graph, node, PinIndex(Pin::OpacityMask)) ? 2u : 0u) |
+                                     (ResolveSource(graph, node, PinIndex(Pin::Transmission)) ? 4u : 0u);
+                }
+                else
+                {
+                    gpu.PreviewMode = cache.Topo.Spatial[i] != 0 ? MaterialGraphGpu::Mode::NodeSphere
+                                                                 : MaterialGraphGpu::Mode::NodePlane;
+                    gpu.Resolution = kNodeResolution;
+                    gpu.Flags = (IsColorNode(graph, node) ? 1u : 0u) | (IsNormalNode(node) ? 2u : 0u) |
+                                (static_cast<uint32_t>(program.TargetDims) << 4u);
+                }
+                cache.Gpu[node.Id] = std::move(gpu);
             }
         }
 
@@ -624,6 +712,7 @@ namespace MaterialGraphPreview
             if (changed)
             {
                 MaterialGraphEval::BuildTopology(graph, cache.Topo);
+                CompileGpuPreviews(graph, cache);
             }
             if (changed || (cache.Topo.Animated && now - cache.LastEvaluation >= kAnimatedInterval))
             {
@@ -693,7 +782,37 @@ namespace MaterialGraphPreview
 
     bool HasPreview(const MaterialGraphNode& node)
     {
-        return node.Kind != Kind::Group && node.Kind != Kind::Reroute;
+        switch (node.Kind)
+        {
+            // プレビューしても意味の無いノード（UE でもプレビューを出さない / 画面全体が 1 色になる）
+            case Kind::Group:
+            case Kind::Reroute:
+            case Kind::Time:              // 時刻（数値）
+            case Kind::Constant:          // 定数（値はノード上に表示している）
+            case Kind::Constant2Vector:
+            case Kind::Constant3Vector:
+            case Kind::Constant4Vector:
+            case Kind::ScalarParameter:
+            case Kind::VectorParameter:
+            case Kind::ColorParameter:    // 色はノード上の色ボタンで見える
+            case Kind::Pi:
+            case Kind::BreakVector:       // 出力は X / Y / Z / W のピン（元のベクトルを表示しても意味が無い）
+            // オブジェクト / カメラの情報：プレビューには対象のオブジェクトが無く、固定値になる
+            case Kind::ObjectPosition:
+            case Kind::ObjectScale:
+            case Kind::ObjectOrientation:
+            case Kind::ObjectRadius:
+            case Kind::ObjectBounds:
+            case Kind::PerInstanceRandom:
+            case Kind::CameraPosition:
+            case Kind::CameraDistance:
+            case Kind::PixelDepth:
+            case Kind::VertexColor:       // プレビューでは白
+            case Kind::DistanceFade:      // プレビューでは距離一定
+                return false;
+            default:
+                return true;
+        }
     }
 
     bool IsNodePreviewCollapsed(const MaterialGraph& graph, uint64_t node)
@@ -733,6 +852,44 @@ namespace MaterialGraphPreview
         const ImVec2 max(min.x + size, min.y + size);
         ImDrawList* draw = ImGui::GetWindowDrawList();
 
+        // ---- GPU で評価したプレビュー
+        if (const auto gpu = cache.Gpu.find(node.Id); gpu != cache.Gpu.end())
+        {
+            MaterialGraphGpu::PreviewRequest request;
+            request.Owner = &graph;
+            request.Node = node.Id;
+            request.Program = &gpu->second.Program;
+            request.ProgramHash = gpu->second.Hash;
+            request.PreviewMode = gpu->second.PreviewMode;
+            request.Flags = gpu->second.Flags;
+            request.OutputPins = gpu->second.OutputPins;
+            request.Clip = ClipValue(graph);
+            request.Resolution = gpu->second.Resolution;
+            request.Animated = gpu->second.Animated;
+            request.Time = static_cast<float>(ImGui::GetTime());
+            MaterialGraphGpu::PreviewImage image;
+            if (MaterialGraphGpu::RequestPreview(request, image))
+            {
+                if (gpu->second.PreviewMode != MaterialGraphGpu::Mode::NodePlane)
+                {
+                    DrawChecker(draw, min, max, size / 8.0f);
+                }
+                if (image.Ready)
+                {
+                    draw->AddImage(static_cast<ImTextureID>(image.TextureId), min, max, ImVec2(image.U0, image.V0),
+                                   ImVec2(image.U1, image.V1));
+                }
+                else
+                {
+                    draw->AddRectFilled(min, max, IM_COL32(30, 30, 30, 255));
+                }
+                draw->AddRect(min, max, IM_COL32(0, 0, 0, 160));
+                return;
+            }
+            // GPU が使えない（初期化失敗 / プレビュー表が一杯）→ 次の評価から CPU に戻す
+            cache.Gpu.erase(gpu);
+            cache.Signature = ~0ull;
+        }
         const auto found = cache.Images.find(node.Id);
         if (found == cache.Images.end() || found->second.Pixels.empty())
         {
@@ -765,7 +922,9 @@ namespace MaterialGraphPreview
             DrawPixelsFallback(draw, min, size, image);
         }
         draw->AddRect(min, max, IM_COL32(0, 0, 0, 160));
-        if (node.Kind == Kind::TextureSample && node.Texture != 0 && !MaterialGraphTextures::IsReady(node.Texture))
+        if (UsesNodeTexture(node.Kind) &&
+            node.Texture != 0 &&
+            !MaterialGraphTextures::IsReady(node.Texture))
         {
             draw->AddText(ImVec2(min.x + 4.0f, min.y + 4.0f), IM_COL32(220, 220, 220, 200), "読み込み中...");
         }
@@ -783,6 +942,19 @@ namespace MaterialGraphPreview
             {
                 hash = Mix(hash, FloatBits(v));
             }
+            hash = Mix(hash, node.SplitPins.size());
+            for (const auto pin : node.SplitPins)
+            {
+                hash = Mix(hash, pin);
+            }
+            for (size_t i = 0; i < node.PinValues.size(); ++i)
+            {
+                if (std::isfinite(node.PinValues[i]))
+                {
+                    hash = Mix(hash, i + 1);
+                    hash = Mix(hash, FloatBits(node.PinValues[i]));
+                }
+            }
         }
         hash = Mix(hash, graph.Links.size());
         for (const auto& link : graph.Links)
@@ -791,6 +963,9 @@ namespace MaterialGraphPreview
             hash = Mix(hash, link.TargetPin);
         }
         const auto& settings = graph.Settings;
+        hash = Mix(hash, static_cast<uint64_t>(settings.Mode + 8));
+        hash = Mix(hash, static_cast<uint64_t>(settings.RuntimeEvaluation ? 3 : 5));
+        hash = Mix(hash, static_cast<uint64_t>(settings.SolidSpace + 11));
         hash = Mix(hash, static_cast<uint64_t>(settings.Surface + 8));
         hash = Mix(hash, static_cast<uint64_t>(settings.Cull + 8));
         hash = Mix(hash, static_cast<uint64_t>(settings.ShadingModel + 8));
@@ -830,15 +1005,44 @@ namespace MaterialGraphPreview
                 case Kind::WorldNormal:
                 case Kind::CameraVector:
                 case Kind::ReflectionVector:
+                case Kind::SolidCoordinate:
+                case Kind::SolidTexture:
+                case Kind::SolidPattern:
+                case Kind::ConvertToSolid:
+                case Kind::LocalPosition:
+                case Kind::SlopeMask:
+                case Kind::TriplanarTexture:
+                case Kind::BoundingBoxUVW:
+                case Kind::HeightGradient:
+                case Kind::ScreenPosition:
+                case Kind::DitherOpacity:
+                // オブジェクトごとに変わる値（ベイクでは定数にしない）
+                case Kind::ObjectPosition:
+                case Kind::ObjectScale:
+                case Kind::ObjectOrientation:
+                case Kind::ObjectRadius:
+                case Kind::ObjectBounds:
+                case Kind::PerInstanceRandom:
+                case Kind::TransformVector:
+                case Kind::TransformPosition:
+                case Kind::CameraPosition:
+                case Kind::PixelDepth:
+                case Kind::DistanceFade:
                 case Kind::Fresnel:
                 case Kind::Time:
                 case Kind::TextureSample:
+                case Kind::ConvertToTexture: // 変換済み = テクスチャ、未変換 = UV を既定で使う
                 case Kind::Noise:
                 case Kind::DDX:
                 case Kind::DDY:
                 case Kind::LinearGradient:
                 case Kind::RadialGradient:
                 case Kind::Voronoi:
+                case Kind::ProceduralNoise:
+                case Kind::FractalNoise:
+                case Kind::ConvertToNormalHeight:
+                case Kind::ConvertToHeight:
+                case Kind::ConvertToNormal:
                 case Kind::NormalFromHeight:
                 case Kind::BumpOffset:
                     return false;
@@ -871,11 +1075,14 @@ namespace MaterialGraphPreview
         // UV 未接続（または UV ノード / TexCoord(1,1) 直結）の Texture Sample
         const MaterialGraphNode* PlainTexture(const MaterialGraph& graph, const MaterialGraphNode* node)
         {
-            if (!node || node->Kind != Kind::TextureSample || node->Texture == 0)
+            // 分割したテクスチャ（X / Y / Z / W から接続）はテクスチャを直接使えない（ピクセルごとの式として焼く）
+            // 変換済みの Convert To Texture もテクスチャとして直接使える（UV は 2 番目の入力）
+            if (!node || (node->Kind != Kind::TextureSample && node->Kind != Kind::ConvertToTexture) ||
+                node->Texture == 0 || !node->SplitPins.empty())
             {
                 return nullptr;
             }
-            const auto* uv = Source(graph, *node, 0);
+            const auto* uv = Source(graph, *node, node->Kind == Kind::ConvertToTexture ? 1 : 0);
             const bool plainCoordinate =
                 uv && uv->Kind == Kind::TextureCoordinate && uv->Value[0] == 1.0f && uv->Value[1] == 1.0f;
             return (!uv || uv->Kind == Kind::UV || plainCoordinate) ? node : nullptr;
@@ -1415,6 +1622,20 @@ namespace MaterialGraphPreview
 
         // ---- グラフ設定（UE のマテリアル Details）で上書き
         const auto& settings = graph.Settings;
+        // マテリアルモード：Glass 以外は光学透過を切る（残っているとエンジンはガラスとして描く）
+        if (settings.Mode >= 0)
+        {
+            const auto mode = static_cast<MaterialGraphMode>(std::clamp(settings.Mode, 0, 3));
+            if (mode != MaterialGraphMode::Glass)
+            {
+                result.Data.Transmission = 0.0f;
+            }
+            else if (!source(Pin::Transmission) && result.Data.Transmission <= 0.0f)
+            {
+                result.Data.Transmission = 1.0f;
+                result.Notes.push_back("Glass: Transmission が未接続で 0 だったので 1 にしました");
+            }
+        }
         if (settings.Surface >= 0)
         {
             result.Data.Surface = static_cast<MaterialSurface>(std::clamp(settings.Surface, 0, 2));
@@ -1441,7 +1662,11 @@ namespace MaterialGraphPreview
 
     void Forget(const MaterialGraph& graph)
     {
+        MaterialGraphGpu::ForgetOwner(&graph);
         g_Caches.erase(&graph);
     }
 } // namespace MaterialGraphPreview
+
+
+
 

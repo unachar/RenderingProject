@@ -273,6 +273,31 @@ struct MaterialPartParams
     float CastShadowSoftness = 0.10f;
 };
 
+// メカクレのパーツ別設定。透け具合〜フェードはパーツごとに個別に持つ（共通設定は廃止）。
+// Initialized が false のパーツ（古いシーン）は、旧共通設定（MekakureOpacity など）を初期値として引き継ぐ。
+// 並びは MekakurePart と一致させる（シーンファイルにはこの順で保存）。
+enum MekakurePart : int
+{
+    MekakurePart_Eye = 0,      // 白目 / 瞳 / 虹彩
+    MekakurePart_EyeHighlight, // 目のハイライト
+    MekakurePart_Brow,         // 眉
+    MekakurePart_Lash,         // まつ毛 / アイライン
+    MekakurePart_Face,         // 顔
+    MekakurePart_Other,        // 追加対象名で指定したメッシュ
+    MekakurePart_Count
+};
+
+struct MekakurePartParams
+{
+    bool Initialized = false;   // false: 旧共通設定から未移行（描画時・編集時に旧共通値を使う）
+    float Opacity = 0.55f;      // 透け具合
+    float Depth = 0.06f;        // 透過する奥行き（ワールド単位）
+    float FadeStart = 0.35f;    // N・V がこの値以上で完全に表示
+    float FadeEnd = 0.05f;      // N・V がこの値以下で非表示
+    float MaskStrength = 1.0f;  // 透過マスクの効き（共通の「マスクの効き」に乗算）
+    bool SkinOcclusion = true;  // 目より手前の皮膚（瞼・頬）で隠す
+};
+
 struct MaterialComponent
 {
     vector<AssetHandle> MaterialSlots;
@@ -288,6 +313,8 @@ struct MaterialComponent
     int AOTextureID = -1;
     int EmissiveTextureID = -1;
     int HeightTextureID = -1;
+    // マテリアルグラフの描画時評価プログラム（テクスチャ表の SRV。-1 = なし）。実行時のみ（保存しない）
+    int GraphProgramID = -1;
     std::array<ProcStudio::TextureGpuParams, 3> Noise{}; // Base Color, Normal, Height; Width=enabled.
     float ParallaxDepth = 0.0f;
     float ParallaxSteps = 32.0f;
@@ -346,6 +373,7 @@ struct MaterialComponent
     // メカクレ（前髪越しに目・眉を透かす）。PMX / VRM / FBX 共通。対象メッシュは読み込み時の
     // 名前分類（MeshSemanticFlags）と下の名前フィルターで決まる。
     bool MekakureEnabled = false;
+    // ↓ 旧共通設定（読み込み互換・未移行パーツの初期値専用。UI には出さない）
     float MekakureOpacity = 0.55f;      // 髪越しに見える目の不透明度
     float MekakureDepth = 0.06f;        // 透過を許す奥行き（ワールド単位）。後頭部越しには透けない
     float MekakureFadeStart = 0.35f;    // N・V がこの値以上で完全に表示
@@ -358,6 +386,7 @@ struct MaterialComponent
     string MekakureMaskPath;            // 専用マスク画像（髪の UV 空間）
     float MekakureMaskStrength = 1.0f;  // マスクの効き
     bool MekakureMaskInvert = false;    // 白黒を反転
+    MekakurePartParams MekakureParts[MekakurePart_Count]{}; // パーツ別（透け具合・奥行き・フェード・マスクの効き・皮膚で隠す）
     // ライブトゥーンのマテリアルテクスチャ（トゥーン系クラスのみ）
     string LiveToonDefPath;             // Def：R = 影しきい値の補正(0.5 で変化なし), G = 境界のぼかし倍率, B = 質感ランプのマスク
     float LiveToonDefStrength = 1.0f;
@@ -761,4 +790,6 @@ class ComponentManager
         Registry::RemoveComponent(entity, types...);
     }
 };
+
+
 

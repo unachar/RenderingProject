@@ -474,6 +474,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
                 cb3D.View = transposedView;
                 cb3D.Projection = transposedProj;
                 cb3D.UseTexture = 0;
+                MaterialBindings::FillObjectConstants(cb3D, i);
 
                 cb3D.CameraPos = cameraPosition;
 
@@ -694,6 +695,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         cb3D.View = transposedView;
         cb3D.Projection = transposedProj;
         cb3D.UseTexture = 0;
+        MaterialBindings::FillObjectConstants(cb3D, i);
 
         cb3D.CameraPos = cameraPosition;
 
@@ -899,4 +901,5 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
     }
     s_MeshShaderDraws = 0;
 }
+
 

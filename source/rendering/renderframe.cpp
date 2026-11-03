@@ -9,6 +9,8 @@
 #include "graphicsdevice.h"
 #include "lightingresources.h"
 #include "texturemanager.h"
+#include "materialmanager.h"
+#include "materialgraphshader.h"
 #include "imguimanager.h"
 #include "world.h"
 #include "atmospherelut.h"
@@ -37,6 +39,8 @@ void RenderFrame::BeginDraw()
     m_CommandAllocator[m_FrameIndex]->Reset();
     m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
     RenderProfiler::BeginFrame(m_Device.Get(), m_CommandQueue.Get(), m_CommandList.Get(), m_FrameIndex);
+    // マテリアルグラフの描画時評価：プログラムの反映と時刻の更新（コピーは直後の UpdateStreaming で記録される）
+    MaterialManager::UpdateGraphPrograms();
     TextureManager::UpdateStreaming(m_CommandList.Get());
     NoiseCacheBindings::BeginFrame(m_CommandList.Get());
 
@@ -75,6 +79,9 @@ void RenderFrame::EndDraw()
 {
     AnimationPreviewWindow::Render();
     MaterialPreview::Render();
+    // マテリアルグラフの GPU 評価（ノードプレビュー / ベイク）。UI の後、ImGui の描画の前に記録する
+    MaterialGraphGpu::Execute(m_CommandList.Get());
+    SetDescriptorHeap();
     AssetThumbnailManager::ProcessGenerationBudget();
     {
         RenderProfiler::ScopedEvent profile("Procedural Color Tile Update", m_CommandList.Get());
@@ -163,3 +170,4 @@ void RenderFrame::SetDescriptorHeap()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 }
+

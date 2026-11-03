@@ -229,7 +229,9 @@ void ResolvePacked(uint2 pixel)
         uint4 metadata = gSceneMaterials.Load4(material * GPU_SCENE_MATERIAL_STRIDE + 32u);
         AssetMaterialParameters asset = LoadAssetMaterial(material);
         // POM はピクセルごとに UV・深度・影が変わるので、2x2 共有シェーディングから外す。
+        // マテリアルグラフ（描画時評価）は位置ごとに値が変わるので共有しない
         share = asset.Noise[0].Width == 0u && asset.Noise[1].Width == 0u && asset.Noise[2].Width == 0u &&
+                MaterialGraphProgramSlot(asset) == 0u &&
                 (metadata.z & 1u) == 0 && metadata.y == 0xffffffffu &&
                 (asset.Surface.z < .5 || (all(asset.Textures.xyz >= 512u) &&
                                           (asset.Parallax.x <= 0.0f || asset.Parallax.z < 0.0f)));
@@ -265,4 +267,5 @@ void ResolvePacked(uint2 pixel)
         }
     }
 }
+
 

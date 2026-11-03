@@ -196,6 +196,11 @@ namespace
                 // EncodeShadingModel）：ビット4～6がモデル、8～15が強度。
                 ((min(material.ShadingModel, 7u) & 7u) << 4) |
                 (static_cast<uint32_t>(clamp(material.ShadingStrength, 0.0f, 1.0f) * 255.0f + 0.5f) << 8)};
+        // マテリアルグラフの描画時評価（MaterialGraphVM.hlsli）：bit 16〜25 = プログラムのテクスチャ番号 + 1
+        if (const uint32_t program = textureOffset(material.GraphProgramID); program < 512u)
+        {
+            constants.AssetTextures.w |= (program + 1u) << 16u;
+        }
         constants.LiveToonTextures = {LiveToonTextures::ResolveHeapOffset(material.LiveToonDefPath),
                                       LiveToonTextures::ResolveHeapOffset(material.LiveToonFacePath),
                                       LiveToonTextures::ResolveHeapOffset(material.LiveToonTextureRampPath), 0u};
@@ -262,6 +267,23 @@ namespace
     }
 
 } // 名前空間
+
+void MaterialBindings::FillObjectConstants(ConstantBuffer3D& constants, EntityID entity)
+{
+    constants.ObjectBoundsCenter = {0.0f, 0.0f, 0.0f, static_cast<float>(entity & 0xFFFFFFu)};
+    constants.ObjectBoundsExtents = {0.0f, 0.0f, 0.0f, 0.0f};
+    if (entity != g_kINVALID_ENTITY && ComponentManager::HasComponent<AABBComponent>(entity))
+    {
+        const auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+        if (bounds.Extents.x > 0.0f || bounds.Extents.y > 0.0f || bounds.Extents.z > 0.0f)
+        {
+            constants.ObjectBoundsCenter.x = bounds.Center.x;
+            constants.ObjectBoundsCenter.y = bounds.Center.y;
+            constants.ObjectBoundsCenter.z = bounds.Center.z;
+            constants.ObjectBoundsExtents = {bounds.Extents.x, bounds.Extents.y, bounds.Extents.z, 1.0f};
+        }
+    }
+}
 
 GPUMaterialData MaterialBindings::BuildGpuSceneMaterial(const MaterialComponent& material)
 {
@@ -369,6 +391,11 @@ bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3
     if (!buffer)
     {
         return false;
+    }
+    if (material.GraphProgramID >= 0)
+    {
+        // グラフのプログラム / テクスチャは通常のテクスチャ表にあるので、シーンと同じ基点で読む
+        textureBase = FrameConstants::g_kTEXTURE_SRV_START_INDEX;
     }
     auto constants = BuildPBRConstantsFromMaterial(material);
     constants.AssetSurface.z = 1.0f;
@@ -503,4 +530,5 @@ void MaterialBindings::UpdateDeferredLightingMaterial()
         memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
     }
 }
+
 

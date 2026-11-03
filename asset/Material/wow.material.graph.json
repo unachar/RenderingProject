@@ -1,56 +1,38 @@
 {
-  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":720,\"y\":40}},\"node:20\":{\"location\":{\"x\":-201,\"y\":-12}},\"node:23\":{\"location\":{\"x\":-296,\"y\":308}},\"node:25\":{\"location\":{\"x\":40,\"y\":250}},\"node:29\":{\"location\":{\"x\":40,\"y\":350}},\"node:32\":{\"location\":{\"x\":-600,\"y\":-12}},\"node:35\":{\"location\":{\"x\":-520,\"y\":564}},\"node:49\":{\"location\":{\"x\":-696,\"y\":644}},\"node:53\":{\"location\":{\"x\":456,\"y\":342}},\"node:59\":{\"location\":{\"x\":248,\"y\":468}},\"node:63\":{\"location\":{\"x\":408,\"y\":68}},\"node:67\":{\"location\":{\"x\":519,\"y\":271}},\"node:70\":{\"location\":{\"x\":-808,\"y\":49}}},\"selection\":[\"node:29\"],\"view\":{\"scroll\":{\"x\":-615,\"y\":-37},\"visible_rect\":{\"max\":{\"x\":928,\"y\":739},\"min\":{\"x\":-615,\"y\":-37}},\"zoom\":1}}",
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":1016,\"y\":-253}},\"node:118\":{\"location\":{\"x\":-728,\"y\":-222}},\"node:164\":{\"location\":{\"x\":-406,\"y\":-168}},\"node:183\":{\"location\":{\"x\":-200,\"y\":-202}},\"node:187\":{\"location\":{\"x\":-212,\"y\":20}},\"node:189\":{\"location\":{\"x\":40,\"y\":-234}},\"node:202\":{\"location\":{\"x\":296,\"y\":-220}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-395,\"y\":-429.5},\"visible_rect\":{\"max\":{\"x\":1604.000244140625,\"y\":434.666717529296875},\"min\":{\"x\":-526.666748046875,\"y\":-572.00006103515625}},\"zoom\":0.749999880790710449}}",
   "links" : 
   [
     {
-      "id" : 27,
-      "source" : 24,
-      "target" : 3
+      "id" : 186,
+      "source" : 173,
+      "target" : 184
     },
     {
-      "id" : 28,
-      "source" : 26,
-      "target" : 4
+      "id" : 193,
+      "source" : 188,
+      "target" : 191
     },
     {
-      "id" : 31,
-      "source" : 30,
-      "target" : 6
+      "id" : 194,
+      "source" : 185,
+      "target" : 190
     },
     {
-      "id" : 51,
-      "source" : 50,
-      "target" : 36
+      "id" : 206,
+      "source" : 192,
+      "target" : 203
     },
     {
-      "id" : 58,
-      "source" : 37,
-      "target" : 54
-    },
-    {
-      "id" : 61,
-      "source" : 60,
-      "target" : 55
-    },
-    {
-      "id" : 62,
-      "source" : 56,
-      "target" : 5
-    },
-    {
-      "id" : 66,
-      "source" : 65,
+      "id" : 208,
+      "source" : 205,
       "target" : 2
-    },
-    {
-      "id" : 69,
-      "source" : 68,
-      "target" : 12
     }
   ],
+  "nodeNames" : 2,
   "nodes" : 
   [
     {
+      "height" : 627.0,
       "id" : 1,
       "inputs" : 
       [
@@ -78,8 +60,132 @@
       "output" : 0,
       "position" : 
       [
-        720.0,
-        40.0
+        1016.0,
+        -253.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "width" : 225.0
+    },
+    {
+      "height" : 638.0,
+      "id" : 118,
+      "inputs" : 
+      [
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134
+      ],
+      "kind" : "Solid Texture",
+      "name" : "Solid Texture",
+      "output" : 135,
+      "pinValues" : 
+      {
+        "1" : 1.0399999618530273,
+        "12" : -0.43999999761581421,
+        "2" : 5.1399998664855957,
+        "5" : 0.68800002336502075
+      },
+      "position" : 
+      [
+        -728.0,
+        -222.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        1587.0
+      ],
+      "width" : 243.0
+    },
+    {
+      "height" : 495.0,
+      "id" : 164,
+      "inputs" : 
+      [
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172
+      ],
+      "kind" : "Fractal Noise",
+      "name" : "Fractal Noise",
+      "output" : 173,
+      "pinValues" : 
+      {
+        "2" : 6.2800002098083496,
+        "3" : 5.3000001907348633,
+        "4" : 1.3400000333786011
+      },
+      "position" : 
+      [
+        -406.0,
+        -168.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        1337.0,
+        0.0
+      ],
+      "width" : 157.60000610351562
+    },
+    {
+      "id" : 183,
+      "inputs" : 
+      [
+        184
+      ],
+      "kind" : "OneMinus",
+      "name" : "OneMinus",
+      "output" : 185,
+      "position" : 
+      [
+        -200.0,
+        -202.0
       ],
       "size" : 
       [
@@ -96,16 +202,15 @@
       ]
     },
     {
-      "height" : 184.80000305175781,
-      "id" : 20,
+      "id" : 187,
       "inputs" : [],
-      "kind" : "Color Parameter",
-      "name" : "Base Color",
-      "output" : 21,
+      "kind" : "Constant3Vector",
+      "name" : "Constant3Vector",
+      "output" : 188,
       "position" : 
       [
-        -201.0,
-        -12.0
+        -212.0,
+        20.0
       ],
       "size" : 
       [
@@ -115,73 +220,27 @@
       "texture" : "guid:0000000000000000",
       "value" : 
       [
-        1.0,
-        1.0,
-        1.0,
-        1.0
-      ],
-      "width" : 240.80000305175781
-    },
-    {
-      "id" : 23,
-      "inputs" : [],
-      "kind" : "Scalar Parameter",
-      "name" : "Metallic",
-      "output" : 24,
-      "position" : 
-      [
-        -296.0,
-        308.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
+        0.0010000000474974513,
         0.0,
-        0.0,
-        0.0,
+        0.91900002956390381,
         0.0
-      ]
+      ],
+      "width" : 203.20001220703125
     },
     {
-      "id" : 25,
-      "inputs" : [],
-      "kind" : "Scalar Parameter",
-      "name" : "Roughness",
-      "output" : 26,
+      "id" : 189,
+      "inputs" : 
+      [
+        190,
+        191
+      ],
+      "kind" : "Add",
+      "name" : "Add",
+      "output" : 192,
       "position" : 
       [
         40.0,
-        250.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        1.0399999618530273,
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "id" : 29,
-      "inputs" : [],
-      "kind" : "Vector Parameter",
-      "name" : "Emissive",
-      "output" : 30,
-      "position" : 
-      [
-        40.0,
-        350.0
+        -234.0
       ],
       "size" : 
       [
@@ -198,101 +257,23 @@
       ]
     },
     {
-      "height" : 235.0,
-      "id" : 32,
-      "inputs" : [],
-      "kind" : "Constant4Vector",
-      "name" : "Constant4Vector",
-      "output" : 33,
-      "position" : 
-      [
-        -600.0,
-        -12.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        0.0,
-        1.6549999713897705,
-        0.0,
-        1.0
-      ],
-      "width" : 277.0
-    },
-    {
-      "height" : 292.0,
-      "id" : 35,
+      "id" : 202,
       "inputs" : 
       [
-        36
-      ],
-      "kind" : "Texture Sample",
-      "name" : "Texture Sample",
-      "output" : 37,
-      "position" : 
-      [
-        -520.0,
-        564.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:c10f984bc75ee1f5",
-      "value" : 
-      [
-        1.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "width" : 202.0
-    },
-    {
-      "id" : 49,
-      "inputs" : [],
-      "kind" : "Constant2Vector",
-      "name" : "Constant2Vector",
-      "output" : 50,
-      "position" : 
-      [
-        -696.0,
-        644.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        0.95499998331069946,
-        0.99000000953674316,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "id" : 53,
-      "inputs" : 
-      [
-        54,
-        55
+        203,
+        204
       ],
       "kind" : "Multiply",
       "name" : "Multiply",
-      "output" : 56,
+      "output" : 205,
+      "pinValues" : 
+      {
+        "1" : 2.7599999904632568
+      },
       "position" : 
       [
-        456.0,
-        342.0
+        296.0,
+        -220.0
       ],
       "size" : 
       [
@@ -303,86 +284,6 @@
       "value" : 
       [
         0.0,
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "id" : 59,
-      "inputs" : [],
-      "kind" : "Constant",
-      "name" : "Constant",
-      "output" : 60,
-      "position" : 
-      [
-        248.0,
-        468.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        1.0099999904632568,
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "height" : 292.0,
-      "id" : 63,
-      "inputs" : 
-      [
-        64
-      ],
-      "kind" : "Texture Sample",
-      "name" : "Texture Sample",
-      "output" : 65,
-      "position" : 
-      [
-        408.0,
-        68.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:c10f984bc75ee1f5",
-      "value" : 
-      [
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "width" : 202.0
-    },
-    {
-      "id" : 67,
-      "inputs" : [],
-      "kind" : "Constant",
-      "name" : "Constant",
-      "output" : 68,
-      "position" : 
-      [
-        519.0,
-        271.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        0.18400000035762787,
         0.0,
         0.0,
         0.0
@@ -396,9 +297,15 @@
     "bakeResolution" : 512,
     "bakeTime" : 0.0,
     "cull" : -1,
+    "liveRate" : 30.0,
+    "liveResolution" : 256,
+    "liveUpdate" : true,
+    "materialMode" : 0,
+    "runtimeEvaluation" : true,
     "shadingModel" : -1,
     "shadowMode" : -1,
-    "surface" : -1
+    "solidSpace" : 0,
+    "surface" : 0
   },
   "version" : 1
 }

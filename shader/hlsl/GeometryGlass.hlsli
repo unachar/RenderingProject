@@ -163,7 +163,25 @@ float GlassRayEpsilon(float3 p)
 
 // 外向きに閉じたメッシュが必要。透過経路は決定的に計算する。
 // 環境照明や反射へのフォールバックは使わず、全反射は実際の形状をたどる。
-bool IntegrateGeometryGlass(GlassHit hit, float3 origin, float3 direction, float coneAngle, out float3 radiance)
+// 透過ラフネスのローブ。透過方向を中心に、接平面上の lobe（単位円内）× spread だけ傾ける。
+// spread は GGX の α（= roughness²）に比例させる。裏側（入射側）へ出る場合は元の方向を使う。
+float3 GlassRoughTransmit(float3 transmitted, float3 Ng, float roughness, float2 lobe)
+{
+    if (roughness <= 0.001f || dot(lobe, lobe) <= 1e-8f)
+    {
+        return transmitted;
+    }
+    float3 t = normalize(transmitted);
+    float3 up = abs(t.y) < 0.99f ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 tx = normalize(cross(up, t));
+    float3 ty = cross(t, tx);
+    float spread = roughness * roughness * 0.75f;
+    float3 jittered = normalize(t + (tx * lobe.x + ty * lobe.y) * spread);
+    return dot(jittered, Ng) < 0.0f ? jittered : t;
+}
+
+bool IntegrateGeometryGlass(GlassHit hit, float3 origin, float3 direction, float coneAngle, float2 lobe,
+                            out float3 radiance)
 {
     radiance = 0;
     float traveled = 0;
@@ -302,12 +320,14 @@ bool IntegrateGeometryGlass(GlassHit hit, float3 origin, float3 direction, float
                 }
                 --count;
             }
-            direction = normalize(transmitted);
+            // 透過ラフネス：界面ごとに、その界面のラフネスで透過方向を広げる
+            direction = GlassRoughTransmit(normalize(transmitted), Ng, saturate(mesh.OpticalExtra.x), lobe);
         }
         traveled += hit.Distance;
         // 各界面を通じてテクスチャの投影範囲を連続させる。
         // 粗さはフィルタリングに影響し、スネルの法則による方向自体は変えない。
-        coneAngle = max(coneAngle, pathRoughness * pathRoughness * 0.01f);
+        // ローブの広がり（サンプル間隔）分だけテクスチャもぼかし、サンプル数が少なくても段差を目立たせない。
+        coneAngle = max(coneAngle, pathRoughness * pathRoughness * 0.25f);
         float epsilon = GlassRayEpsilon(hit.Position);
         origin = hit.Position + Ng * (tir ? epsilon : -epsilon) + direction * (epsilon * 0.25f);
         if (count > 0)
@@ -366,28 +386,56 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
     {
         return false;
     }
-    float3 centerRadiance;
-    IntegrateGeometryGlass(center, origin, direction, coneAngle, centerRadiance);
-    radiance = centerRadiance;
     uint width, height;
     SceneColorTexture.GetDimensions(width, height);
-    uint sampleCount = width < 960u ? 4u : 1u;
-    const float2 offsets[3] = {float2(-0.28f, -0.16f), float2(0.28f, -0.16f), float2(0.0f, 0.32f)};
-    [loop] for (uint sampleIndex = 1; sampleIndex < sampleCount; ++sampleIndex)
+    float roughness = saturate(first.OpticalExtra.x);
+    bool rough = roughness > 0.01f;
+    // 透過ラフネスがあるときはローブを 8 方向（ラフネスが小さいときは 4）で積分する。
+    // パターンは画素位置で回転させるだけで、フレーム間では固定（履歴に依存しない）。
+    uint sampleCount = rough ? (roughness > 0.25f ? 8u : 4u) : (width < 960u ? 4u : 1u);
+    float rotation = 0.0f;
+    if (rough)
     {
-        float2 offset = offsets[sampleIndex - 1];
+        float2 screenUv;
+        ProjectWorldToScreenCommon(rasterPosition, screenUv);
+        float2 pixel = floor(screenUv * float2(max(width, 1u), max(height, 1u)));
+        rotation = 6.2831853f * frac(52.9829189f * frac(dot(pixel, float2(0.06711056f, 0.00583715f))));
+    }
+    const float2 offsets[3] = {float2(-0.28f, -0.16f), float2(0.28f, -0.16f), float2(0.0f, 0.32f)};
+    float3 centerRadiance = 0;
+    radiance = 0;
+    [loop] for (uint sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        float2 lobe = 0;
+        if (rough)
+        {
+            // Vogel の円盤配置（黄金角）。単位円内に均等に並ぶ。
+            float r = sqrt((sampleIndex + 0.5f) / sampleCount);
+            float theta = sampleIndex * 2.3999632f + rotation;
+            lobe = float2(cos(theta), sin(theta)) * r;
+        }
+        if (sampleIndex == 0)
+        {
+            IntegrateGeometryGlass(center, origin, direction, coneAngle, lobe, centerRadiance);
+            radiance += centerRadiance;
+            continue;
+        }
+        float2 offset = sampleIndex <= 3u ? offsets[sampleIndex - 1] : 0.0f;
         float3 sampleDirection = SafeNormalizeCommon(direction + rayDx * offset.x + rayDy * offset.y, direction);
         float3 sampleOrigin = origin + originDx * offset.x + originDy * offset.y;
-        GlassHit sampleHit;
+        GlassHit sampleHit = center;
         float3 sampleRadiance = centerRadiance;
-        if (TraceGlassBoundary(sampleOrigin, sampleDirection, coneAngle, 0.0f, sampleHit))
+        bool sameGlass = all(offset == 0.0f);
+        if (!sameGlass && TraceGlassBoundary(sampleOrigin, sampleDirection, coneAngle, 0.0f, sampleHit))
         {
             GlassMeshData sampleMesh = GlassMeshes[sampleHit.Instance];
             // 隣接する不透明な物体をガラスの輪郭へにじませない。
-            if (sampleMesh.Optical.y > 0.001f && sampleMesh.Flags.x == first.Flags.x)
-            {
-                IntegrateGeometryGlass(sampleHit, sampleOrigin, sampleDirection, coneAngle, sampleRadiance);
-            }
+            sameGlass = sampleMesh.Optical.y > 0.001f && sampleMesh.Flags.x == first.Flags.x;
+        }
+        if (sameGlass)
+        {
+            // サブピクセルのずらしが無いサンプル（5 本目以降）は中心のヒットをローブだけ変えて再利用する
+            IntegrateGeometryGlass(sampleHit, sampleOrigin, sampleDirection, coneAngle, lobe, sampleRadiance);
         }
         radiance += sampleRadiance;
     }
@@ -396,3 +444,4 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
 }
 #endif
 #endif
+

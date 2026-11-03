@@ -34,6 +34,24 @@ GBufferDepthOutput main(in PSInput3D In)
     float4 assetEmissionAO;
     ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
+    // マテリアルグラフの描画時評価（3D 位置で評価）
+    MaterialGraphVmOutput materialGraph = (MaterialGraphVmOutput)0;
+    [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
+    {
+        MaterialGraphVmInput graphInput;
+        graphInput.WorldPos = In.WorldPos;
+        graphInput.PixelPos = In.Position.xy;
+        MaterialGraphSetObject(graphInput, World, ObjectBoundsCenter.xyz,
+                               ObjectBoundsExtents.w > 0.5f ? ObjectBoundsExtents.xyz : float3(0, 0, 0),
+                               (uint)ObjectBoundsCenter.w, ObjectBoundsExtents.w > 0.5f || ObjectBoundsCenter.w > 0.5f);
+        graphInput.Normal = In.Normal;
+        graphInput.CameraPos = In.CameraPos;
+        graphInput.UV = materialUv;
+        graphInput.VertexColor = In.Diffuse;
+        materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, g_SamplerState);
+        ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
+                                  assetEmissionAO);
+    }
     clip(baseColor.a - 0.01f);
 
     float3 normal = In.Normal;
@@ -47,6 +65,7 @@ GBufferDepthOutput main(in PSInput3D In)
         // 法線マップが無いときは POM の高さマップから法線を作る。
         normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
     }
+    normal = ApplyMaterialGraphNormal(materialGraph, assetMaterial, normal, In.Normal, In.WorldPos, In.TexCoord);
 
     GBufferDepthOutput output;
     output.EmissionAO = assetEmissionAO;
@@ -69,4 +88,5 @@ GBufferDepthOutput main(in PSInput3D In)
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     return output;
 }
+
 

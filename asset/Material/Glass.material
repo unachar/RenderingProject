@@ -22,17 +22,17 @@
       0.0
     ],
     "emissiveIntensity" : 0.0,
-    "ior" : 10.0,
+    "ior" : 1.1000000238418579,
     "metallic" : 0.0,
     "normalScale" : 1.0,
     "parallaxDepth" : 0.0,
     "parallaxSteps" : 32.0,
-    "roughness" : 0.18899999558925629,
+    "roughness" : 0.0,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
-    "thickness" : 0.086000002920627594,
-    "transmission" : 0.65100002288818359,
-    "transmissionRoughness" : 0.69800001382827759
+    "thickness" : 0.87800002098083496,
+    "transmission" : 1.0,
+    "transmissionRoughness" : 0.0
   },
   "renderState" : 
   {

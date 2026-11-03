@@ -972,35 +972,68 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
         ImGui::SeparatorText("メカクレ（前髪越しの目）");
         changed |= ImGui::Checkbox("メカクレ有効", &material.MekakureEnabled);
         ImGui::BeginDisabled(!material.MekakureEnabled);
-        changed |= ImGui::SliderFloat("透け具合", &material.MekakureOpacity, 0.0f, 1.0f);
-        changed |= ImGui::SliderFloat("透過する奥行き", &material.MekakureDepth, 0.0f, 0.5f, "%.3f");
-        ImGui::SetItemTooltip("目の手前この距離（ワールド単位）以内の遮蔽物だけ透けます。後頭部越しには透けません。");
-        changed |= ImGui::SliderFloat("フェード開始 N・V", &material.MekakureFadeStart, 0.0f, 1.0f);
-        changed |= ImGui::SliderFloat("フェード終了 N・V", &material.MekakureFadeEnd, -1.0f, 1.0f);
-        struct MaskItem
+        // 透け具合〜フェードはパーツ別のみ。古いシーンの共通設定は初回表示時に各パーツへ移す
+        for (MekakurePartParams& part : material.MekakureParts)
         {
-            const char* Label;
-            uint32_t Bit;
-        };
-        const MaskItem maskItems[] = {{"目", MeshSemantic_Eye},
-                                      {"目ハイライト", MeshSemantic_EyeHighlight},
-                                      {"眉", MeshSemantic_Brow},
-                                      {"まつ毛", MeshSemantic_Lash},
-                                      {"顔", MeshSemantic_Face}};
-        for (size_t i = 0; i < std::size(maskItems); ++i)
-        {
-            bool on = (static_cast<uint32_t>(material.MekakureTargetMask) & maskItems[i].Bit) != 0;
-            if (i != 0)
+            if (!part.Initialized)
             {
-                ImGui::SameLine();
-            }
-            if (ImGui::Checkbox(maskItems[i].Label, &on))
-            {
-                uint32_t mask = static_cast<uint32_t>(material.MekakureTargetMask);
-                mask = on ? (mask | maskItems[i].Bit) : (mask & ~maskItems[i].Bit);
-                material.MekakureTargetMask = static_cast<int>(mask);
+                part.Opacity = material.MekakureOpacity;
+                part.Depth = material.MekakureDepth;
+                part.FadeStart = material.MekakureFadeStart;
+                part.FadeEnd = material.MekakureFadeEnd;
+                part.Initialized = true;
                 changed = true;
             }
+        }
+
+        // ---- パーツ別 ----
+        struct PartItem
+        {
+            const char* Label;
+            uint32_t Bit; // 0 = 対象マスクのビットなし（追加対象名）
+        };
+        static_assert(MekakurePart_Count == 6, "PartItem と MekakurePart の並びを合わせる");
+        const PartItem partItems[MekakurePart_Count] = {{"目", MeshSemantic_Eye},
+                                                        {"目ハイライト", MeshSemantic_EyeHighlight},
+                                                        {"眉", MeshSemantic_Brow},
+                                                        {"まつ毛", MeshSemantic_Lash},
+                                                        {"顔", MeshSemantic_Face},
+                                                        {"追加対象名", 0u}};
+        ImGui::SeparatorText("パーツ別");
+        for (int i = 0; i < MekakurePart_Count; ++i)
+        {
+            const PartItem& item = partItems[i];
+            MekakurePartParams& part = material.MekakureParts[i];
+            ImGui::PushID(i);
+            if (item.Bit != 0)
+            {
+                bool on = (static_cast<uint32_t>(material.MekakureTargetMask) & item.Bit) != 0;
+                if (ImGui::Checkbox("##target", &on))
+                {
+                    uint32_t mask = static_cast<uint32_t>(material.MekakureTargetMask);
+                    mask = on ? (mask | item.Bit) : (mask & ~item.Bit);
+                    material.MekakureTargetMask = static_cast<int>(mask);
+                    changed = true;
+                }
+                ImGui::SetItemTooltip("このパーツを透過の対象にする");
+                ImGui::SameLine();
+            }
+            const bool open = ImGui::TreeNodeEx(item.Label, ImGuiTreeNodeFlags_SpanAvailWidth, "%s  透け %.2f",
+                                                item.Label, part.Opacity);
+            if (open)
+            {
+                changed |= ImGui::SliderFloat("透け具合", &part.Opacity, 0.0f, 1.0f);
+                changed |= ImGui::SliderFloat("透過する奥行き", &part.Depth, 0.0f, 0.5f, "%.3f");
+                ImGui::SetItemTooltip("目の手前この距離（ワールド単位）以内の遮蔽物だけ透けます。後頭部越しには透けません。");
+                changed |= ImGui::SliderFloat("フェード開始 N・V", &part.FadeStart, 0.0f, 1.0f);
+                changed |= ImGui::SliderFloat("フェード終了 N・V", &part.FadeEnd, -1.0f, 1.0f);
+                changed |= ImGui::SliderFloat("マスクの効き", &part.MaskStrength, 0.0f, 1.0f);
+                ImGui::SetItemTooltip("共通の「マスクの効き」に乗算（透過マスクが「なし」のときは無効）");
+                changed |= ImGui::Checkbox("皮膚で隠す", &part.SkinOcclusion);
+                ImGui::SetItemTooltip("目より手前にある瞼・頬などの皮膚越しには透かさない");
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
         }
         char includeBuffer[256]{};
         char excludeBuffer[256]{};
@@ -1041,7 +1074,10 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
                 {
                     return;
                 }
-                ImGui::BulletText("%s / %s", meshName.c_str(), materialName.c_str());
+                static const char* const partNames[MekakurePart_Count] = {"目",   "目ハイライト", "眉",
+                                                                         "まつ毛", "顔",          "追加対象名"};
+                const int part = ResolveMekakurePartIndex(flags, static_cast<uint32_t>(material.MekakureTargetMask));
+                ImGui::BulletText("%s / %s  [%s]", meshName.c_str(), materialName.c_str(), partNames[part]);
             };
             if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
             {
@@ -1474,16 +1510,22 @@ void ImGuiManager::ApplyMeshShadingOverridesToModel(EntityID entity)
     }
 
     auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+    // すべて「自動」の上書きは上書きなしと同じなので空にする（シーンにも残さない）
+    if (std::all_of(material.MeshShadingOverrides.begin(), material.MeshShadingOverrides.end(),
+                    [](MeshShadingOverride value) { return value == MeshShadingOverride::Auto; }))
+    {
+        material.MeshShadingOverrides.clear();
+    }
     vector<int> overridePartIds;
     overridePartIds.reserve(material.MeshShadingOverrides.size());
     for (MeshShadingOverride value : material.MeshShadingOverrides)
     {
         overridePartIds.push_back(static_cast<int>(value));
     }
-    if (!overridePartIds.empty() && IsModelMaterialEntity(entity))
-    {
-        material.ShaderClassMode = MaterialMode::Auto;
-    }
+    // ここでは ShaderClassMode を変更しない。
+    // シーン読み込み時（EditorScene）にも呼ばれるため、ここで自動へ戻すと
+    // 保存した「手動 → トゥーン」などが読み込みのたびに上書きされてしまう。
+    // 自動への切り替えは、メッシュシェーディング上書きを UI で編集したときだけ行う（DrawMeshShadingInspector）。
 
     if (ComponentManager::HasComponent<StaticModelComponent>(entity))
     {
@@ -1706,6 +1748,7 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
 
     if (changed)
     {
+        // 上書きを UI で編集したときだけ自動へ（上書きはメッシュ単位のパーツ ID で、自動モードで効く）
         material.ShaderClassMode = MaterialMode::Auto;
         ApplyMeshShadingOverridesToModel(entity);
         BeginUndoCapture(entity, before);
@@ -3118,5 +3161,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
     }
 }
+
+
 
 

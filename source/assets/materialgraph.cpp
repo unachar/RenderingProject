@@ -6,6 +6,8 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
+#include <cstdlib>
+#include <limits>
 
 namespace
 {
@@ -192,7 +194,166 @@ namespace
           {"Rotation Angle", Type::Scalar},
           {"Pivot Point", Type::Vector3},
           {"Position", Type::Vector3}}},
-        {Kind::BlackBody, "Black Body", Type::Vector3, {{"Temp", Type::Scalar, {6500}}}}};
+        {Kind::BlackBody, "Black Body", Type::Vector3, {{"Temp", Type::Scalar, {6500}}}},
+        // ---- プロシージャルスタジオのノイズ
+        {Kind::ProceduralNoise,
+         "Procedural Noise",
+         Type::Scalar,
+         {{"UV", Type::Vector2},
+          {"Z", Type::Scalar},
+          {"Frequency", Type::Scalar, {4}},
+          {"Direction", Type::Scalar},
+          {"Anisotropy", Type::Scalar, {4}},
+          {"Kernel Frequency", Type::Scalar, {2}},
+          {"Phase", Type::Scalar}}},
+        {Kind::FractalNoise,
+         "Fractal Noise",
+         Type::Scalar,
+         {{"UV", Type::Vector2},
+          {"Z", Type::Scalar},
+          {"Frequency", Type::Scalar, {4}},
+          {"Octaves", Type::Scalar, {5}},
+          {"Lacunarity", Type::Scalar, {2}},
+          {"Gain", Type::Scalar, {0.5f}},
+          {"Warp Strength", Type::Scalar, {0.6f}},
+          {"Ridge Offset", Type::Scalar, {1}}}},
+        {Kind::NoiseCombine,
+         "Noise Combine",
+         Type::Scalar,
+         {{"A", Type::Scalar, {0.5f}}, {"B", Type::Scalar, {0.5f}}, {"Factor", Type::Scalar, {0.5f}}}},
+        {Kind::ConvertToNormalHeight,
+         "Convert To Normal / Height",
+         Type::Numeric, // 出力の切り替えで Scalar（Height）/ Vector3（Normal）
+         {{"UV", Type::Vector2},
+          {"Contrast", Type::Scalar, {1}},
+          {"Bias", Type::Scalar, {0}},
+          {"Normal Strength", Type::Scalar, {8}},
+          {"Radius (UV)", Type::Scalar, {0.001f}}}},
+        {Kind::ConvertToHeight,
+         "Convert To Height",
+         Type::Scalar,
+         {{"UV", Type::Vector2}, {"Contrast", Type::Scalar, {1}}, {"Bias", Type::Scalar, {0}}}},
+        {Kind::ConvertToNormal,
+         "Convert To Normal",
+         Type::Vector3,
+         {{"UV", Type::Vector2},
+          {"Contrast", Type::Scalar, {1}},
+          {"Bias", Type::Scalar, {0}},
+          {"Normal Strength", Type::Scalar, {8}},
+          {"Radius (UV)", Type::Scalar, {0.001f}}}},
+        {Kind::BreakVector, "Break Vector", Type::Numeric, {{"Vector", Type::Numeric}}},
+        {Kind::ConvertToTexture, "Convert To Texture", Type::Vector4, {{"Value", Type::Numeric}, {"UV", Type::Vector2}}},
+        // ---- ソリッドテクスチャ（入力の並びは Solid Texture / Solid Pattern で共通。色は Solid Texture のみ）
+        {Kind::SolidTexture,
+         "Solid Texture",
+         Type::Vector3,
+         {{"Position", Type::Vector3},
+          {"Frequency", Type::Scalar, {3}},
+          {"Octaves", Type::Scalar, {5}},
+          {"Lacunarity", Type::Scalar, {2}},
+          {"Gain", Type::Scalar, {0.5f}},
+          {"Warp Strength", Type::Scalar, {0.6f}},
+          {"Ridge Offset", Type::Scalar, {1}},
+          {"Turbulence", Type::Scalar, {4}},
+          {"Ring Count", Type::Scalar, {8}},
+          {"Coverage", Type::Scalar, {0.5f}},
+          {"Softness", Type::Scalar, {0.25f}},
+          {"Contrast", Type::Scalar, {1}},
+          {"Bias", Type::Scalar, {0}},
+          {"Color A", Type::Vector3, {0.12f, 0.12f, 0.14f, 0}},
+          {"Color B", Type::Vector3, {0.92f, 0.91f, 0.88f, 0}},
+          {"Color C", Type::Vector3, {0.60f, 0.62f, 0.66f, 0}}}},
+        {Kind::SolidPattern,
+         "Solid Pattern",
+         Type::Scalar,
+         {{"Position", Type::Vector3},
+          {"Frequency", Type::Scalar, {3}},
+          {"Octaves", Type::Scalar, {5}},
+          {"Lacunarity", Type::Scalar, {2}},
+          {"Gain", Type::Scalar, {0.5f}},
+          {"Warp Strength", Type::Scalar, {0.6f}},
+          {"Ridge Offset", Type::Scalar, {1}},
+          {"Turbulence", Type::Scalar, {4}},
+          {"Ring Count", Type::Scalar, {8}},
+          {"Coverage", Type::Scalar, {0.5f}},
+          {"Softness", Type::Scalar, {0.25f}},
+          {"Contrast", Type::Scalar, {1}},
+          {"Bias", Type::Scalar, {0}}}},
+        {Kind::SolidCoordinate,
+         "Solid Coordinate",
+         Type::Vector3,
+         {{"Position", Type::Vector3}, {"Scale", Type::Scalar, {1}}, {"Offset", Type::Vector3}}},
+        {Kind::ConvertToSolid,
+         "Convert To Solid",
+         Type::Vector4,
+         {{"Value", Type::Numeric},
+          {"Position", Type::Vector3},
+          {"Scale", Type::Scalar, {1}},
+          {"Octaves", Type::Scalar, {3}},
+          {"Vertical Variation", Type::Scalar, {0.5f}},
+          {"Sharpness", Type::Scalar, {4}},
+          {"Randomness", Type::Scalar, {1}}}},
+        {Kind::ThreeColorRamp,
+         "Three Color Ramp",
+         Type::Vector3,
+         {{"T", Type::Scalar, {0.5f}},
+          {"Color A", Type::Vector3, {0.05f, 0.07f, 0.12f, 0}},
+          {"Color B", Type::Vector3, {0.85f, 0.82f, 0.76f, 0}},
+          {"Color C", Type::Vector3, {0.45f, 0.28f, 0.12f, 0}}}},
+        // ---- マテリアルシェーディング用の便利ノード
+        {Kind::LocalPosition, "Local Position", Type::Vector3, {}},
+        // ---- オブジェクト / カメラの情報
+        {Kind::ObjectPosition, "Object Position", Type::Vector3, {}},
+        {Kind::ObjectScale, "Object Scale", Type::Vector3, {}},
+        {Kind::ObjectOrientation, "Object Orientation", Type::Vector3, {}},
+        {Kind::ObjectRadius, "Object Radius", Type::Scalar, {}},
+        {Kind::ObjectBounds, "Object Bounds", Type::Vector3, {}},
+        {Kind::BoundingBoxUVW, "Bounding Box UVW", Type::Vector3, {}},
+        {Kind::PerInstanceRandom, "Per Instance Random", Type::Scalar, {}},
+        {Kind::TransformVector, "Transform Vector", Type::Vector3, {{"Vector", Type::Vector3, {0, 1, 0, 0}}}},
+        {Kind::TransformPosition, "Transform Position", Type::Vector3, {{"Position", Type::Vector3}}},
+        {Kind::CameraPosition, "Camera Position", Type::Vector3, {}},
+        {Kind::PixelDepth, "Pixel Depth", Type::Scalar, {}},
+        {Kind::ScreenPosition, "Screen Position", Type::Vector2, {}},
+        {Kind::DitherOpacity, "Dither Opacity", Type::Scalar, {{"Opacity", Type::Scalar, {0.5f}}}},
+        {Kind::DistanceFade, "Distance Fade", Type::Scalar, {{"Start", Type::Scalar, {5}}, {"End", Type::Scalar, {20}}}},
+        {Kind::HeightGradient, "Height Gradient", Type::Scalar, {{"Start", Type::Scalar, {0}}, {"End", Type::Scalar, {1}}}},
+        {Kind::VertexColor, "Vertex Color", Type::Vector4, {}},
+        {Kind::CameraDistance, "Camera Distance", Type::Scalar, {}},
+        {Kind::SlopeMask,
+         "Slope Mask",
+         Type::Scalar,
+         {{"Up", Type::Vector3, {0, 1, 0, 0}}, {"Threshold", Type::Scalar, {0.7f}}, {"Softness", Type::Scalar, {0.1f}}}},
+        {Kind::HeightLerp,
+         "Height Lerp",
+         Type::Numeric,
+         {{"A", Type::Numeric},
+          {"B", Type::Numeric, {1, 1, 1, 1}},
+          {"Height", Type::Scalar, {0.5f}},
+          {"Transition Phase", Type::Scalar, {0.5f}},
+          {"Contrast", Type::Scalar, {0.5f}}}},
+        {Kind::ColorAdjust,
+         "Color Adjust",
+         Type::Vector3,
+         {{"Color", Type::Vector3, {1, 1, 1, 0}},
+          {"Brightness", Type::Scalar, {1}},
+          {"Contrast", Type::Scalar, {1}},
+          {"Saturation", Type::Scalar, {1}}}},
+        {Kind::TriplanarTexture,
+         "Triplanar Texture",
+         Type::Vector4,
+         {{"Position", Type::Vector3}, {"Scale", Type::Scalar, {1}}, {"Sharpness", Type::Scalar, {4}}}},
+        {Kind::NoiseLayers,
+         "Noise Layers",
+         Type::Scalar,
+         {{"Layer 1", Type::Scalar},
+          {"Weight 1", Type::Scalar, {1}},
+          {"Layer 2", Type::Scalar},
+          {"Weight 2", Type::Scalar, {1}},
+          {"Layer 3", Type::Scalar},
+          {"Weight 3", Type::Scalar, {1}},
+          {"Layer 4", Type::Scalar},
+          {"Weight 4", Type::Scalar, {1}}}}};
 
     int Dimensions(Type type)
     {
@@ -369,6 +530,41 @@ MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
     {
         link(add(Kind::ScalarParameter, "Parallax Depth", {material.ParallaxDepth}, 40, y), pinOf(MaterialOutputPin::ParallaxDepth));
         link(add(Kind::ScalarParameter, "Parallax Steps", {material.ParallaxSteps}, 40, y + 100), pinOf(MaterialOutputPin::ParallaxSteps));
+        y += 200.0f;
+    }
+    // ---- マテリアルモード（Opaque / Masked / Translucent / Glass）と Details の設定
+    const MaterialGraphMode mode = ModeFromMaterial(material);
+    // Glass：屈折 / 透過 / 吸収（アセットの値をそのままパラメーターにする）
+    if (mode == MaterialGraphMode::Glass)
+    {
+        link(add(Kind::ScalarParameter, "IOR", {material.IOR}, 40, y), pinOf(MaterialOutputPin::IOR));
+        link(add(Kind::ScalarParameter, "Transmission", {material.Transmission}, 40, y + 100),
+             pinOf(MaterialOutputPin::Transmission));
+        link(add(Kind::ScalarParameter, "Transmission Roughness", {material.TransmissionRoughness}, 40, y + 200),
+             pinOf(MaterialOutputPin::TransmissionRoughness));
+        link(add(Kind::ScalarParameter, "Thickness", {material.Thickness}, 40, y + 300),
+             pinOf(MaterialOutputPin::Thickness));
+        link(add(Kind::VectorParameter, "Absorption",
+                 {material.AbsorptionCoefficient[0], material.AbsorptionCoefficient[1],
+                  material.AbsorptionCoefficient[2], 0},
+                 40, y + 400),
+             pinOf(MaterialOutputPin::Absorption));
+        y += 520.0f;
+    }
+    // 拡張シェーディングモデル（クリアコート / 布 / 肌 / 髪 / 異方性）の強さ
+    if (material.ShadingModel != 0)
+    {
+        link(add(Kind::ScalarParameter, "Shading Strength", {material.ShadingStrength}, 40, y),
+             pinOf(MaterialOutputPin::ShadingStrength));
+        y += 100.0f;
+    }
+    graph.SetMode(mode);
+    graph.Settings.Cull = static_cast<int>(material.Cull);
+    graph.Settings.ShadingModel = static_cast<int>((std::min)(material.ShadingModel, 5u));
+    graph.Settings.ShadowMode = static_cast<int>(material.ShadowMode);
+    if (mode == MaterialGraphMode::Masked)
+    {
+        graph.Settings.AlphaCutoff = std::clamp(material.AlphaCutoff, 0.0f, 1.0f);
     }
     graph.Revision = 0;
     return graph;
@@ -416,6 +612,36 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
         case Kind::Blend:
             node.Value = {static_cast<float>(MaterialBlendMode::Overlay), 0, 0, 0};
             break;
+        case Kind::ProceduralNoise:
+            node.Value = {0, 1337, 0, 0}; // Perlin、シード、タイルなし
+            break;
+        case Kind::FractalNoise:
+            node.Value = {0, 0, 1337, 0}; // Perlin、fBm、シード、タイルなし
+            break;
+        case Kind::NoiseCombine:
+            node.Value = {static_cast<float>(MaterialNoiseCombineMode::Mix), 1, 0, 0}; // Mix、0..1 に収める
+            break;
+        case Kind::ConvertToNormalHeight:
+        case Kind::ConvertToHeight:
+            node.Value = {0, 0, 0, 1}; // Height、輝度、反転なし
+            break;
+        case Kind::ConvertToNormal:
+            node.Value = {1, 0, 0, 1}; // Normal、輝度、反転なし、Sobel
+            break;
+        case Kind::SolidTexture:
+        case Kind::SolidPattern:
+            node.Value = {static_cast<float>(MaterialSolidKind::Marble), 0, 0, 1337}; // 大理石、Perlin、fBm
+            break;
+        case Kind::TriplanarTexture:
+            node.Value = {static_cast<float>(MaterialSamplerType::Color), 0, 0, 0};
+            break;
+        case Kind::ConvertToSolid:
+            node.Value = {static_cast<float>(MaterialSolidConvertMethod::Stochastic),
+                          static_cast<float>(MaterialSamplerType::Color), 1337, 0};
+            break;
+        case Kind::ConvertToTexture:
+            node.Value = {static_cast<float>(MaterialSamplerType::Linear), 1, 0, 0}; // Linear、512px
+            break;
         default:
             break;
     }
@@ -426,6 +652,13 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
     if (kind != Kind::Output && kind != Kind::Group)
     {
         node.OutputPin = m_NextId++;
+    }
+    if (kind == Kind::BreakVector)
+    {
+        for (int component = 0; component < 4; ++component)
+        {
+            node.SplitPins.push_back(m_NextId++);
+        }
     }
     const auto id = node.Id;
     Nodes.push_back(std::move(node));
@@ -477,6 +710,21 @@ const MaterialGraphNode* MaterialGraph::FindPinNode(uint64_t pin, bool* input, s
             }
             return &node;
         }
+        for (size_t i = 0; i < node.SplitPins.size(); ++i)
+        {
+            if (node.SplitPins[i] == pin)
+            {
+                if (input)
+                {
+                    *input = false;
+                }
+                if (index)
+                {
+                    *index = i + 1; // 0 = まとめた出力、1〜4 = 成分
+                }
+                return &node;
+            }
+        }
         for (size_t i = 0; i < node.InputPins.size(); ++i)
         {
             if (node.InputPins[i] == pin)
@@ -496,7 +744,7 @@ const MaterialGraphNode* MaterialGraph::FindPinNode(uint64_t pin, bool* input, s
     return nullptr;
 }
 
-const MaterialGraphLink* MaterialGraph::InputLink(uint64_t pin) const
+const MaterialGraphLink* MaterialGraph::RawInputLink(uint64_t pin) const
 {
     for (const auto& link : Links)
     {
@@ -508,6 +756,144 @@ const MaterialGraphLink* MaterialGraph::InputLink(uint64_t pin) const
     return nullptr;
 }
 
+const MaterialGraphLink* MaterialGraph::InputLink(uint64_t pin) const
+{
+    const auto* link = RawInputLink(pin);
+    if (!link || (Settings.Mode < 0 && Settings.ShadingModel != 0))
+    {
+        return link; // 旧グラフ（モード未設定）はすべてのピンが有効
+    }
+    for (const auto& node : Nodes)
+    {
+        if (node.Kind != Kind::Output)
+        {
+            continue;
+        }
+        for (size_t i = 0; i < node.InputPins.size(); ++i)
+        {
+            if (node.InputPins[i] == pin)
+            {
+                return IsOutputPinActive(i) ? link : nullptr;
+            }
+        }
+        break;
+    }
+    return link;
+}
+
+MaterialGraphMode MaterialGraph::ModeFromMaterial(const MaterialAssetData& material)
+{
+    if (material.Transmission > 0.0f)
+    {
+        return MaterialGraphMode::Glass;
+    }
+    switch (material.Surface)
+    {
+        case MaterialSurface::Masked:
+            return MaterialGraphMode::Masked;
+        case MaterialSurface::Transparent:
+            return MaterialGraphMode::Translucent;
+        default:
+            return MaterialGraphMode::Opaque;
+    }
+}
+
+const char* MaterialGraph::OutputPinInactiveReason(MaterialOutputPin pin, const MaterialGraphSettings& settings)
+{
+    using Pin = MaterialOutputPin;
+    if (pin == Pin::ShadingStrength && settings.ShadingModel == 0)
+    {
+        return "Shading Model が Default Lit のときは使えません";
+    }
+    if (settings.Mode < 0)
+    {
+        return nullptr;
+    }
+    const auto mode = static_cast<MaterialGraphMode>(std::clamp(settings.Mode, 0, 3));
+    const bool glassPin = pin == Pin::IOR || pin == Pin::Transmission || pin == Pin::TransmissionRoughness ||
+                          pin == Pin::Thickness || pin == Pin::Absorption;
+    const bool pomPin = pin == Pin::Height || pin == Pin::ParallaxDepth || pin == Pin::ParallaxSteps;
+    switch (mode)
+    {
+        case MaterialGraphMode::Opaque:
+            if (pin == Pin::Opacity || pin == Pin::OpacityMask)
+            {
+                return "Opaque では使えません（Masked / Translucent / Glass にしてください）";
+            }
+            if (glassPin)
+            {
+                return "屈折 / 透過は Glass モードだけで使えます";
+            }
+            break;
+        case MaterialGraphMode::Masked:
+            if (pin == Pin::Opacity)
+            {
+                return "Masked では Opacity Mask を使います";
+            }
+            if (glassPin)
+            {
+                return "屈折 / 透過は Glass モードだけで使えます";
+            }
+            break;
+        case MaterialGraphMode::Translucent:
+            if (pin == Pin::OpacityMask)
+            {
+                return "Translucent では Opacity を使います";
+            }
+            if (pomPin)
+            {
+                return "POM（Height / Parallax）は不透明（Opaque / Masked）だけで使えます";
+            }
+            if (glassPin)
+            {
+                return "屈折 / 透過は Glass モードだけで使えます";
+            }
+            break;
+        case MaterialGraphMode::Glass:
+            if (pin == Pin::OpacityMask)
+            {
+                return "Glass では Opacity を使います";
+            }
+            if (pomPin)
+            {
+                return "POM（Height / Parallax）は不透明（Opaque / Masked）だけで使えます";
+            }
+            break;
+        default:
+            break;
+    }
+    return nullptr;
+}
+
+bool MaterialGraph::IsOutputPinActive(MaterialOutputPin pin, const MaterialGraphSettings& settings)
+{
+    return OutputPinInactiveReason(pin, settings) == nullptr;
+}
+
+bool MaterialGraph::IsOutputPinActive(size_t index) const
+{
+    return index >= static_cast<size_t>(MaterialOutputPin::Count) ||
+           IsOutputPinActive(static_cast<MaterialOutputPin>(index), Settings);
+}
+
+void MaterialGraph::SetMode(MaterialGraphMode mode)
+{
+    Settings.Mode = std::clamp(static_cast<int>(mode), 0, 3);
+    switch (mode)
+    {
+        case MaterialGraphMode::Opaque:
+            Settings.Surface = 0;
+            break;
+        case MaterialGraphMode::Masked:
+            Settings.Surface = 1;
+            break;
+        default:
+            Settings.Surface = 2;
+            break;
+    }
+    ++Revision;
+}
+
 bool MaterialGraph::RemoveNode(uint64_t id)
 {
     const auto* node = FindNode(id);
@@ -517,6 +903,7 @@ bool MaterialGraph::RemoveNode(uint64_t id)
     }
     std::unordered_set<uint64_t> pins(node->InputPins.begin(), node->InputPins.end());
     pins.insert(node->OutputPin);
+    pins.insert(node->SplitPins.begin(), node->SplitPins.end());
     std::erase_if(Links, [&](const auto& link) {
         return pins.contains(link.SourcePin) || pins.contains(link.TargetPin);
     });
@@ -562,7 +949,7 @@ bool MaterialGraph::Reaches(uint64_t start, uint64_t target) const
         }
         for (const auto& link : Links)
         {
-            if (link.SourcePin == node->OutputPin)
+            if (node->OwnsOutput(link.SourcePin))
             {
                 const auto* downstream = FindPinNode(link.TargetPin);
                 if (downstream)
@@ -590,8 +977,12 @@ MaterialGraphType MaterialGraph::OutputType(uint64_t id, std::vector<uint64_t>& 
     auto linkedType = [&](size_t input, Type fallback) {
         const auto* link = input < node->InputPins.size() ? InputLink(node->InputPins[input]) : nullptr;
         const auto* source = link ? FindPinNode(link->SourcePin) : nullptr;
-        return source ? OutputType(source->Id, visiting) : fallback;
+        return source ? SourcePinType(link->SourcePin, visiting) : fallback;
     };
+    if (node->Kind == Kind::ConvertToNormalHeight)
+    {
+        return node->Value[0] > 0.5f ? Type::Vector3 : Type::Scalar;
+    }
     if (node->Kind == Kind::StaticSwitch)
     {
         visiting.push_back(id);
@@ -625,7 +1016,7 @@ MaterialGraphType MaterialGraph::OutputType(uint64_t id, std::vector<uint64_t>& 
         if (source)
         {
             result = static_cast<Type>(
-                (std::max)(static_cast<int>(result), static_cast<int>(OutputType(source->Id, visiting))));
+                (std::max)(static_cast<int>(result), static_cast<int>(SourcePinType(link->SourcePin, visiting))));
         }
     }
     visiting.pop_back();
@@ -636,6 +1027,145 @@ MaterialGraphType MaterialGraph::ResolveOutputType(uint64_t node) const
 {
     std::vector<uint64_t> visiting;
     return OutputType(node, visiting);
+}
+
+MaterialGraphType MaterialGraph::SourcePinType(uint64_t pin, std::vector<uint64_t>& visiting) const
+{
+    size_t index = 0;
+    const auto* node = FindPinNode(pin, nullptr, &index);
+    if (!node)
+    {
+        return Type::Numeric;
+    }
+    if (index > 0)
+    {
+        return Type::Scalar; // 分割した成分
+    }
+    return OutputType(node->Id, visiting);
+}
+
+int MaterialGraph::OutputComponent(uint64_t pin) const
+{
+    bool input = false;
+    size_t index = 0;
+    const auto* node = FindPinNode(pin, &input, &index);
+    return node && !input && index > 0 ? static_cast<int>(index) - 1 : -1;
+}
+
+MaterialGraphType MaterialGraph::PinOutputType(uint64_t pin) const
+{
+    std::vector<uint64_t> visiting;
+    return SourcePinType(pin, visiting);
+}
+
+bool MaterialGraph::CanSplitOutput(uint64_t id) const
+{
+    const auto* node = FindNode(id);
+    if (!node || !node->SplitPins.empty() || node->OutputPin == 0 || node->Kind == Kind::Reroute ||
+        node->Kind == Kind::Output || node->Kind == Kind::Group)
+    {
+        return false;
+    }
+    const int count = static_cast<int>(ResolveOutputType(id));
+    return count >= 2 && count <= 4;
+}
+
+bool MaterialGraph::SplitOutput(uint64_t id, std::string& error, int forcedCount)
+{
+    const auto* target = FindNode(id);
+    const bool forced = forcedCount >= 2 && forcedCount <= 4 && target && target->SplitPins.empty() &&
+                        target->OutputPin != 0 && target->Kind != Kind::Reroute;
+    if (!forced && !CanSplitOutput(id))
+    {
+        error = "float2 以上の出力だけ分割できます。";
+        return false;
+    }
+    const int count = forced ? forcedCount : static_cast<int>(ResolveOutputType(id));
+    if (m_NextId + count >= MaxIdentity)
+    {
+        error = "ピンの上限に達しています。";
+        return false;
+    }
+    auto* node = FindNode(id);
+    const uint64_t output = node->OutputPin;
+    std::erase_if(Links, [&](const auto& link) {
+        return link.SourcePin == output;
+    });
+    for (int component = 0; component < count; ++component)
+    {
+        node->SplitPins.push_back(m_NextId++);
+    }
+    ++Revision;
+    return true;
+}
+
+bool MaterialGraph::RecombineOutput(uint64_t id)
+{
+    auto* node = FindNode(id);
+    if (!node || node->SplitPins.empty() || node->Kind == Kind::BreakVector)
+    {
+        return false;
+    }
+    const std::unordered_set<uint64_t> pins(node->SplitPins.begin(), node->SplitPins.end());
+    std::erase_if(Links, [&](const auto& link) {
+        return pins.contains(link.SourcePin);
+    });
+    node->SplitPins.clear();
+    ++Revision;
+    return true;
+}
+
+bool MaterialGraph::IsPinValueEditable(MaterialNodeKind kind, size_t input)
+{
+    if (kind == Kind::Output || kind == Kind::Reroute || kind == Kind::Group || kind == Kind::NoiseLayers ||
+        kind == Kind::BreakVector)
+    {
+        return false;
+    }
+    const auto& definition = Definition(kind);
+    if (input >= definition.Inputs.size())
+    {
+        return false;
+    }
+    const auto type = definition.Inputs[input].Type;
+    if (type != Type::Scalar && type != Type::Numeric)
+    {
+        return false;
+    }
+    // UV / Time / World Position を既定で使うピンには出さない（UE と同じ）
+    switch (kind)
+    {
+        case Kind::Panner:
+        case Kind::Rotator:
+            return input >= 2;
+        case Kind::TextureSample:
+            return input != 0;
+        case Kind::BumpOffset:
+        case Kind::RotateAboutAxis:
+            return input != 3;
+        default:
+            return true;
+    }
+}
+
+bool MaterialGraph::HasPinValue(const MaterialGraphNode& node, size_t input)
+{
+    return input < node.PinValues.size() && std::isfinite(node.PinValues[input]);
+}
+
+std::array<float, 4> MaterialGraph::UnconnectedInputValue(const MaterialGraphNode& node, size_t input)
+{
+    const auto& definition = Definition(node.Kind);
+    std::array<float, 4> value{};
+    if (input < definition.Inputs.size())
+    {
+        value = definition.Inputs[input].Default;
+    }
+    if (HasPinValue(node, input) && IsPinValueEditable(node.Kind, input))
+    {
+        value.fill(node.PinValues[input]); // Numeric の入力はスカラーとしてブロードキャストされる
+    }
+    return value;
 }
 
 bool MaterialGraph::CanConnect(uint64_t source, uint64_t target, std::string& error) const
@@ -656,11 +1186,36 @@ bool MaterialGraph::CanConnect(uint64_t source, uint64_t target, std::string& er
         error = "This connection would create a cycle.";
         return false;
     }
+    // 分割中のノードは成分ピンからだけ繋げる（まとめた出力は隠れている。Break Vector は常に分割）
+    if (!sourceNode->SplitPins.empty() && source == sourceNode->OutputPin)
+    {
+        error = "This output is split. Connect from the X / Y / Z / W pins.";
+        return false;
+    }
     std::vector<uint64_t> visiting;
-    if (!Compatible(OutputType(sourceNode->Id, visiting), Definition(targetNode->Kind).Inputs[inputIndex].Type))
+    if (!Compatible(SourcePinType(source, visiting), Definition(targetNode->Kind).Inputs[inputIndex].Type))
     {
         error = "Pin types are incompatible. Scalars may broadcast; vectors must have matching dimensions.";
         return false;
+    }
+    return true;
+}
+
+bool MaterialGraph::CanConnectActive(uint64_t source, uint64_t target, std::string& error) const
+{
+    if (!CanConnect(source, target, error))
+    {
+        return false;
+    }
+    size_t index = 0;
+    const auto* node = FindPinNode(target, nullptr, &index);
+    if (node && node->Kind == Kind::Output)
+    {
+        if (const char* reason = OutputPinInactiveReason(static_cast<MaterialOutputPin>(index), Settings))
+        {
+            error = reason;
+            return false;
+        }
     }
     return true;
 }
@@ -723,6 +1278,20 @@ bool MaterialGraph::Validate(std::string& error) const
             error = "Invalid output pin identity.";
             return false;
         }
+        if (node.SplitPins.size() > 4 || ((node.Kind == Kind::Output || node.Kind == Kind::Group ||
+                                           node.Kind == Kind::Reroute) && !node.SplitPins.empty()))
+        {
+            error = "Invalid split output pins.";
+            return false;
+        }
+        for (const auto pin : node.SplitPins)
+        {
+            if (!unique(pin))
+            {
+                error = "Duplicate split pin identity.";
+                return false;
+            }
+        }
         for (const float value : node.Value)
         {
             if (!std::isfinite(value))
@@ -764,7 +1333,7 @@ bool MaterialGraph::Validate(std::string& error) const
             {
                 const auto* link = InputLink(pin);
                 const auto* source = link ? FindPinNode(link->SourcePin) : nullptr;
-                count += source ? Dimensions(OutputType(source->Id, visiting)) : 1;
+                count += source ? Dimensions(SourcePinType(link->SourcePin, visiting)) : 1;
             }
             if (count > 4)
             {
@@ -788,7 +1357,8 @@ bool MaterialGraph::Validate(std::string& error) const
     for (const auto& node : Nodes)
     {
         if (Definition(node.Kind).OutputType != Type::Numeric || node.Kind == Kind::Output ||
-            node.Kind == Kind::AppendVector || node.Kind == Kind::ComponentMask)
+            node.Kind == Kind::AppendVector || node.Kind == Kind::ComponentMask ||
+            IsConvertTextureNode(node.Kind))
         {
             continue;
         }
@@ -802,7 +1372,7 @@ bool MaterialGraph::Validate(std::string& error) const
                 continue;
             }
             std::vector<uint64_t> visiting;
-            const auto type = OutputType(source->Id, visiting);
+            const auto type = SourcePinType(link->SourcePin, visiting);
             if (type != Type::Scalar)
             {
                 if (vectorType != Type::Scalar && vectorType != type)
@@ -821,6 +1391,7 @@ std::string MaterialGraph::Serialize() const
 {
     Json::Value document(Json::objectValue);
     document["version"] = 1;
+    document["nodeNames"] = 2; // 2：Object Position = オブジェクト原点（旧 Object Position は Local Position）
     document["nodes"] = Json::Value(Json::arrayValue);
     document["links"] = Json::Value(Json::arrayValue);
     for (const auto& node : Nodes)
@@ -860,6 +1431,30 @@ std::string MaterialGraph::Serialize() const
         {
             value["comment"] = node.Comment;
         }
+        if (!node.SplitPins.empty())
+        {
+            value["split"] = Json::Value(Json::arrayValue);
+            for (const auto pin : node.SplitPins)
+            {
+                value["split"].append(Json::UInt64(pin));
+            }
+        }
+        {
+            Json::Value pins(Json::objectValue);
+            bool any = false;
+            for (size_t i = 0; i < node.PinValues.size(); ++i)
+            {
+                if (std::isfinite(node.PinValues[i]))
+                {
+                    pins[std::to_string(i)] = node.PinValues[i];
+                    any = true;
+                }
+            }
+            if (any)
+            {
+                value["pinValues"] = pins;
+            }
+        }
         document["nodes"].append(std::move(value));
     }
     for (const auto& link : Links)
@@ -874,6 +1469,7 @@ std::string MaterialGraph::Serialize() const
     if (!(Settings == MaterialGraphSettings{}))
     {
         Json::Value settings(Json::objectValue);
+        settings["materialMode"] = Settings.Mode;
         settings["surface"] = Settings.Surface;
         settings["cull"] = Settings.Cull;
         settings["shadingModel"] = Settings.ShadingModel;
@@ -882,6 +1478,11 @@ std::string MaterialGraph::Serialize() const
         settings["bakeResolution"] = Settings.BakeResolution;
         settings["bakeTime"] = Settings.BakeTime;
         settings["autoBake"] = Settings.AutoBake;
+        settings["liveUpdate"] = Settings.LiveUpdate;
+        settings["runtimeEvaluation"] = Settings.RuntimeEvaluation;
+        settings["solidSpace"] = Settings.SolidSpace;
+        settings["liveResolution"] = Settings.LiveResolution;
+        settings["liveRate"] = Settings.LiveRate;
         document["settings"] = std::move(settings);
     }
     Json::StreamWriterBuilder writer;
@@ -918,6 +1519,7 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         }
         return true;
     };
+    const int nodeNames = document.isMember("nodeNames") && document["nodeNames"].isInt() ? document["nodeNames"].asInt() : 1;
     for (const auto& value : document["nodes"])
     {
         if (!value.isObject() || !value["id"].isUInt64() || !value["kind"].isString() || !value["name"].isString() ||
@@ -926,8 +1528,14 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
             error = "Malformed material graph node.";
             return false;
         }
+        // 旧ファイル（nodeNames < 2）の Object Position は、今の Local Position
+        std::string kindName = value["kind"].asString();
+        if (nodeNames < 2 && kindName == "Object Position")
+        {
+            kindName = "Local Position";
+        }
         const auto definition = std::find_if(NodeDefinitions.begin(), NodeDefinitions.end(), [&](const auto& item) {
-            return value["kind"].asString() == item.Name;
+            return kindName == item.Name;
         });
         if (definition == NodeDefinitions.end())
         {
@@ -938,6 +1546,10 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         node.Id = value["id"].asUInt64();
         node.Kind = definition->Kind;
         node.Name = value["name"].asString();
+        if (nodeNames < 2 && node.Kind == Kind::LocalPosition && node.Name == "Object Position")
+        {
+            node.Name = "Local Position";
+        }
         node.Texture = ParseAssetHandle(value["texture"].asString());
         node.OutputPin = value["output"].asUInt64();
         if (!readArray(value["value"], node.Value) || !readArray(value["position"], node.Position) ||
@@ -960,6 +1572,41 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         if (value.isMember("comment") && value["comment"].isString())
         {
             node.Comment = value["comment"].asString();
+        }
+        if (value.isMember("split") && value["split"].isArray())
+        {
+            for (const auto& pin : value["split"])
+            {
+                if (!pin.isUInt64())
+                {
+                    error = "Malformed split pin identity.";
+                    return false;
+                }
+                node.SplitPins.push_back(pin.asUInt64());
+            }
+        }
+        if (value.isMember("pinValues") && value["pinValues"].isObject())
+        {
+            const Json::Value& pins = value["pinValues"];
+            for (const auto& key : pins.getMemberNames())
+            {
+                char* end = nullptr;
+                const unsigned long index = std::strtoul(key.c_str(), &end, 10);
+                if (!end || *end != '\0' || index >= definition->Inputs.size() || !pins[key].isNumeric())
+                {
+                    continue;
+                }
+                const float pinValue = pins[key].asFloat();
+                if (!std::isfinite(pinValue))
+                {
+                    continue;
+                }
+                if (node.PinValues.size() <= index)
+                {
+                    node.PinValues.resize(index + 1, std::numeric_limits<float>::quiet_NaN());
+                }
+                node.PinValues[index] = pinValue;
+            }
         }
         for (const auto& pin : value["inputs"])
         {
@@ -997,6 +1644,7 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
                 target = std::isfinite(value) ? std::clamp(value, minimum, maximum) : target;
             }
         };
+        readInt("materialMode", loaded.Settings.Mode, -1, 3);
         readInt("surface", loaded.Settings.Surface, -1, 2);
         readInt("cull", loaded.Settings.Cull, -1, 2);
         readInt("shadingModel", loaded.Settings.ShadingModel, -1, 5);
@@ -1004,6 +1652,17 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         readFloat("alphaCutoff", loaded.Settings.AlphaCutoff, -1.0f, 1.0f);
         readInt("bakeResolution", loaded.Settings.BakeResolution, 64, 2048);
         readFloat("bakeTime", loaded.Settings.BakeTime, 0.0f, 3600.0f);
+        if (settings["runtimeEvaluation"].isBool())
+        {
+            loaded.Settings.RuntimeEvaluation = settings["runtimeEvaluation"].asBool();
+        }
+        readInt("solidSpace", loaded.Settings.SolidSpace, 0, 1);
+        if (settings["liveUpdate"].isBool())
+        {
+            loaded.Settings.LiveUpdate = settings["liveUpdate"].asBool();
+        }
+        readInt("liveResolution", loaded.Settings.LiveResolution, 32, 1024);
+        readFloat("liveRate", loaded.Settings.LiveRate, 1.0f, 120.0f);
         if (settings["autoBake"].isBool())
         {
             loaded.Settings.AutoBake = settings["autoBake"].asBool();
@@ -1014,6 +1673,10 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
     {
         highest = (std::max)({highest, node.Id, node.OutputPin});
         for (const auto pin : node.InputPins)
+        {
+            highest = (std::max)(highest, pin);
+        }
+        for (const auto pin : node.SplitPins)
         {
             highest = (std::max)(highest, pin);
         }
@@ -1029,6 +1692,10 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         while (node.InputPins.size() < definition.Inputs.size() && highest + 1 < MaxIdentity)
         {
             node.InputPins.push_back(++highest);
+        }
+        while (node.Kind == Kind::BreakVector && node.SplitPins.size() < 4 && highest + 1 < MaxIdentity)
+        {
+            node.SplitPins.push_back(++highest); // Break Vector は常に 4 成分
         }
     }
     if (!loaded.Validate(error))
@@ -1064,4 +1731,7 @@ bool MaterialGraph::Load(const std::filesystem::path& path, MaterialGraph& graph
     }
     return Deserialize(contents.str(), graph, error);
 }
+
+
+
 

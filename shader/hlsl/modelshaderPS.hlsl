@@ -113,10 +113,9 @@ float3 SampleGlassBackground(float2 uv, float roughness)
 // シーンに描画済みの可視の空や背景は、IBL の照明項ではない。
 // このレイが背景深度へ投影される場合だけ再利用する。
 // 画面外でヒットしなかった場合は黒を保ち、環境マップで代用しない。
-float3 SampleGlassVisibleBackground(float3 origin, float3 direction, float roughness)
+float3 SampleGlassVisibleBackgroundAt(float2 uv)
 {
-    float2 uv;
-    if (!ProjectWorldToScreenCommon(origin + direction * 2000.0f, uv) || any(uv <= 0) || any(uv >= 1))
+    if (any(uv <= 0) || any(uv >= 1))
     {
         return 0.0f;
     }
@@ -147,6 +146,28 @@ float3 SampleGlassVisibleBackground(float3 origin, float3 direction, float rough
         }
     }
     return weightSum > 1e-5f ? sum / weightSum : 0.0f;
+}
+
+// 透過ラフネスで背景（空）もぼかす。半径は SampleGlassBackground と同じ（roughness² × 24 px）。
+float3 SampleGlassVisibleBackground(float3 origin, float3 direction, float roughness)
+{
+    float2 uv;
+    if (!ProjectWorldToScreenCommon(origin + direction * 2000.0f, uv) || any(uv <= 0) || any(uv >= 1))
+    {
+        return 0.0f;
+    }
+    float3 c = SampleGlassVisibleBackgroundAt(uv);
+    [branch] if (roughness > 0.01f)
+    {
+        uint width, height;
+        SceneColorTexture.GetDimensions(width, height);
+        float2 radius = saturate(roughness) * saturate(roughness) * 24.0f / float2(max(width, 1u), max(height, 1u));
+        c = c * 0.5f + (SampleGlassVisibleBackgroundAt(uv + float2(radius.x, 0)) +
+                        SampleGlassVisibleBackgroundAt(uv - float2(radius.x, 0)) +
+                        SampleGlassVisibleBackgroundAt(uv + float2(0, radius.y)) +
+                        SampleGlassVisibleBackgroundAt(uv - float2(0, radius.y))) * 0.125f;
+    }
+    return c;
 }
 
 float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, float3 viewDir, float2 screenUv,
@@ -307,6 +328,27 @@ float4 ShadeForward(in PSInput3D In)
     float4 assetEmissionAO;
     ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
+    // マテリアルグラフの描画時評価（3D 位置で評価するので、ソリッドテクスチャに継ぎ目が出ない）
+    float3 graphGeometryNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
+    MaterialGraphVmOutput materialGraph = (MaterialGraphVmOutput)0;
+#ifndef IMPOSTOR_FORWARD
+    [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
+    {
+        MaterialGraphVmInput graphInput;
+        graphInput.WorldPos = In.WorldPos;
+        graphInput.PixelPos = In.Position.xy;
+        MaterialGraphSetObject(graphInput, World, ObjectBoundsCenter.xyz,
+                               ObjectBoundsExtents.w > 0.5f ? ObjectBoundsExtents.xyz : float3(0, 0, 0),
+                               (uint)ObjectBoundsCenter.w, ObjectBoundsExtents.w > 0.5f || ObjectBoundsCenter.w > 0.5f);
+        graphInput.Normal = graphGeometryNormal;
+        graphInput.CameraPos = In.CameraPos;
+        graphInput.UV = materialUv;
+        graphInput.VertexColor = In.Diffuse;
+        materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, g_SamplerState);
+        ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
+                                  assetEmissionAO);
+    }
+#endif
 #ifdef IMPOSTOR_FORWARD
     baseColor = float4(g_ImpostorAlbedo, 1.0f); // インポスター：被覆率は呼び出し側で切り抜き済み
 #endif
@@ -327,6 +369,8 @@ float4 ShadeForward(in PSInput3D In)
                                                g_SamplerState);
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
+    surfaceNormal = ApplyMaterialGraphNormal(materialGraph, assetMaterial, surfaceNormal, graphGeometryNormal, In.WorldPos,
+                                             In.TexCoord);
 #ifdef IMPOSTOR_FORWARD
     surfaceNormal = g_ImpostorNormal;
 #endif
@@ -629,4 +673,6 @@ ForwardOutput main(in PSInput3D In)
     return output;
 }
 #endif
+
+
 

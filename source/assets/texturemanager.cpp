@@ -24,6 +24,21 @@ static uint64_t g_IesProfileRevision = 1;
 ComPtr<ID3D12Resource> TextureManager::m_DefaultTexture;
 ComPtr<ID3D12Resource> TextureManager::m_ErrorTexture;
 
+namespace
+{
+    struct DataTexture
+    {
+        ComPtr<ID3D12Resource> Resource;
+        int Width = 0;
+        bool Ready = false; // コピーを 1 回以上記録した（以後はシェーダー読み取り状態）
+        vector<pair<uint32_t, vector<array<float, 4>>>> Pending;
+    };
+
+    mutex g_DataTextureMutex;
+    unordered_map<int, DataTexture> g_DataTextures; // SRV → データテクスチャ
+}
+
+
 struct TextureMipUploadData
 {
     vector<uint8_t> Pixels{};
@@ -1037,6 +1052,10 @@ void TextureManager::Uninit()
 {
     ++g_IesProfileRevision;
     m_Textures.clear();
+    {
+        lock_guard<mutex> dataLock(g_DataTextureMutex);
+        g_DataTextures.clear();
+    }
     m_DefaultTexture.Reset();
     m_ErrorTexture.Reset();
     g_StreamingUploads.clear();
@@ -1601,6 +1620,128 @@ void TextureManager::RequestReload(const filesystem::path& path)
     }
 }
 
+namespace
+{
+    struct PendingDynamicPixels
+    {
+        filesystem::path Path;
+        int Width = 0;
+        int Height = 0;
+        int BytesPerChannel = 1;
+        bool Srgb = false;
+        vector<uint8_t> Pixels;
+    };
+    mutex g_DynamicMutex;
+    unordered_map<string, PendingDynamicPixels> g_PendingDynamic; // パス → 最新のピクセル（古いものは捨てる）
+
+    struct DynamicTextureState
+    {
+        ID3D12Resource* Resource = nullptr; // 差し替えたリソース（別の経路で置き換わったら作り直す）
+        DXGI_FORMAT Format = DXGI_FORMAT_UNKNOWN;
+        int Width = 0;
+        int Height = 0;
+    };
+    unordered_map<string, DynamicTextureState> g_DynamicTextures; // m_Textures のキー → 状態
+
+    bool IsSrgbFormat(DXGI_FORMAT format)
+    {
+        switch (format)
+        {
+            case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+            case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+            case DXGI_FORMAT_BC1_UNORM_SRGB:
+            case DXGI_FORMAT_BC2_UNORM_SRGB:
+            case DXGI_FORMAT_BC3_UNORM_SRGB:
+            case DXGI_FORMAT_BC7_UNORM_SRGB:
+                return true;
+            default:
+                return false;
+        }
+    }
+}
+
+
+
+int TextureManager::CreateDataTexture(const string& name, int width)
+{
+    width = std::clamp(width, 1, 16384);
+    const int maxSrvIndex = FrameConstants::g_kTEXTURE_SRV_START_INDEX + FrameConstants::g_kMAX_SRVS;
+    int srvIndex = -1;
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        if (m_NextSrvIndex >= maxSrvIndex)
+        {
+            Debug::Log("ERROR: SRV heap is full. Cannot create data texture %s.\n", name.c_str());
+            return -1;
+        }
+        srvIndex = m_NextSrvIndex++;
+    }
+    ID3D12Device* device = GraphicsDevice::GetDevice();
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, static_cast<UINT64>(width), 1, 1, 1);
+    ComPtr<ID3D12Resource> resource;
+    if (!device || FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                          D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                          IID_PPV_ARGS(&resource))))
+    {
+        Debug::Log("ERROR: Failed to create data texture %s.\n", name.c_str());
+        return -1;
+    }
+    wstring wide(name.begin(), name.end());
+    resource->SetName(wide.c_str());
+    CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex, 0);
+    lock_guard<mutex> lock(g_DataTextureMutex);
+    auto& texture = g_DataTextures[srvIndex];
+    texture.Resource = move(resource);
+    texture.Width = width;
+    return srvIndex;
+}
+
+void TextureManager::UpdateDataTexture(int srvIndex, uint32_t firstTexel, vector<array<float, 4>> texels)
+{
+    lock_guard<mutex> lock(g_DataTextureMutex);
+    const auto found = g_DataTextures.find(srvIndex);
+    if (found == g_DataTextures.end() || texels.empty() || firstTexel >= static_cast<uint32_t>(found->second.Width))
+    {
+        return;
+    }
+    texels.resize(min(texels.size(), static_cast<size_t>(found->second.Width - firstTexel)));
+    auto& pending = found->second.Pending;
+    // 同じ範囲（例：毎フレームの時刻）の古い要求は捨てる
+    pending.erase(remove_if(pending.begin(), pending.end(),
+                            [&](const auto& item) {
+                                return item.first == firstTexel && item.second.size() <= texels.size();
+                            }),
+                  pending.end());
+    pending.emplace_back(firstTexel, move(texels));
+}
+
+bool TextureManager::IsDataTextureReady(int srvIndex)
+{
+    lock_guard<mutex> lock(g_DataTextureMutex);
+    const auto found = g_DataTextures.find(srvIndex);
+    return found != g_DataTextures.end() && found->second.Ready;
+}
+
+void TextureManager::UpdateDynamicPixels(const filesystem::path& path, int width, int height, int bytesPerChannel,
+                                         bool srgbEncoded, vector<uint8_t> pixels)
+{
+    if (path.empty() || width <= 0 || height <= 0 || (bytesPerChannel != 1 && bytesPerChannel != 2) ||
+        pixels.size() != static_cast<size_t>(width) * height * 4 * bytesPerChannel)
+    {
+        return;
+    }
+    lock_guard<mutex> lock(g_DynamicMutex);
+    auto& pending = g_PendingDynamic[MakeTextureCacheKey(path)];
+    pending.Path = path;
+    pending.Width = width;
+    pending.Height = height;
+    pending.BytesPerChannel = bytesPerChannel;
+    pending.Srgb = srgbEncoded;
+    pending.Pixels = move(pixels);
+}
+
 void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
 {
     ++g_StreamingFrame;
@@ -1736,6 +1877,160 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
                 {
                     texture.SourceTime = timestamp.time_since_epoch().count();
                 }
+            }
+        }
+    }
+    // データテクスチャ（マテリアルグラフの描画時評価プログラム / 時刻）
+    {
+        lock_guard<mutex> dataLock(g_DataTextureMutex);
+        for (auto& [srvIndex, texture] : g_DataTextures)
+        {
+            if (texture.Pending.empty() || !texture.Resource)
+            {
+                continue;
+            }
+            if (texture.Ready)
+            {
+                const auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+                    texture.Resource.Get(),
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_COPY_DEST);
+                commandList->ResourceBarrier(1, &toCopy);
+            }
+            for (auto& [first, texels] : texture.Pending)
+            {
+                const UINT count = static_cast<UINT>(texels.size());
+                const UINT rowPitch = (count * 16u + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) &
+                                      ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);
+                auto upload = AcquireUploadBuffer(device, rowPitch);
+                uint8_t* mapped = nullptr;
+                const CD3DX12_RANGE noRead(0, 0);
+                if (!upload || FAILED(upload->Map(0, &noRead, reinterpret_cast<void**>(&mapped))) || !mapped)
+                {
+                    if (upload)
+                    {
+                        ReleaseUploadBuffer(upload, rowPitch, false);
+                    }
+                    continue;
+                }
+                memcpy(mapped, texels.data(), static_cast<size_t>(count) * 16u);
+                upload->Unmap(0, nullptr);
+                D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+                footprint.Offset = 0;
+                footprint.Footprint = {DXGI_FORMAT_R32G32B32A32_FLOAT, count, 1, 1, rowPitch};
+                const CD3DX12_TEXTURE_COPY_LOCATION destination(texture.Resource.Get(), 0);
+                const CD3DX12_TEXTURE_COPY_LOCATION source(upload.Get(), footprint);
+                commandList->CopyTextureRegion(&destination, first, 0, 0, &source, nullptr);
+                g_StreamingUploads.push_back({upload, rowPitch, 0}); // フレーム完了後にプールへ戻す
+            }
+            texture.Pending.clear();
+            const auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
+                texture.Resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            commandList->ResourceBarrier(1, &toRead);
+            texture.Ready = true;
+        }
+    }
+    // マテリアルグラフのライブ更新：動的テクスチャへ最新のピクセルをコピーする（同じ SRV 番号のまま）
+    {
+        unordered_map<string, PendingDynamicPixels> updates;
+        {
+            lock_guard<mutex> dynamicLock(g_DynamicMutex);
+            updates.swap(g_PendingDynamic);
+        }
+        for (auto& [baseKey, update] : updates)
+        {
+            for (const TextureUsage usage :
+                 {TextureUsage::Color, TextureUsage::Normal, TextureUsage::TwoChannel, TextureUsage::SingleChannel})
+            {
+                const string key = baseKey + TextureCompression::KeySuffix(usage);
+                const auto found = m_Textures.find(key);
+                if (found == m_Textures.end() || found->second.SrvIndex < 0 || !found->second.Resource)
+                {
+                    continue;
+                }
+                auto& texture = found->second;
+                DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                if (update.BytesPerChannel == 2)
+                {
+                    format = DXGI_FORMAT_R16G16B16A16_UNORM;
+                }
+                auto& state = g_DynamicTextures[key];
+                const bool current = state.Resource == texture.Resource.Get();
+                if (update.BytesPerChannel == 1 && update.Srgb)
+                {
+                    // 元のテクスチャと同じ色空間の扱いにする（_SRGB ならハードウェアで線形化）
+                    const DXGI_FORMAT original = current ? state.Format : texture.Resource->GetDesc().Format;
+                    format = IsSrgbFormat(original) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+                }
+                const bool recreate =
+                    !current || state.Format != format || state.Width != update.Width || state.Height != update.Height;
+                if (recreate)
+                {
+                    // ディスクリプタの書き換えは描画中のフレームと競合しないよう GPU アイドル後に行う（初回 / サイズ変更時のみ）
+                    if (!ensureIdle())
+                    {
+                        lock_guard<mutex> dynamicLock(g_DynamicMutex);
+                        g_PendingDynamic.emplace(baseKey, move(update)); // 次のフレームでやり直す
+                        break;
+                    }
+                    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                    const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(format, static_cast<UINT64>(update.Width),
+                                                                   static_cast<UINT>(update.Height), 1, 1);
+                    ComPtr<ID3D12Resource> resource;
+                    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                               D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                               IID_PPV_ARGS(&resource))))
+                    {
+                        WriteGraphicsLog("Dynamic texture allocation failed: %s\n", PathToUtf8(update.Path).c_str());
+                        continue;
+                    }
+                    resource->SetName(L"MaterialGraphLive");
+                    texture.Resource = resource; // 古いリソースは GPU アイドル後なので即解放してよい
+                    texture.Streaming.reset();
+                    texture.CompressionCacheKey = 0; // BC 版での置き換えを止める
+                    CreateShaderResourceView(texture.Resource.Get(), texture.Resource->GetDesc(), texture.SrvIndex, 0);
+                    state = {texture.Resource.Get(), format, update.Width, update.Height};
+                }
+                else
+                {
+                    const auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+                        texture.Resource.Get(),
+                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                        D3D12_RESOURCE_STATE_COPY_DEST);
+                    commandList->ResourceBarrier(1, &toCopy);
+                }
+                const auto desc = texture.Resource->GetDesc();
+                D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+                UINT rows = 0;
+                UINT64 rowBytes = 0;
+                UINT64 uploadBytes = 0;
+                device->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rows, &rowBytes, &uploadBytes);
+                auto upload = AcquireUploadBuffer(device, uploadBytes);
+                uint8_t* mapped = nullptr;
+                const CD3DX12_RANGE noRead(0, 0);
+                if (upload && SUCCEEDED(upload->Map(0, &noRead, reinterpret_cast<void**>(&mapped))) && mapped)
+                {
+                    const size_t sourcePitch = static_cast<size_t>(update.Width) * 4 * update.BytesPerChannel;
+                    for (UINT row = 0; row < rows; ++row)
+                    {
+                        memcpy(mapped + footprint.Offset + static_cast<size_t>(row) * footprint.Footprint.RowPitch,
+                               update.Pixels.data() + row * sourcePitch, sourcePitch);
+                    }
+                    upload->Unmap(0, nullptr);
+                    const CD3DX12_TEXTURE_COPY_LOCATION destination(texture.Resource.Get(), 0);
+                    const CD3DX12_TEXTURE_COPY_LOCATION source(upload.Get(), footprint);
+                    commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+                    g_StreamingUploads.push_back({upload, uploadBytes, 0}); // フレーム完了後にプールへ戻す
+                }
+                else if (upload)
+                {
+                    ReleaseUploadBuffer(upload, uploadBytes, false);
+                }
+                const auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
+                    texture.Resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                commandList->ResourceBarrier(1, &toRead);
             }
         }
     }
@@ -1899,4 +2194,6 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
 }
 
 #include "texturecompression.inl"
+
+
 

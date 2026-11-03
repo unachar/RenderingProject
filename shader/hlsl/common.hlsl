@@ -100,6 +100,9 @@ cbuffer ConstantBuffer3D : register(b0)
     float ConstantPadding;
     float4x4 PreviousWorld;
     float4x4 PreviousViewProjection;
+    // マテリアルグラフのオブジェクト情報（rendertypes.h と同じ並び。MaterialBindings::FillObjectConstants）
+    float4 ObjectBoundsCenter;  // xyz = ローカルの範囲の中心, w = インスタンスの番号（乱数の種）
+    float4 ObjectBoundsExtents; // xyz = ローカルの範囲の半分の大きさ, w = 1（有効）
 };
 
 float3 SurfaceViewDirectionCommon(float3 worldPosition, float3 cameraPosition)
@@ -1405,5 +1408,6 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 }
 
 #endif
+
 
 

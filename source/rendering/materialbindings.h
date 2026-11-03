@@ -12,6 +12,8 @@ class MaterialBindings : protected RendererState
                                    UINT partIndex = 0, UINT partsPerFrame = 1);
     static void BindAssetSlot(EntityID entity, const MaterialComponent& material, int modelTexture = -1);
     static uint64_t GetMaterialBatchHash(const MaterialComponent& material);
+    // マテリアルグラフ用のオブジェクト情報（ローカルの範囲 / 乱数の種）を定数へ入れる
+    static void FillObjectConstants(ConstantBuffer3D& constants, EntityID entity);
 
     static ID3D12Resource* GetPBRCB()
     {
@@ -20,3 +22,4 @@ class MaterialBindings : protected RendererState
 
     static void UpdateDeferredLightingMaterial();
 };
+
