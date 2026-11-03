@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "materialgraphshader.h"
 #include "dxccompiler.h"
+#include "persistentpsocache.h"
 #include <mutex>
 
 namespace
@@ -178,7 +179,11 @@ namespace MaterialGraphGpu
         constexpr int kProgramWidth = MaterialGraphVm::kMaxTexels; // 1024
         constexpr int kPreviewSlots = 256;
         constexpr int kJobRows = 32;
-        constexpr int kProgramRows = kPreviewSlots + kJobRows;
+        constexpr int kDynamicRows = 32; // 発光の動的ベイク（同時に焼けるオブジェクト数）
+        constexpr int kDynamicRowStart = kPreviewSlots + kJobRows;
+        constexpr int kProgramRows = kPreviewSlots + kJobRows + kDynamicRows;
+        constexpr UINT kDynamicResolution = 128;      // 発光の動的ベイクの解像度（GI の光源なので低解像度で十分）
+        constexpr uint64_t kDynamicKeepFrames = 240;  // 要求されなくなってから解放するまでのフレーム数
         constexpr int kCell = 96;
         constexpr int kCellsPerRow = 16;
         constexpr int kAtlasSize = kCell * kCellsPerRow; // 1536
@@ -200,6 +205,36 @@ namespace MaterialGraphGpu
             uint32_t OutputPins = 0;
             float Yaw = 0.6f;
             float Pitch = 0.25f;
+            float ViewCamera[3] = {0.0f, 0.0f, 0.0f}; // 5：実カメラ
+            float ViewDistance = 0.0f;                // 5：カメラ → オブジェクトの距離
+            float ViewDepth = 0.0f;                   // 5：ビュー深度
+            float ViewPadding[3] = {0.0f, 0.0f, 0.0f};
+        };
+        static_assert(sizeof(GpuConstants) == 80, "MaterialGraphGpuCS.hlsl の GraphGpuConstants と揃える");
+
+        // 発光の動的ベイク（オブジェクトごと）
+        struct DynamicEntry
+        {
+            uint64_t Key = 0;
+            int Row = -1;
+            Texels Program;
+            uint64_t ProgramHash = 0;
+            uint64_t InputHash = 0;  // 焼いた時の入力（プログラム / カメラ / 距離 / 時刻）
+            uint64_t PendingHash = 0;
+            GpuConstants Constants;
+            ComPtr<ID3D12Resource> Texture; // RGBA16F、焼いていない間は PIXEL_SHADER_RESOURCE
+            std::shared_ptr<EditorDescriptorLease> Uav;
+            uint64_t Revision = 0;
+            uint64_t LastFrame = 0;
+            std::chrono::steady_clock::time_point LastBake{};
+            bool Upload = true;
+            bool Ready = false;
+        };
+        struct RetiredTexture
+        {
+            ComPtr<ID3D12Resource> Texture;
+            std::shared_ptr<EditorDescriptorLease> Uav;
+            uint64_t Fence = 0;
         };
 
         struct Preview
@@ -233,6 +268,9 @@ namespace MaterialGraphGpu
             std::array<Preview, kPreviewSlots> Previews;
             std::array<std::shared_ptr<Job>, kJobRows> JobRows; // 行を使っている（記録済み / 待ち）ジョブ
             std::vector<std::shared_ptr<Job>> Pending;
+            std::unordered_map<uint64_t, DynamicEntry> Dynamic;
+            std::array<bool, kDynamicRows> DynamicRowUsed{};
+            std::vector<RetiredTexture> Retired;
             uint64_t Frame = 1;
         };
 
@@ -304,7 +342,7 @@ namespace MaterialGraphGpu
             D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
             pipeline.pRootSignature = s.Root.Get();
             pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-            if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&s.Pipeline))))
+            if (FAILED(PersistentPsoCache::Compute(device, pipeline, s.Pipeline)))
             {
                 return fail("パイプラインを作れません");
             }
@@ -379,6 +417,12 @@ namespace MaterialGraphGpu
     {
         std::lock_guard lock(g_Mutex);
         return !g_State.Failed;
+    }
+
+    bool PrepareStartupAssets()
+    {
+        std::lock_guard lock(g_Mutex);
+        return Initialize();
     }
 
     const char* LastError()
@@ -474,6 +518,95 @@ namespace MaterialGraphGpu
         }
     }
 
+    bool RequestDynamicEmission(const DynamicEmissionRequest& request, DynamicEmissionTexture& result)
+    {
+        std::lock_guard lock(g_Mutex);
+        auto& s = g_State;
+        if (s.Failed || request.Key == 0 || !request.Program || request.Program->empty() ||
+            request.Program->size() > static_cast<size_t>(kProgramWidth))
+        {
+            return false;
+        }
+        auto found = s.Dynamic.find(request.Key);
+        if (found == s.Dynamic.end())
+        {
+            // 行が空いていなければ動的にしない（従来のベイク値のまま）
+            int row = -1;
+            for (int i = 0; i < kDynamicRows; ++i)
+            {
+                if (!s.DynamicRowUsed[i])
+                {
+                    row = i;
+                    break;
+                }
+            }
+            if (row < 0)
+            {
+                return false;
+            }
+            s.DynamicRowUsed[row] = true;
+            DynamicEntry entry;
+            entry.Key = request.Key;
+            entry.Row = kDynamicRowStart + row;
+            found = s.Dynamic.emplace(request.Key, std::move(entry)).first;
+        }
+        auto& entry = found->second;
+        if (entry.ProgramHash != request.ProgramHash || entry.Program.empty())
+        {
+            entry.Program = *request.Program;
+            entry.ProgramHash = request.ProgramHash;
+            entry.Upload = true;
+        }
+        // 入力のハッシュ：変わったときだけ焼き直す（静止したカメラ・Time 不使用なら GPU の仕事は無い）
+        uint64_t hash = request.ProgramHash ^ 0xC2B2AE3D27D4EB4Full;
+        const auto mix = [&hash](const void* data, size_t bytes) {
+            const auto* p = static_cast<const unsigned char*>(data);
+            for (size_t i = 0; i < bytes; ++i)
+            {
+                hash = (hash ^ p[i]) * 1099511628211ull;
+            }
+        };
+        if (request.UsesView)
+        {
+            mix(request.Camera.data(), sizeof(float) * 3);
+            mix(&request.Distance, sizeof(float));
+            mix(&request.Depth, sizeof(float));
+        }
+        if (request.UsesTime)
+        {
+            mix(&request.Time, sizeof(float));
+        }
+        auto& constants = entry.Constants;
+        constants = GpuConstants{};
+        constants.Mode = static_cast<uint32_t>(Mode::DynamicEmission);
+        constants.ProgramRow = static_cast<uint32_t>(entry.Row);
+        constants.Resolution = kDynamicResolution;
+        constants.Time = request.Time;
+        constants.ViewCamera[0] = request.Camera[0];
+        constants.ViewCamera[1] = request.Camera[1];
+        constants.ViewCamera[2] = request.Camera[2];
+        constants.ViewDistance = request.Distance;
+        constants.ViewDepth = request.Depth;
+        // 焼き直しは最大 30 回/秒：カメラを回し続けても GI / Lumen のキャッシュを毎フレーム作り直さない
+        const auto now = std::chrono::steady_clock::now();
+        if (!entry.Ready || entry.Upload || now - entry.LastBake >= std::chrono::milliseconds(33))
+        {
+            entry.PendingHash = hash;
+            if (hash != entry.InputHash)
+            {
+                entry.LastBake = now;
+            }
+        }
+        entry.LastFrame = s.Frame;
+        if (!entry.Ready || !entry.Texture)
+        {
+            return false;
+        }
+        result.Texture = entry.Texture;
+        result.Revision = entry.Revision;
+        return true;
+    }
+
     std::shared_ptr<Job> Submit(BakeDesc desc)
     {
         std::lock_guard lock(g_Mutex);
@@ -549,11 +682,32 @@ namespace MaterialGraphGpu
         std::lock_guard lock(g_Mutex);
         auto& s = g_State;
         const uint64_t frame = s.Frame++;
-        const bool hasWork = !s.Pending.empty() ||
+        const uint64_t completed = GraphicsDevice::GetCompletedFence();
+        // ---- 発光の動的ベイク：要求されなくなったものを片付ける（GPU の完了後に解放）
+        for (auto it = s.Dynamic.begin(); it != s.Dynamic.end();)
+        {
+            auto& entry = it->second;
+            if (entry.LastFrame + kDynamicKeepFrames < frame)
+            {
+                s.DynamicRowUsed[entry.Row - kDynamicRowStart] = false;
+                if (entry.Texture)
+                {
+                    s.Retired.push_back({entry.Texture, entry.Uav, GraphicsDevice::GetPendingSubmissionFence()});
+                }
+                it = s.Dynamic.erase(it);
+                continue;
+            }
+            ++it;
+        }
+        std::erase_if(s.Retired, [&](const RetiredTexture& retired) { return completed >= retired.Fence; });
+        const bool dynamicWork = std::any_of(s.Dynamic.begin(), s.Dynamic.end(), [&](const auto& item) {
+            const auto& entry = item.second;
+            return entry.LastFrame == frame && (!entry.Ready || entry.Upload || entry.PendingHash != entry.InputHash);
+        });
+        const bool hasWork = !s.Pending.empty() || dynamicWork ||
                              std::any_of(s.Previews.begin(), s.Previews.end(), [&](const Preview& preview) {
                                  return preview.Used && preview.LastFrame == frame;
                              });
-        const uint64_t completed = GraphicsDevice::GetCompletedFence();
         // ---- 完了したジョブの行を返す（出力テクスチャも解放。読み戻しバッファはワーカーが持つ）
         for (auto& row : s.JobRows)
         {
@@ -618,7 +772,15 @@ namespace MaterialGraphGpu
             jobs.push_back(job);
             it = s.Pending.erase(it);
         }
-        if (draws.empty() && jobs.empty())
+        std::vector<DynamicEntry*> dynamics;
+        for (auto& [key, entry] : s.Dynamic)
+        {
+            if (entry.LastFrame == frame && (!entry.Ready || entry.Upload || entry.PendingHash != entry.InputHash))
+            {
+                dynamics.push_back(&entry);
+            }
+        }
+        if (draws.empty() && jobs.empty() && dynamics.empty())
         {
             return;
         }
@@ -630,6 +792,10 @@ namespace MaterialGraphGpu
             uploads |= s.Previews[i].Upload;
         }
         uploads |= !jobs.empty();
+        for (const auto* entry : dynamics)
+        {
+            uploads |= entry->Upload;
+        }
         ID3D12DescriptorHeap* heaps[] = {FrameConstants::GetCbvHeap()};
         commands->SetDescriptorHeaps(1, heaps);
         if (uploads)
@@ -651,6 +817,13 @@ namespace MaterialGraphGpu
             {
                 WriteRow(mapped, job->Row, job->Desc.Program);
             }
+            for (const auto* entry : dynamics)
+            {
+                if (entry->Upload)
+                {
+                    WriteRow(mapped, entry->Row, entry->Program);
+                }
+            }
             s.Upload[ring]->Unmap(0, nullptr);
             auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
                 s.Programs.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -666,6 +839,14 @@ namespace MaterialGraphGpu
             for (const auto& job : jobs)
             {
                 CopyRow(commands, s.Upload[ring].Get(), job->Row, job->Desc.Program.size());
+            }
+            for (auto* entry : dynamics)
+            {
+                if (entry->Upload)
+                {
+                    CopyRow(commands, s.Upload[ring].Get(), entry->Row, entry->Program.size());
+                    entry->Upload = false;
+                }
             }
             barrier = CD3DX12_RESOURCE_BARRIER::Transition(s.Programs.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                                                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -702,6 +883,52 @@ namespace MaterialGraphGpu
             barrier = CD3DX12_RESOURCE_BARRIER::Transition(s.Atlas.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                                            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             commands->ResourceBarrier(1, &barrier);
+        }
+
+        // ---- 発光の動的ベイク（GI / 反射 / Lumen が読む発光テクスチャを焼き直す）
+        for (auto* entry : dynamics)
+        {
+            bool created = false;
+            if (!entry->Texture)
+            {
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, kDynamicResolution,
+                                                         kDynamicResolution, 1, 1);
+                desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+                entry->Uav = EditorDescriptors::Allocate();
+                if (!entry->Uav ||
+                    FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                           IID_PPV_ARGS(&entry->Texture))))
+                {
+                    entry->Texture.Reset();
+                    entry->Uav.reset();
+                    continue;
+                }
+                entry->Texture->SetName(L"MaterialGraphDynamicEmission");
+                D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+                uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+                uavDesc.Texture2DArray.ArraySize = 1;
+                device->CreateUnorderedAccessView(entry->Texture.Get(), nullptr, &uavDesc, entry->Uav->Cpu);
+                created = true;
+            }
+            if (!created)
+            {
+                auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+                    entry->Texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                commands->ResourceBarrier(1, &barrier);
+            }
+            commands->SetComputeRootDescriptorTable(3, entry->Uav->Gpu);
+            commands->SetComputeRoot32BitConstants(0, sizeof(GpuConstants) / 4, &entry->Constants, 0);
+            const UINT groups = (kDynamicResolution + 7u) / 8u;
+            commands->Dispatch(groups, groups, 1);
+            auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+                entry->Texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            commands->ResourceBarrier(1, &barrier);
+            entry->InputHash = entry->PendingHash;
+            entry->Ready = true;
+            ++entry->Revision;
         }
 
         // ---- ベイク / ノードを焼く
@@ -780,3 +1007,4 @@ namespace MaterialGraphGpu
         g_State = State{};
     }
 } // namespace MaterialGraphGpu
+

@@ -135,7 +135,7 @@ namespace
         D3D12_COMPUTE_PIPELINE_STATE_DESC description{};
         description.pRootSignature = root;
         description.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
-        Check(device->CreateComputePipelineState(&description, IID_PPV_ARGS(&output)));
+        Check(PersistentPsoCache::Compute(device, description, output));
     }
 
     void Initialize()
@@ -146,6 +146,7 @@ namespace
             return;
         }
         GPUDrivenValidation::Trace("indirect pipeline initialization begin");
+        WriteGraphicsLog("Step: GPU driven pipelines\n");
         auto* device = GraphicsDevice::GetDevice();
         CD3DX12_ROOT_PARAMETER reset;
         reset.InitAsUnorderedAccessView(0);
@@ -229,7 +230,8 @@ namespace
             pipeline.RTVFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
         }
         pipeline.DSVFormat = DXGI_FORMAT_D32_FLOAT;
-        Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state.OpaquePSO)));
+        WriteGraphicsLog("Step: GPU driven opaque pipeline\n");
+        Check(PersistentPsoCache::Graphics(device, pipeline, state.OpaquePSO));
         auto compile = [](const wchar_t* file, const char* target, ComPtr<ID3DBlob>& code) {
             ComPtr<ID3DBlob> errors;
             const HRESULT hr =
@@ -290,7 +292,8 @@ namespace
         {
             format = DXGI_FORMAT_UNKNOWN;
         }
-        Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state.OccluderPSO)));
+        WriteGraphicsLog("Step: GPU driven occluder pipeline\n");
+        Check(PersistentPsoCache::Graphics(device, pipeline, state.OccluderPSO));
         GPUDrivenValidation::Trace("indirect opaque pipeline ready");
 
         D3D12_INDIRECT_ARGUMENT_DESC arguments[2]{};

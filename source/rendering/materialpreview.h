@@ -12,6 +12,7 @@ class MaterialPreview
         Plane
     };
     static void SetVisible(bool visible);
+    static bool PrepareStartupAssets();
     static void DrawControls();
     static void DrawImage(AssetHandle material);
     static void Render();

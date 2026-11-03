@@ -36,9 +36,19 @@ namespace MaterialGraphEval
     // raw = true なら格納値（8 ビット画像の sRGB 線形化をしない値）を返す。未読み込みなら false
     using TextureSampler = std::function<bool(AssetHandle texture, float u, float v, bool raw, float out[4])>;
 
+    // 入力ピンの接続先（BuildTopology で 1 回だけ解決する。評価中は線形探索をしない）
+    struct InputSource
+    {
+        int32_t Node = -1;   // 接続元ノードの添字（-1 = 未接続 / 見つからない）
+        int32_t Output = 0;  // 接続元の出力（0 = 通常の出力、1〜4 = 分割した X / Y / Z / W）
+        bool Linked = false; // リンクがある（MaterialGraph::InputLink と同じ判定。モードで無効なピンは false）
+    };
+
     struct Topology
     {
         std::unordered_map<uint64_t, size_t> Index; // ノード ID → Nodes の添字
+        std::vector<uint32_t> InputOffset;          // ノード i の入力は Inputs[InputOffset[i] + ピン]
+        std::vector<InputSource> Inputs;
         std::vector<uint8_t> Spatial;               // 法線・位置・カメラに依存する
         std::vector<uint8_t> TimeDependent;         // Time に依存する
         std::vector<uint8_t> ViewDependent;         // カメラ方向に依存する（ベイクでは正面から見た値になる）
@@ -64,6 +74,8 @@ namespace MaterialGraphEval
         void Reset(const Context& context);
         Value Node(size_t index, int depth = 0);
         Value Input(const MaterialGraphNode& node, size_t input, int depth = 0);
+        // 入力ピンにリンクがあるか（Topology の表を使う。InputLink の線形探索より速い）
+        bool Linked(const MaterialGraphNode& node, size_t input) const;
         const Context& Ctx() const
         {
             return m_Context;
@@ -73,6 +85,7 @@ namespace MaterialGraphEval
         Value InputAt(const MaterialGraphNode& node, size_t input, float u, float v);
 
       private:
+        const InputSource* Source(const MaterialGraphNode& node, size_t input) const;
         Value Compute(const MaterialGraphNode& node, int depth);
         Value Shifted(const MaterialGraphNode& node, size_t input, int axis, int depth);
         int Gather(const MaterialGraphNode& node, int depth, Value* inputs, size_t count, size_t promoteCount);
@@ -90,3 +103,4 @@ namespace MaterialGraphEval
     // 値ユーティリティ
     Value Promote(Value value, int count);
 } // namespace MaterialGraphEval
+

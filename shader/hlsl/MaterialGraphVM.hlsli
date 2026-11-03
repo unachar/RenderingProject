@@ -19,6 +19,9 @@
 //  MG_VM_PROGRAM_TEXTURE … プログラムを読むテクスチャ（既定はマテリアルのテクスチャ表）
 //  MG_VM_ROW             … プログラムの行（既定 0）
 //  MG_VM_TIME_OVERRIDE   … 時刻（既定はプログラムの [0].x）
+//  MG_VM_CAMERA_DISTANCE(input) … Camera Distance / Distance Fade の距離（既定は |WorldPos - CameraPos|）
+//  MG_VM_PIXEL_DEPTH(input)     … Pixel Depth（既定は View 行列での z）
+//  ※ 発光の動的ベイク（MaterialGraphGpuCS のモード 5）が、オブジェクトと実カメラの関係を渡すのに使う
 #ifndef MG_VM_ROW
 #define MG_VM_ROW 0
 #endif
@@ -449,7 +452,11 @@ MaterialGraphVmOutput EvaluateMaterialGraphVm(uint programSlot, MaterialGraphVmI
                 else if (which == 6u) result = time.xxxx;
                 else if (which == 7u) result = float4(reflect(-viewDirection, normal), 0);
                 else if (which == 8u) result = input.VertexColor;
+#ifdef MG_VM_CAMERA_DISTANCE
+                else if (which == 9u) result = MG_VM_CAMERA_DISTANCE(input).xxxx;
+#else
                 else if (which == 9u) result = length(input.WorldPos - input.CameraPos).xxxx;
+#endif
                 else if (which == 10u) result = float4(input.ObjectToWorld[3].xyz, 0);
                 else if (which == 11u) result = float4(objectScale, 0);
                 else if (which == 12u) result = float4(SafeNormalizeCommon(input.ObjectToWorld[1].xyz, float3(0, 1, 0)), 0);
@@ -462,7 +469,11 @@ MaterialGraphVmOutput EvaluateMaterialGraphVm(uint programSlot, MaterialGraphVmI
                     result = float4((localPos - (input.BoundsCenter - input.BoundsExtents)) / (input.BoundsExtents * 2), 0);
                 else if (which == 19u) result = input.InstanceRandom.xxxx;
                 else if (which == 20u) result = float4(input.CameraPos, 0);
+#ifdef MG_VM_PIXEL_DEPTH
+                else if (which == 21u) result = MG_VM_PIXEL_DEPTH(input).xxxx;
+#else
                 else if (which == 21u) result = mul(float4(input.WorldPos, 1), View).z.xxxx;
+#endif
                 else
                 {
                     float4 clip = mul(mul(float4(input.WorldPos, 1), View), Projection);
@@ -938,3 +949,4 @@ float3 ApplyMaterialGraphNormal(MaterialGraphVmOutput graph, AssetMaterialParame
 #endif // MG_VM_STANDALONE
 
 #endif
+

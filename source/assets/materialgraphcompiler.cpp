@@ -580,15 +580,43 @@ namespace
                     expression.Code = "GraphParameters[" + std::to_string(index) + "]";
                 }
                 expression.ValueType = MaterialGraph::Definition(node.Kind).OutputType;
-                if (expression.ValueType == Type::Scalar)
+                if (m_Graph.HasConnectedComponent(node))
+                {
+                    // 成分ピン：接続した成分は入力（スカラー）、未接続の成分はパラメーター（値の変更で再コンパイル不要）
+                    const std::string parameter = expression.Code;
+                    const int count = static_cast<int>(expression.ValueType);
+                    std::string code = count > 1 ? HlslType(expression.ValueType) + "(" : "(";
+                    for (int i = 0; i < count && i < static_cast<int>(node.InputPins.size()); ++i)
+                    {
+                        if (i != 0)
+                        {
+                            code += ",";
+                        }
+                        if (m_Graph.InputLink(node.InputPins[static_cast<size_t>(i)]))
+                        {
+                            auto component = Input(node, static_cast<size_t>(i));
+                            if (component.ValueType == Type::Numeric)
+                            {
+                                component.ValueType = Type::Scalar;
+                            }
+                            code += Promote(std::move(component), Type::Scalar).Code;
+                        }
+                        else
+                        {
+                            code += parameter + "." + "xyzw"[i];
+                        }
+                    }
+                    expression.Code = code + ")";
+                }
+                else if (expression.ValueType == Type::Scalar)
                 {
                     expression.Code += ".x";
                 }
-                if (expression.ValueType == Type::Vector3)
+                else if (expression.ValueType == Type::Vector3)
                 {
                     expression.Code += ".xyz";
                 }
-                if (expression.ValueType == Type::Vector2)
+                else if (expression.ValueType == Type::Vector2)
                 {
                     expression.Code += ".xy";
                 }
@@ -1553,7 +1581,9 @@ namespace MaterialGraphVm
                     {
                         const size_t index = static_cast<size_t>(pins[i].Pin);
                         const bool linked = index < output->InputPins.size() && m_Graph.InputLink(output->InputPins[index]);
-                        if (!linked && !(options.IncludeDefaults && index < output->InputPins.size()))
+                        // 直値（ピン横のボックス）が入った未接続のピンも、描画時評価の出力に含める
+                        const bool direct = m_Graph.HasOutputDirectValue(*output, index);
+                        if (!linked && !direct && !(options.IncludeDefaults && index < output->InputPins.size()))
                         {
                             continue;
                         }
@@ -1692,6 +1722,7 @@ namespace MaterialGraphVm
                     return program;
                 }
                 program.UsesTime = m_UsesTime;
+                program.UsesView = m_UsesView;
                 program.WorldSolidSpace = m_Graph.Settings.SolidSpace == 1;
                 program.Instructions = static_cast<int>(m_Code.size());
                 program.Registers = used;
@@ -1761,6 +1792,10 @@ namespace MaterialGraphVm
                 if (which == InTime)
                 {
                     m_UsesTime = true;
+                }
+                if (which == InCameraDistance || which == InCameraPosition || which == InPixelDepth)
+                {
+                    m_UsesView = true; // 発光の動的ベイク（GI / 反射用）を毎フレーム更新する対象
                 }
                 const Expr expr = Emit(OpInput, type, {}, {static_cast<float>(which)});
                 m_Inputs[which] = expr.Reg;
@@ -2074,7 +2109,24 @@ namespace MaterialGraphVm
                 }
                 if (MaterialGraphMath::IsConstantNode(node.Kind))
                 {
-                    return Const(node.Value, MaterialGraph::Definition(node.Kind).OutputType);
+                    const Type type = MaterialGraph::Definition(node.Kind).OutputType;
+                    if (!m_Graph.HasConnectedComponent(node))
+                    {
+                        return Const(node.Value, type);
+                    }
+                    // 成分ピン：成分ごとのスカラーを Append でつなぐ（未接続の成分は Input がノード上の値を返す）
+                    Expr result = Promote(Input(node, 0), S);
+                    for (int i = 1; i < Dims(type) && i < static_cast<int>(node.InputPins.size()); ++i)
+                    {
+                        const Expr component = Promote(Input(node, static_cast<size_t>(i)), S);
+                        if (result.Reg < 0 || component.Reg < 0)
+                        {
+                            return {};
+                        }
+                        result = Emit(OpAppend, static_cast<Type>(i + 1), {result.Reg, component.Reg},
+                                      {static_cast<float>(i), 1.0f});
+                    }
+                    return result;
                 }
                 if (node.Kind == Kind::DDX || node.Kind == Kind::DDY)
                 {
@@ -2497,6 +2549,7 @@ namespace MaterialGraphVm
             int m_NextReg = 0;
             int m_Depth = 0;
             bool m_UsesTime = false;
+            bool m_UsesView = false;
         };
     } // namespace
 
@@ -2530,3 +2583,5 @@ namespace MaterialGraphVm
         return Generator(graph, resolveTexture).Run(Options{});
     }
 } // namespace MaterialGraphVm
+
+

@@ -18,4 +18,15 @@ class Input
     static bool IsKeyHeld(int key);
     static bool IsKeyPress(int key);
     static POINT GetMouseDelta();
+    // Raw Input（WM_INPUT）のマウス移動量を積む。WindowProc から呼ぶ
+    //  ・カーソル位置の差分と違い、カーソルの固定（ClipCursor）・画面端・ポインター加速の影響を受けない
+    //  ・登録に成功していれば GetMouseDelta はこの積算値を返す（右クリックの視点移動が滑らかになる）
+    static void AddRawMouseDelta(LONG dx, LONG dy);
+    static bool UsesRawMouse();
+
+  private:
+    static LONG m_RawDeltaX;
+    static LONG m_RawDeltaY;
+    static bool m_RawMouse;
 };
+

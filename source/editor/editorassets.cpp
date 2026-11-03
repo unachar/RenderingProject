@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
@@ -31,6 +31,8 @@ using namespace EditorWidgets;
 
 namespace
 {
+    AssetBrowserListing startupListing;
+    bool assetBrowserSubmitted = false;
     // アセットブラウザ内でフォルダをドラッグするときのペイロード（wchar_t のパス、終端込み）
     constexpr const char* kAssetDirectoryPayload = "ASSET_DIR";
     // 複数選択をまとめてドラッグするときのペイロード（中身は件数。パスは m_DraggedAssetPaths）
@@ -230,6 +232,16 @@ namespace
     }
 }
 
+bool ImGuiManager::StartupAssetBrowserReady()
+{
+    return !assetBrowserSubmitted || !startupListing.Loading();
+}
+
+namespace
+{
+    int g_AssetBrowserItemCount = 0; // 前のフレームの一覧の件数（ツールバーの行に表示）
+}
+
 void ImGuiManager::DrawAssetBrowserWindow()
 {
     if (m_AssetBrowserStandalone)
@@ -293,6 +305,9 @@ void ImGuiManager::DrawAssetBrowserWindow()
     }
 
     // パンくずリスト：クリックで移動、アセットをドロップするとそのフォルダへ移動
+    // （ツールバーと同じ行に置き、縦の行数を減らしてアセット一覧の高さを確保する）
+    ImGui::SameLine(0.0f, 12.0f);
+    ImGui::AlignTextToFramePadding();
     {
         const filesystem::path relative = m_CurrentAssetDirectory.lexically_relative(m_AssetRoot);
         vector<filesystem::path> crumbs{m_AssetRoot};
@@ -320,7 +335,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
                 ImGui::SameLine(0.0f, 2.0f);
             }
             const string label = PathToUtf8(crumbs[index].filename());
-            if (ImGui::SmallButton(label.empty() ? "asset" : label.c_str()))
+            if (ImGui::Button(label.empty() ? "asset" : label.c_str()))
             {
                 navigateTo = crumbs[index];
             }
@@ -335,6 +350,29 @@ void ImGuiManager::DrawAssetBrowserWindow()
         {
             m_CurrentAssetDirectory = navigateTo;
             m_SelectedAssetPath.clear();
+        }
+    }
+
+    // ---- 件数（選択数）と操作ヒント：以前の最下行をツールバーの行へ移動
+    {
+        ImGui::SameLine(0.0f, 12.0f);
+        const int selectedCount = static_cast<int>(m_SelectedAssetKeys.size());
+        if (selectedCount > 1)
+        {
+            ImGui::TextDisabled("%d 件 / %d 個選択", g_AssetBrowserItemCount, selectedCount);
+        }
+        else
+        {
+            ImGui::TextDisabled("%d 件", g_AssetBrowserItemCount);
+        }
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(selectedCount > 1
+                                  ? "Ctrl+クリック: 追加・解除\nShift+クリック: 範囲\nドラッグ: まとめて移動"
+                                  : "ダブルクリック: 開く・適用\nCtrl・Shift+クリック: 複数選択\n"
+                                    "ドラッグ: 配置・移動\n右クリック: 作成\nCtrl+ホイール: サムネイルサイズ");
         }
     }
 
@@ -389,15 +427,51 @@ void ImGuiManager::DrawAssetBrowserWindow()
         ImGui::EndPopup();
     }
 
+    // ---- 同じ行の右側：検索 / サムネイルサイズ / サムネイル更新（右寄せ）
+    //  幅が足りないときだけ次の行へ折り返す
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float spacing = style.ItemSpacing.x;
+    const float sliderWidth = 110.0f;
+    const float refreshWidth = ImGui::CalcTextSize("サムネイル更新").x + style.FramePadding.x * 2.0f;
+    const float searchMin = 160.0f, searchMax = 360.0f;
+    const float rightFixed = sliderWidth + spacing + refreshWidth + spacing;
+    ImGui::SameLine(0.0f, 16.0f);
+    float rightAvail = ImGui::GetContentRegionAvail().x;
+    if (rightAvail < rightFixed + searchMin)
+    {
+        ImGui::NewLine(); // 狭いパネル：2 行目へ
+        rightAvail = ImGui::GetContentRegionAvail().x;
+    }
+    const float searchWidth = (std::min)(searchMax, rightAvail - rightFixed);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (std::max)(0.0f, rightAvail - rightFixed - searchWidth));
+
+    static ImGuiTextFilter assetFilter;
+    static vector<filesystem::path> pendingDeletePaths;
+    bool deleteRequested = false;
+    ImGui::BeginGroup();
+    {
+        // DrawSearchField は残り幅いっぱいに広がるので、子領域で幅を制限する
+        ImGui::BeginChild("AssetSearchArea", ImVec2(searchWidth, ImGui::GetFrameHeight()), false,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                              ImGuiWindowFlags_NoBackground);
+        DrawSearchField("AssetSearch", "ファイル名で検索...", assetFilter);
+        ImGui::EndChild();
+    }
+    ImGui::EndGroup();
+    ImGui::SameLine();
     int thumbnailSize = static_cast<int>(AssetThumbnailManager::Settings().Size);
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::SliderInt("サムネイルサイズ", &thumbnailSize, 32, 256))
+    ImGui::SetNextItemWidth(sliderWidth);
+    if (ImGui::SliderInt("##ThumbnailSize", &thumbnailSize, 32, 256, "サイズ %d"))
     {
         AssetThumbnailManager::Settings().Size = static_cast<UINT>(thumbnailSize);
     }
     if (ImGui::IsItemDeactivatedAfterEdit())
     {
         SaveProjectSettings();
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("サムネイルサイズ（Ctrl+ホイールでも変更）");
     }
     ImGui::SameLine();
     if (ImGui::Button("サムネイル更新"))
@@ -406,17 +480,26 @@ void ImGuiManager::DrawAssetBrowserWindow()
     }
     const float cellSize = static_cast<float>(thumbnailSize);
     const float rowHeight = cellSize + ImGui::GetTextLineHeightWithSpacing() + 12.0f;
-    static ImGuiTextFilter assetFilter;
-    static vector<filesystem::path> pendingDeletePaths;
-    bool deleteRequested = false;
-    DrawSearchField("AssetSearch", "ファイル名で検索...", assetFilter);
     // 矢印キーは自前で処理するため、このリストでは ImGui のキーボードナビゲーションを止める
-    ImGui::BeginChild("AssetList", ImVec2(0, -ImGui::GetTextLineHeightWithSpacing()), true,
-                      ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoNavInputs);
+    ImGui::BeginChild("AssetList", ImVec2(0, 0), true,
+                      ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoNavInputs |
+                          (ImGui::GetIO().KeyCtrl ? ImGuiWindowFlags_NoScrollWithMouse : 0));
     const bool listFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    // Ctrl+ホイールでサムネイルサイズを変える（一覧の上だけ）
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::GetIO().KeyCtrl &&
+        ImGui::GetIO().MouseWheel != 0.0f)
+    {
+        const int resized = std::clamp(thumbnailSize + static_cast<int>(ImGui::GetIO().MouseWheel * 8.0f), 32, 256);
+        if (resized != thumbnailSize)
+        {
+            AssetThumbnailManager::Settings().Size = static_cast<UINT>(resized);
+            SaveProjectSettings();
+        }
+    }
     SyncAssetSelection();
 
-    static AssetBrowserListing listing;
+    auto& listing = startupListing;
+    assetBrowserSubmitted = true;
     static vector<AssetBrowserItem> entries;
     static unordered_map<string, AssetHandle> browserHandles;
     static filesystem::path listedDirectory;
@@ -1163,18 +1246,8 @@ void ImGuiManager::DrawAssetBrowserWindow()
         }
         ImGui::EndPopup();
     }
-    if (m_SelectedAssetKeys.size() > 1)
-    {
-        ImGui::TextDisabled(
-            "%d 件 / %d 個選択 / Ctrl+クリック: 追加・解除 / Shift+クリック: 範囲 / ドラッグ: まとめて移動",
-            static_cast<int>(entries.size()), static_cast<int>(m_SelectedAssetKeys.size()));
-    }
-    else
-    {
-        ImGui::TextDisabled(
-            "%d 件 / ダブルクリック: 開く・適用 / Ctrl・Shift+クリック: 複数選択 / ドラッグ: 配置・移動 / 右クリック: 作成",
-            static_cast<int>(entries.size()));
-    }
+    // 件数と操作ヒントはツールバーの行に出す（次のフレームで表示。一覧を最下部まで使う）
+    g_AssetBrowserItemCount = static_cast<int>(entries.size());
     ImGui::End();
 }
 
@@ -2324,4 +2397,5 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
+
 

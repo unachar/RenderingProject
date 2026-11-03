@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "rendering/scenedepth.h"
 #include "materialpreview.h"
+#include "persistentpsocache.h"
 #include "animationpreviewcontext.h"
 #include "animationmodel.h"
 #include "thumbnailpreviewcontext.h"
@@ -169,8 +170,8 @@ namespace
                     }
                     const float u = (horizontal + 1.0f) * 0.5f;
                     const float v = (1.0f - vertical) * 0.5f;
-                    corners[corner] = Vertex(position[0], position[1], position[2], normal[0], normal[1], normal[2],
-                                             u, v);
+                    corners[corner] =
+                        Vertex(position[0], position[1], position[2], normal[0], normal[1], normal[2], u, v);
                 }
                 Triangle(vertices, corners[0], corners[1], corners[2]);
                 Triangle(vertices, corners[1], corners[3], corners[2]);
@@ -391,8 +392,7 @@ namespace
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
         description.InputLayout = {layout, 4};
-        if (FAILED(GraphicsDevice::GetDevice()->CreateGraphicsPipelineState(&description,
-                                                                            IID_PPV_ARGS(&Pipelines[index]))))
+        if (FAILED(PersistentPsoCache::Graphics(GraphicsDevice::GetDevice(), description, Pipelines[index])))
         {
             Error = "Failed to create production preview PSO";
             return nullptr;
@@ -500,6 +500,27 @@ void MaterialPreview::DrawImage(AssetHandle material)
     {
         ImGui::TextWrapped("%s", preview.Error.c_str());
     }
+}
+
+bool MaterialPreview::PrepareStartupAssets()
+{
+    if (!preview.Initialize())
+    {
+        return false;
+    }
+    MaterialComponent defaultMaterial;
+    if (!preview.Pipeline(defaultMaterial))
+    {
+        return false;
+    }
+    for (const auto handle : MaterialManager::Registry().HandlesOfType(AssetType::Material))
+    {
+        if (!preview.Pipeline(MaterialManager::GetRuntime(handle).Binding))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 namespace

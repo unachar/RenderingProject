@@ -7,6 +7,9 @@ BYTE Input::m_CurrentKeyState[256]{};
 POINT Input::m_OldMousePosition{};
 POINT Input::m_CurrentMousePosition{};
 POINT Input::m_MouseDelta{};
+LONG Input::m_RawDeltaX = 0;
+LONG Input::m_RawDeltaY = 0;
+bool Input::m_RawMouse = false;
 
 void Input::Init()
 {
@@ -15,6 +18,14 @@ void Input::Init()
     GetCursorPos(&m_CurrentMousePosition);
     m_OldMousePosition = m_CurrentMousePosition;
     m_MouseDelta = {};
+    // マウスの Raw Input を登録（hwndTarget = nullptr：フォーカスのあるウィンドウに WM_INPUT が届く）
+    RAWINPUTDEVICE device{};
+    device.usUsagePage = 0x01; // HID_USAGE_PAGE_GENERIC
+    device.usUsage = 0x02;     // HID_USAGE_GENERIC_MOUSE
+    device.dwFlags = 0;
+    device.hwndTarget = nullptr;
+    m_RawMouse = RegisterRawInputDevices(&device, 1, sizeof(device)) != FALSE;
+    m_RawDeltaX = m_RawDeltaY = 0;
 }
 
 void Input::Uninit() {}
@@ -24,8 +35,18 @@ void Input::Update()
     memcpy(m_OldKeyState, m_CurrentKeyState, sizeof(m_OldKeyState));
     m_OldMousePosition = m_CurrentMousePosition;
     GetCursorPos(&m_CurrentMousePosition);
-    m_MouseDelta.x = m_CurrentMousePosition.x - m_OldMousePosition.x;
-    m_MouseDelta.y = m_CurrentMousePosition.y - m_OldMousePosition.y;
+    if (m_RawMouse)
+    {
+        // 前の Update からの Raw Input の積算（フレーム間の動きを取りこぼさない）
+        m_MouseDelta.x = m_RawDeltaX;
+        m_MouseDelta.y = m_RawDeltaY;
+    }
+    else
+    {
+        m_MouseDelta.x = m_CurrentMousePosition.x - m_OldMousePosition.x;
+        m_MouseDelta.y = m_CurrentMousePosition.y - m_OldMousePosition.y;
+    }
+    m_RawDeltaX = m_RawDeltaY = 0;
 
     static const int usedKeys[] = {
         'A',    'B',     'C',       'D',        'E',        'F',        'G',      'H',        'I',
@@ -74,4 +95,16 @@ bool Input::IsKeyPress(int key)
 POINT Input::GetMouseDelta()
 {
     return m_MouseDelta;
+}
+
+
+void Input::AddRawMouseDelta(LONG dx, LONG dy)
+{
+    m_RawDeltaX += dx;
+    m_RawDeltaY += dy;
+}
+
+bool Input::UsesRawMouse()
+{
+    return m_RawMouse;
 }

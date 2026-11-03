@@ -7,6 +7,20 @@
 #include <windows.h>
 #endif
 
+std::vector<AssetHandle> AssetRegistry::HandlesOfType(AssetType type) const
+{
+    std::vector<AssetHandle> handles;
+    for (const auto& [handle, entry] : m_Entries)
+    {
+        if (entry.Type == type)
+        {
+            handles.push_back(handle);
+        }
+    }
+    std::sort(handles.begin(), handles.end());
+    return handles;
+}
+
 AssetHandle GenerateAssetHandle()
 {
     static std::mt19937_64 generator(std::random_device{}());
@@ -293,4 +307,3 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::
     }
     return copy;
 }
-

@@ -110,6 +110,8 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         Hash(revision, &emission, sizeof(emission));
         Hash(revision, &mesh.TextureResidentMip, sizeof(mesh.TextureResidentMip));
         Hash(revision, &mesh.EmissionResidentMip, sizeof(mesh.EmissionResidentMip));
+        // 発光の動的ベイク（カメラ距離 / Time）：テクスチャは同じでも中身が変わる
+        Hash(revision, &mesh.EmissionRevision, sizeof(mesh.EmissionRevision));
         const XMFLOAT3 offset{mesh.World._41 - camera.x, mesh.World._42 - camera.y, mesh.World._43 - camera.z};
         const float distance = offset.x * offset.x + offset.y * offset.y + offset.z * offset.z;
         inputs.push_back({!mesh.Deforming && mesh.Transmission <= 0.001f ? mesh.SurfaceOwner : 0, revision, distance});
@@ -345,3 +347,4 @@ void LumenSurfaceCache::Reset()
 {
     *this = LumenSurfaceCache{};
 }
+

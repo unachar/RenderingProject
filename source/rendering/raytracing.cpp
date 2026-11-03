@@ -4,6 +4,7 @@
 #include "raytracingscene.h"
 #include "rendererstate.h"
 #include "graphicslog.h"
+#include "persistentpsocache.h"
 #include "camera.h"
 #include "world.h"
 #include "nrddenoiser.h"
@@ -888,7 +889,8 @@ namespace
                                   : 0u};
             m.NoiseBase = g.Noise[0];
             m.BaseColor = g.BaseColor;
-            m.Emission = g.Emission;
+            // ガラス越しの発光はテクスチャを読まないので、動的ベイクのときは差し替え前の値を使う
+            m.Emission = g.EmissionRevision != 0 ? g.BakedEmission : g.Emission;
             m.Optical = {g.IOR, g.Transmission, g.Roughness, g.Metallic};
             m.Absorption = {g.Absorption.x, g.Absorption.y, g.Absorption.z, g.Thickness};
             m.OpticalExtra = {g.TransmissionRoughness, g.Fresnel, 0, 0};
@@ -1340,7 +1342,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
     pipeline.pRootSignature = g_RootSignature.Get();
     pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-    if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_Pipeline))) ||
+    WriteGraphicsLog("Step: DXR shadow/AO pipeline\n");
+    if (FAILED(PersistentPsoCache::Compute(device, pipeline, g_Pipeline)) ||
         !EnsureBuffer(g_Constants, kConstantStride * kFrameCount, D3D12_HEAP_TYPE_UPLOAD,
                       D3D12_RESOURCE_STATE_GENERIC_READ, L"Raytracing Frame Constants") ||
         !EnsureBuffer(g_LightingConstants, kLightingStride * kFrameCount, D3D12_HEAP_TYPE_UPLOAD,
@@ -1358,7 +1361,7 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
             return false;
         }
         pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_ComposeShadow))))
+        if (FAILED(PersistentPsoCache::Compute(device, pipeline, g_ComposeShadow)))
         {
             return false;
         }
@@ -1368,7 +1371,7 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
             return false;
         }
         pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_ComposeAmbient))))
+        if (FAILED(PersistentPsoCache::Compute(device, pipeline, g_ComposeAmbient)))
         {
             return false;
         }
@@ -1381,10 +1384,12 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
         memset(lightingData, 0, kLightingStride * kFrameCount);
         g_LightingConstants->Unmap(0, nullptr);
     }
+    WriteGraphicsLog("Step: RayReflections::Initialize\n");
     if (!RayReflections::Initialize(device, heap, increment))
     {
         WriteGraphicsLog("DXR: reflection pipeline initialization failed\n");
     }
+    WriteGraphicsLog("Step: OptixDenoiser::Initialize\n");
     if (!OptixDenoiser::Initialize(device))
     {
         WriteGraphicsLog("OptiX unavailable: %s\n", OptixDenoiser::GetStatus());
@@ -2069,3 +2074,4 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
+

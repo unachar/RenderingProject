@@ -79,6 +79,9 @@ namespace
         bool AutoApply = true;
         bool ApplyInitialized = false;
         uint64_t AppliedSignature = 0;
+        double LastApplyTime = -1.0;  // 最後にマテリアルへ反映した時刻（ドラッグ中の反映を間引く）
+        int SignatureFrame = -1;      // ContentSignature を計算したフレーム（1 フレームに 2 回呼ばれるため）
+        uint64_t FrameSignature = 0;
         uint32_t ManagedSlots = 0;
         std::vector<std::string> ApplyNotes;
         // ピクセルごとの式 → エンジン用テクスチャのベイク
@@ -996,6 +999,8 @@ namespace
         uint64_t Node = 0;
         ImVec2 Position{};
         float Width = 0.0f;
+        float MaxHeight = 0.0f;    // 0 = 16 行（プルダウン）。カラーピッカーなどは FLT_MAX（内容に合わせる）
+        float AnchorHeight = 0.0f; // 開いたボタンの高さ（画面の下で上に出すとき用）
         std::function<void(GraphDocument&, MaterialGraphNode&)> Body;
     };
     CanvasPopupRequest g_CanvasPopup;
@@ -1036,6 +1041,8 @@ namespace
         g_CanvasPopup.Node = node.Id;
         g_CanvasPopup.Position = ImVec2(min.x, max.y);
         g_CanvasPopup.Width = max.x - min.x;
+        g_CanvasPopup.MaxHeight = 0.0f;
+        g_CanvasPopup.AnchorHeight = max.y - min.y;
         g_CanvasPopup.Body = [valueIndex, count, name](GraphDocument& document, MaterialGraphNode& target) {
             const int selected = std::clamp(static_cast<int>(target.Value[valueIndex]), 0, count - 1);
             for (int i = 0; i < count; ++i)
@@ -1066,10 +1073,40 @@ namespace
             ImGui::OpenPopup(kCanvasPopupId);
             ImGui::SetNextWindowPos(g_CanvasPopup.Position, ImGuiCond_Always);
         }
-        ImGui::SetNextWindowSizeConstraints(ImVec2(g_CanvasPopup.Width, 0.0f),
-                                            ImVec2(FLT_MAX, ImGui::GetTextLineHeightWithSpacing() * 16.0f));
-        if (ImGui::BeginPopup(kCanvasPopupId))
+        const float maxHeight =
+            g_CanvasPopup.MaxHeight > 0.0f ? g_CanvasPopup.MaxHeight : ImGui::GetTextLineHeightWithSpacing() * 16.0f;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(g_CanvasPopup.Width, 0.0f), ImVec2(FLT_MAX, maxHeight));
+        if (ImGui::BeginPopup(kCanvasPopupId, ImGuiWindowFlags_AlwaysAutoResize))
         {
+            // 位置を API で指定したポップアップは ImGui が画面内へ押し戻さないので、ここで収める
+            // （画面の下 / 右端のノードからカラーピッカーを開くと見切れていた）
+#ifdef IMGUI_HAS_VIEWPORT
+            const ImGuiViewport* viewport = ImGui::GetWindowViewport();
+#else
+            const ImGuiViewport* viewport = ImGui::GetMainViewport();
+#endif
+            if (viewport)
+            {
+                const ImVec2 size = ImGui::GetWindowSize();
+                const ImVec2 position = ImGui::GetWindowPos();
+                const ImVec2 workMin = viewport->WorkPos;
+                const ImVec2 workMax(viewport->WorkPos.x + viewport->WorkSize.x,
+                                     viewport->WorkPos.y + viewport->WorkSize.y);
+                ImVec2 clamped = position;
+                if (clamped.y + size.y > workMax.y)
+                {
+                    // 下に入らなければ、開いたボタンの上に出す
+                    const float above = g_CanvasPopup.Position.y - g_CanvasPopup.AnchorHeight - size.y;
+                    clamped.y = above >= workMin.y ? above : workMax.y - size.y;
+                }
+                clamped.x = (std::min)(clamped.x, workMax.x - size.x);
+                clamped.x = (std::max)(clamped.x, workMin.x);
+                clamped.y = (std::max)(clamped.y, workMin.y);
+                if (clamped.x != position.x || clamped.y != position.y)
+                {
+                    ImGui::SetWindowPos(clamped);
+                }
+            }
             auto* node = document.Graph.FindNode(g_CanvasPopup.Node);
             if (node && g_CanvasPopup.Body)
             {
@@ -1080,6 +1117,10 @@ namespace
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
+        }
+        else if (document.PendingEdit && document.PendingValueNode == g_CanvasPopup.Node && !ImGui::IsAnyItemActive())
+        {
+            FinishValueEdit(document); // ポップアップ（カラーピッカー）を閉じた：編集を 1 回の Undo にまとめる
         }
         if (!g_CanvasTooltip.empty())
         {
@@ -1204,6 +1245,230 @@ namespace
         ImGui::PopID();
     }
 
+    // ノード内の色ボタン。ノードの中で ColorEdit のピッカーを開くと、キャンバスの座標変換のせいで
+    // ポップアップが別の場所に出て見切れ、マウスも当たらない。ボタンだけをノード内に描き、
+    // ピッカーは Nodes::Suspend() の後（画面座標）のポップアップで開く（NodeCombo と同じ仕組み）
+    void NodeColorButton(GraphDocument& document, MaterialGraphNode& node, bool alpha, bool hdr, float width)
+    {
+        const ImVec4 color(node.Value[0], node.Value[1], node.Value[2], alpha ? node.Value[3] : 1.0f);
+        ImGuiColorEditFlags buttonFlags = ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop;
+        buttonFlags |= alpha ? ImGuiColorEditFlags_AlphaPreviewHalf : ImGuiColorEditFlags_NoAlpha;
+        const bool clicked =
+            ImGui::ColorButton("##Swatch", color, buttonFlags, ImVec2(width, ImGui::GetFrameHeight()));
+        CanvasTooltip("クリックでカラーピッカーを開く\nR %.3f  G %.3f  B %.3f%s", node.Value[0], node.Value[1],
+                      node.Value[2], alpha ? "（A はピッカーで編集）" : "");
+        if (!clicked)
+        {
+            return;
+        }
+        FinishEdits(document);
+        const ImVec2 min = Nodes::CanvasToScreen(ImGui::GetItemRectMin());
+        const ImVec2 max = Nodes::CanvasToScreen(ImGui::GetItemRectMax());
+        g_CanvasPopup.Open = true;
+        g_CanvasPopup.Node = node.Id;
+        g_CanvasPopup.Position = ImVec2(min.x, max.y + 2.0f);
+        g_CanvasPopup.Width = 0.0f;
+        g_CanvasPopup.MaxHeight = FLT_MAX;
+        g_CanvasPopup.AnchorHeight = max.y - min.y + 4.0f;
+        const std::array<float, 4> original = node.Value; // 「Original」（クリックで元に戻せる）
+        g_CanvasPopup.Body = [alpha, hdr, original](GraphDocument& target, MaterialGraphNode& edited) {
+            // 表示形式は指定しない（ピッカーの既定 = RGB / HSV / Hex の入力欄をすべて出す）
+            ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueBar;
+            flags |= alpha ? (ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf)
+                           : ImGuiColorEditFlags_NoAlpha;
+            if (hdr)
+            {
+                flags |= ImGuiColorEditFlags_HDR; // 数値入力は 1 を超えてもよい（発光色など）
+            }
+            const auto before = edited.Value;
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
+            bool changed = ImGui::ColorPicker4("##NodeColorPicker", edited.Value.data(), flags, original.data());
+            // ピッカーは複数の部品からなるので、開始 / 終了は TrackValueEdit と下の判定の両方で拾う
+            for (auto& component : edited.Value)
+            {
+                if (!std::isfinite(component))
+                {
+                    edited.Value = before;
+                    changed = false;
+                    break;
+                }
+            }
+            if (!alpha)
+            {
+                edited.Value[3] = before[3];
+            }
+            TrackValueEdit(target, edited, before, changed);
+            if (target.PendingEdit && target.PendingValueNode == edited.Id && !ImGui::IsAnyItemActive())
+            {
+                FinishValueEdit(target); // ドラッグ 1 回 = Undo 1 回
+            }
+            ImGui::Separator();
+            if (ImGui::Button("閉じる"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+        };
+    }
+
+    // 定数ノードの成分ピン横の数値ボックス（未接続のときだけ）。値は node.Value[i]（UE の Constant と同じ値）
+    void DrawConstantComponentBox(GraphDocument& document, MaterialGraphNode& node, size_t input)
+    {
+        if (input >= node.Value.size())
+        {
+            return;
+        }
+        const auto before = node.Value;
+        ImGui::SameLine(0.0f, 6.0f);
+        ImGui::PushID(static_cast<int>(input) + 1000);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.2f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 0.0f));
+        bool changed = ImGui::DragFloat("##Component", &node.Value[input], 0.01f, 0.0f, 0.0f, "%.3f");
+        ImGui::PopStyleVar();
+        if (!std::isfinite(node.Value[input]))
+        {
+            node.Value = before;
+            changed = false;
+        }
+        TrackValueEdit(document, node, before, changed);
+        CanvasTooltip("未接続のときの値\nドラッグ / ダブルクリックで入力。ノードを繋ぐとその値を使います");
+        ImGui::PopID();
+    }
+
+    // ---- Material Output のベクトルピン（Base Color / Normal / Emissive / Absorption）の直値
+    // ピンの横に色の四角を描き、クリックで画面座標のポップアップ（カラーピッカー / 法線の XYZ）を開く。
+    // ポップアップを開いてから閉じるまでの編集は Undo 1 回にまとめる
+    void DrawPinVectorBox(GraphDocument& document, MaterialGraphNode& node, size_t input)
+    {
+        const auto& definition = MaterialGraph::Definition(node.Kind);
+        const bool overridden = MaterialGraph::HasPinVector(node, input);
+        const auto current = MaterialGraph::UnconnectedInputValue(node, input);
+        const bool normal = node.Kind == Kind::Output && input == static_cast<size_t>(MaterialOutputPin::Normal);
+        const bool alpha = definition.Inputs[input].Type == MaterialGraphType::Vector4;
+        ImVec4 swatch(current[0], current[1], current[2], alpha ? current[3] : 1.0f);
+        if (normal)
+        {
+            // 法線は法線マップと同じ色（* 0.5 + 0.5）で見せる
+            swatch = ImVec4(current[0] * 0.5f + 0.5f, current[1] * 0.5f + 0.5f, current[2] * 0.5f + 0.5f, 1.0f);
+        }
+        if (!overridden)
+        {
+            swatch.w *= 0.35f; // 未設定（既定値 / マテリアルの値）は薄く
+        }
+        ImGui::SameLine(0.0f, 6.0f);
+        ImGui::PushID(static_cast<int>(input) + 2000);
+        ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop;
+        flags |= alpha || !overridden ? ImGuiColorEditFlags_AlphaPreviewHalf : ImGuiColorEditFlags_NoAlpha;
+        const float height = ImGui::GetFrameHeight();
+        const bool clicked = ImGui::ColorButton("##PinVector", swatch, flags, ImVec2(height * 1.8f, height * 0.8f));
+        CanvasTooltip(normal ? "%s: 未接続のときの法線（接空間）%s\nX %.3f  Y %.3f  Z %.3f\nクリックで編集。ピンの右クリックで既定に戻す"
+                             : "%s: 未接続のときの値%s\nR %.3f  G %.3f  B %.3f\nクリックで編集。ピンの右クリックで既定に戻す",
+                      definition.Inputs[input].Name, overridden ? "" : "（未設定 = 既定値）", current[0], current[1],
+                      current[2]);
+        ImGui::PopID();
+        if (!clicked)
+        {
+            return;
+        }
+        FinishEdits(document);
+        document.PendingEdit = document.Graph; // 開く前の状態（閉じたときに変更があれば Undo に積む）
+        document.PendingValueNode = node.Id;
+        document.ValueChanged = false;
+        const ImVec2 min = Nodes::CanvasToScreen(ImGui::GetItemRectMin());
+        const ImVec2 max = Nodes::CanvasToScreen(ImGui::GetItemRectMax());
+        g_CanvasPopup.Open = true;
+        g_CanvasPopup.Node = node.Id;
+        g_CanvasPopup.Position = ImVec2(min.x, max.y + 2.0f);
+        g_CanvasPopup.Width = 0.0f;
+        g_CanvasPopup.MaxHeight = FLT_MAX;
+        g_CanvasPopup.AnchorHeight = max.y - min.y + 4.0f;
+        const auto original = current;
+        g_CanvasPopup.Body = [input, normal, alpha, original](GraphDocument& target, MaterialGraphNode& edited) {
+            const auto& pin = MaterialGraph::Definition(edited.Kind).Inputs[input];
+            ImGui::TextUnformatted(pin.Name);
+            ImGui::Separator();
+            auto value = MaterialGraph::UnconnectedInputValue(edited, input);
+            bool changed = false;
+            if (normal)
+            {
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
+                changed |= ImGui::DragFloat3("XYZ", value.data(), 0.005f, -1.0f, 1.0f, "%.3f");
+                if (ImGui::Button("正規化"))
+                {
+                    const float length = sqrtf(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+                    if (length > 1e-6f)
+                    {
+                        value[0] /= length;
+                        value[1] /= length;
+                        value[2] /= length;
+                        changed = true;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("平ら (0, 0, 1)"))
+                {
+                    value = {0.0f, 0.0f, 1.0f, 0.0f};
+                    changed = true;
+                }
+            }
+            else
+            {
+                ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float | ImGuiColorEditFlags_PickerHueBar;
+                flags |= alpha ? (ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf)
+                               : ImGuiColorEditFlags_NoAlpha;
+                if (input != static_cast<size_t>(MaterialOutputPin::BaseColor))
+                {
+                    flags |= ImGuiColorEditFlags_HDR; // Emissive / Absorption は 1 を超えてよい
+                }
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
+                changed |= ImGui::ColorPicker4("##PinColor", value.data(), flags, original.data());
+            }
+            for (const float component : value)
+            {
+                changed &= std::isfinite(component);
+            }
+            if (changed)
+            {
+                if (!target.PendingEdit)
+                {
+                    target.PendingEdit = target.Graph;
+                    target.PendingValueNode = edited.Id;
+                }
+                if (edited.PinVectors.size() <= input)
+                {
+                    std::array<float, 4> unset;
+                    unset.fill(std::numeric_limits<float>::quiet_NaN());
+                    edited.PinVectors.resize(input + 1, unset);
+                }
+                edited.PinVectors[input] = value;
+                ++target.Graph.Revision;
+                target.ValueChanged = true;
+                target.Dirty = true;
+                target.RecoveryDirty = true;
+            }
+            ImGui::Separator();
+            ImGui::BeginDisabled(!MaterialGraph::HasPinVector(edited, input));
+            if (ImGui::Button("既定に戻す"))
+            {
+                if (!target.PendingEdit)
+                {
+                    target.PendingEdit = target.Graph;
+                    target.PendingValueNode = edited.Id;
+                }
+                MaterialGraph::ClearPinOverride(edited, input);
+                ++target.Graph.Revision;
+                target.ValueChanged = true;
+                target.Dirty = true;
+                target.RecoveryDirty = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("閉じる"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+        };
+    }
+
     void DrawValueEditors(GraphDocument& document, MaterialGraphNode& node, float width)
     {
         const auto before = node.Value;
@@ -1211,32 +1476,26 @@ namespace
         ImGui::SetNextItemWidth(width);
         switch (node.Kind)
         {
-            case Kind::Constant:
             case Kind::ScalarParameter:
                 changed = ImGui::DragFloat("##Value", node.Value.data(), 0.01f);
                 TrackValueEdit(document, node, before, changed);
                 break;
+            case Kind::Constant:
             case Kind::Constant2Vector:
-                changed = ImGui::DragFloat2("##Vector2", node.Value.data(), 0.01f);
-                TrackValueEdit(document, node, before, changed);
-                break;
+                break; // 値は成分ピン（Value / R / G）の横のボックスで編集する
             case Kind::VectorParameter:
                 changed = ImGui::DragFloat3("##Vector", node.Value.data(), 0.01f);
                 TrackValueEdit(document, node, before, changed);
                 break;
+            // 色：ボタンだけノード内に描き、ピッカーは画面座標のポップアップで開く（NodeColorButton）
             case Kind::Constant3Vector:
-                changed = ImGui::ColorEdit3("##Color3", node.Value.data(),
-                                            ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
-                TrackValueEdit(document, node, before, changed);
+                NodeColorButton(document, node, false, true, width);
                 break;
             case Kind::ColorParameter:
-                changed = ImGui::ColorEdit4("##Color", node.Value.data(), ImGuiColorEditFlags_Float);
-                TrackValueEdit(document, node, before, changed);
+                NodeColorButton(document, node, true, false, width);
                 break;
             case Kind::Constant4Vector:
-                changed = ImGui::ColorEdit4("##Color4", node.Value.data(),
-                                            ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
-                TrackValueEdit(document, node, before, changed);
+                NodeColorButton(document, node, true, true, width);
                 break;
             case Kind::TextureCoordinate:
                 changed = ImGui::DragFloat2("Tiling", node.Value.data(), 0.01f);
@@ -2099,7 +2358,15 @@ namespace
                 CanvasTooltip("%s%s", inactiveReason, connected ? "\n（接続は残っていますが使われません）" : "");
             }
             // 未接続の Scalar ピン：横に数値ボックス（UE と同じ。接続すると隠れる）
-            if (!connected && MaterialGraph::IsPinValueEditable(node.Kind, i))
+            if (!connected && MaterialGraph::IsComponentConstant(node.Kind))
+            {
+                DrawConstantComponentBox(document, node, i); // 定数の成分（UE の Constant の値）
+            }
+            else if (!connected && !inactiveReason && MaterialGraph::IsPinVectorEditable(node.Kind, i))
+            {
+                DrawPinVectorBox(document, node, i); // Material Output の色 / 法線の直値
+            }
+            else if (!connected && !inactiveReason && MaterialGraph::IsPinValueEditable(node.Kind, i))
             {
                 DrawPinValueBox(document, node, i);
             }
@@ -2198,12 +2465,14 @@ namespace
                                                                            "（成分ピンの接続は外れます）");
             }
         }
-        else if (ImGui::MenuItem("既定値に戻す", nullptr, false, MaterialGraph::HasPinValue(*pinNode, index)))
+        else if (ImGui::MenuItem("既定値に戻す", nullptr, false,
+                                 MaterialGraph::HasPinValue(*pinNode, index) ||
+                                     MaterialGraph::HasPinVector(*pinNode, index)))
         {
             PushHistory(document, document.Graph);
             if (auto* node = document.Graph.FindNode(nodeId))
             {
-                node->PinValues[index] = std::numeric_limits<float>::quiet_NaN();
+                MaterialGraph::ClearPinOverride(*node, index);
             }
             ++document.Graph.Revision;
             document.Dirty = true;
@@ -2277,6 +2546,7 @@ namespace
             destination->Height = source.Height;
             destination->Comment = source.Comment;
             destination->PinValues = source.PinValues;
+            destination->PinVectors = source.PinVectors;
             if (!source.SplitPins.empty() && destination->SplitPins.empty())
             {
                 // 分割をそのまま複製する（接続前で型が決まっていなくても、同じ成分数で分ける）
@@ -3597,15 +3867,30 @@ namespace
         {
             force = true; // 焼き上がったテクスチャを割り当てる
         }
+        // 同じフレームの 2 回目（Draw と DrawPreviewPanel）は、強制でなく何も変わっていなければ何もしない
+        const int frame = ImGui::GetFrameCount();
+        if (!force && document.SignatureFrame == frame && document.AppliedSignature == document.FrameSignature)
+        {
+            return;
+        }
         const uint64_t signature = MaterialGraphPreview::ContentSignature(document.Graph);
+        document.SignatureFrame = frame;
+        document.FrameSignature = signature;
+        const double now = ImGui::GetTime();
         if (signature != document.LastContentSignature)
         {
             document.LastContentSignature = signature;
-            document.LastContentChange = ImGui::GetTime();
+            document.LastContentChange = now;
         }
-        if (force || signature != document.AppliedSignature)
+        // ドラッグ / カラーピッカー操作中は毎フレーム値が変わる。反映（CPU 評価・VM コンパイル・
+        // マテリアル更新・サムネイル再描画）は 20Hz に間引き、手を離したら次のフレームで必ず反映する
+        constexpr double kEditingApplyInterval = 1.0 / 20.0;
+        const bool editing = ImGui::IsAnyItemActive();
+        const bool due = !editing || document.LastApplyTime < 0.0 || now - document.LastApplyTime >= kEditingApplyInterval;
+        if (force || (signature != document.AppliedSignature && due))
         {
             document.AppliedSignature = signature;
+            document.LastApplyTime = now;
             auto baked = MaterialGraphPreview::BakeToMaterial(document.Graph, runtime.Editing, document.ManagedSlots,
                                                              &document.Baked);
             document.ManagedSlots = baked.ManagedSlots;
@@ -3622,9 +3907,11 @@ namespace
         ScheduleBake(material, document, signature);
         PollNodeJob(document);
         // ライブ更新：Time を使う式を、ベイク済みテクスチャへ書き込み続ける（内容かベイクが変わったときだけ登録し直す）
+        // 登録はグラフ全体のシリアライズを伴うので、操作中は行わず、反映が追いついてから 1 回だけ行う
         const uint64_t liveSignature = MixHash(MixHash(signature, document.Baked.Signature),
                                                static_cast<uint64_t>(document.PendingAlpha) + 1);
-        if (liveSignature != document.LiveSignature && !document.BakeJob.valid())
+        if (liveSignature != document.LiveSignature && !document.BakeJob.valid() && !editing &&
+            document.AppliedSignature == signature)
         {
             document.LiveSignature = liveSignature;
             std::array<std::filesystem::path, MaterialGraphBake::kSlotCount> files{};
@@ -4011,6 +4298,8 @@ void MaterialGraphEditor::Shutdown()
     focusedMaterial = 0;
     nextRecoverySave = 0;
 }
+
+
 
 
 

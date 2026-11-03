@@ -124,6 +124,58 @@ namespace MaterialGraphEval
         {
             topology.Index[graph.Nodes[i].Id] = i;
         }
+        // ---- 入力ピン → 接続元の表（評価は画素ごと × 入力ごとに接続を引くので、ここで 1 回だけ解決する）
+        {
+            std::unordered_map<uint64_t, std::pair<int32_t, int32_t>> outputs; // 出力ピン → (ノード, 出力番号)
+            std::unordered_map<uint64_t, const MaterialGraphLink*> links;      // 入力ピン → リンク
+            outputs.reserve(graph.Nodes.size() * 2);
+            links.reserve(graph.Links.size());
+            size_t inputCount = 0;
+            for (size_t i = 0; i < graph.Nodes.size(); ++i)
+            {
+                const auto& node = graph.Nodes[i];
+                outputs[node.OutputPin] = {static_cast<int32_t>(i), 0};
+                for (size_t s = 0; s < node.SplitPins.size(); ++s)
+                {
+                    outputs[node.SplitPins[s]] = {static_cast<int32_t>(i), static_cast<int32_t>(s + 1)};
+                }
+                inputCount += node.InputPins.size();
+            }
+            for (const auto& link : graph.Links)
+            {
+                links.emplace(link.TargetPin, &link); // RawInputLink と同じく最初のリンク
+            }
+            topology.InputOffset.assign(graph.Nodes.size() + 1, 0);
+            topology.Inputs.assign(inputCount, InputSource{});
+            uint32_t offset = 0;
+            for (size_t i = 0; i < graph.Nodes.size(); ++i)
+            {
+                const auto& node = graph.Nodes[i];
+                topology.InputOffset[i] = offset;
+                for (size_t p = 0; p < node.InputPins.size(); ++p, ++offset)
+                {
+                    const auto link = links.find(node.InputPins[p]);
+                    if (link == links.end())
+                    {
+                        continue;
+                    }
+                    // モードで無効な Material Output のピンなど（InputLink が nullptr を返すもの）は未接続扱い
+                    if (node.Kind == Kind::Output && !graph.InputLink(node.InputPins[p]))
+                    {
+                        continue;
+                    }
+                    auto& source = topology.Inputs[offset];
+                    source.Linked = true;
+                    const auto found = outputs.find(link->second->SourcePin);
+                    if (found != outputs.end())
+                    {
+                        source.Node = found->second.first;
+                        source.Output = found->second.second;
+                    }
+                }
+            }
+            topology.InputOffset[graph.Nodes.size()] = offset;
+        }
         // bit0: 空間（法線・位置・カメラ）依存、bit1: 時間依存、bit2: カメラ方向依存
         std::vector<uint8_t> flags(graph.Nodes.size(), 0);
         std::vector<uint8_t> state(graph.Nodes.size(), 0);
@@ -264,9 +316,56 @@ namespace MaterialGraphEval
         return result;
     }
 
+    const InputSource* Evaluator::Source(const MaterialGraphNode& node, size_t input) const
+    {
+        // 表は Topology を作ったときのグラフに対応する。ノード数 / ピン数が合わなければ使わない
+        if (m_Graph.Nodes.empty() || m_Topology.InputOffset.size() != m_Graph.Nodes.size() + 1)
+        {
+            return nullptr;
+        }
+        const auto* first = m_Graph.Nodes.data();
+        if (&node < first || &node >= first + m_Graph.Nodes.size())
+        {
+            return nullptr; // このグラフのノードではない
+        }
+        const size_t index = static_cast<size_t>(&node - first);
+        const uint32_t begin = m_Topology.InputOffset[index];
+        const uint32_t end = m_Topology.InputOffset[index + 1];
+        if (end - begin != node.InputPins.size() || input >= node.InputPins.size())
+        {
+            return nullptr;
+        }
+        return &m_Topology.Inputs[begin + input];
+    }
+
+    bool Evaluator::Linked(const MaterialGraphNode& node, size_t input) const
+    {
+        if (const auto* source = Source(node, input))
+        {
+            return source->Linked;
+        }
+        return input < node.InputPins.size() && m_Graph.InputLink(node.InputPins[input]) != nullptr;
+    }
+
     Value Evaluator::Input(const MaterialGraphNode& node, size_t input, int depth)
     {
-        if (input < node.InputPins.size())
+        if (const auto* source = Source(node, input))
+        {
+            if (source->Node >= 0)
+            {
+                Value value = Node(static_cast<size_t>(source->Node), depth + 1);
+                if (source->Output > 0)
+                {
+                    const int component = source->Output - 1;
+                    const float scalar = value.N == 1 ? value.V[0] : component < value.N ? value.V[component] : 0.0f;
+                    value = Value{};
+                    value.V[0] = scalar;
+                    value.N = 1;
+                }
+                return value;
+            }
+        }
+        else if (input < node.InputPins.size())
         {
             if (const auto* link = m_Graph.InputLink(node.InputPins[input]))
             {
@@ -378,7 +477,23 @@ namespace MaterialGraphEval
         if (GraphMath::IsConstantNode(kind))
         {
             const auto type = MaterialGraph::Definition(kind).OutputType;
-            return Make(node.Value.data(), type == MaterialGraphType::Numeric ? 1 : static_cast<int>(type));
+            const int count = type == MaterialGraphType::Numeric ? 1 : static_cast<int>(type);
+            bool anyLinked = false;
+            for (size_t c = 0; c < node.InputPins.size() && !anyLinked; ++c)
+            {
+                anyLinked = Linked(node, c);
+            }
+            if (!anyLinked)
+            {
+                return Make(node.Value.data(), count);
+            }
+            // 成分ピン：接続した成分は入力（スカラー）、未接続の成分はノード上の値
+            result.N = count;
+            for (int c = 0; c < count && c < static_cast<int>(node.InputPins.size()); ++c)
+            {
+                result.V[c] = Input(node, static_cast<size_t>(c), depth).V[0];
+            }
+            return result;
         }
         if (kind == Kind::DDX || kind == Kind::DDY)
         {
@@ -626,7 +741,7 @@ namespace MaterialGraphEval
                 const Value position = Promote(Input(node, 0, depth), 3);
                 const float scale = Input(node, 1, depth).V[0];
                 const Value offset = Promote(Input(node, 2, depth), 3);
-                const bool raw = m_Graph.InputLink(node.InputPins[0]) != nullptr; // 繋いだ座標はそのまま
+                const bool raw = Linked(node, 0); // 繋いだ座標はそのまま
                 float p[3];
                 for (int i = 0; i < 3; ++i)
                 {
@@ -643,7 +758,7 @@ namespace MaterialGraphEval
                     ProcStudio::TextureKind::Wood,         ProcStudio::TextureKind::Granite,
                     ProcStudio::TextureKind::Voronoi,      ProcStudio::TextureKind::FractalCloud};
                 Value position = Promote(Input(node, 0, depth), 3);
-                if (!m_Graph.InputLink(node.InputPins[0]))
+                if (!Linked(node, 0))
                 {
                     for (int i = 0; i < 3; ++i)
                     {
@@ -857,7 +972,7 @@ namespace MaterialGraphEval
                     return Promote(Input(node, 0, depth), 4); // 元画像なし：入力をそのまま通す
                 }
                 Value position = Promote(Input(node, 1, depth), 3);
-                const bool raw = m_Graph.InputLink(node.InputPins[1]) != nullptr;
+                const bool raw = Linked(node, 1);
                 const float scale = Input(node, 2, depth).V[0];
                 float p[3];
                 for (int i = 0; i < 3; ++i)
@@ -1208,7 +1323,7 @@ namespace MaterialGraphEval
                 for (size_t layer = 0; layer < 4; ++layer)
                 {
                     const size_t pin = layer * 2;
-                    if (pin + 1 >= node.InputPins.size() || !m_Graph.InputLink(node.InputPins[pin]))
+                    if (pin + 1 >= node.InputPins.size() || !Linked(node, pin))
                     {
                         continue;
                     }
@@ -1303,6 +1418,8 @@ namespace MaterialGraphEval
         }
     }
 } // namespace MaterialGraphEval
+
+
 
 
 

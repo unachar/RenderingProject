@@ -28,6 +28,11 @@ struct RaytracingGeometry
     XMFLOAT4 Emission{};
     ComPtr<ID3D12Resource> EmissionTexture;
     UINT EmissionResidentMip = 0;
+    // マテリアルグラフの発光が視点 / 時刻で変わるとき、動的ベイクの版（焼き直すたびに増える。0 = 静的）。
+    // テクスチャのポインターは変わらないので、GI / Lumen のキャッシュ判定はこの値で中身の変化を検出する
+    uint64_t EmissionRevision = 0;
+    // 動的ベイクに差し替える前の発光（色 × 強度）。発光テクスチャを読まない経路（ガラス越し）で使う
+    XMFLOAT4 BakedEmission{};
     // POM の高さマップ（反射の二次ヒットで UV のずれと凹凸法線に使う）。不透明マテリアルアセットのみ。
     ComPtr<ID3D12Resource> HeightTexture;
     UINT HeightResidentMip = 0;
@@ -47,3 +52,4 @@ struct RaytracingGeometry
 };
 
 vector<RaytracingGeometry> GatherRaytracingGeometry();
+

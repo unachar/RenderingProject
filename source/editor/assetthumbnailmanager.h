@@ -31,6 +31,7 @@ class AssetThumbnailManager
     static void Remove(AssetHandle guid);
     static void BeginFrame(uint64_t frameIndex);
     static void ProcessGenerationBudget();
+    static bool HasPendingVisibleAssets();
     static void Refresh();
     static void Shutdown();
     static ThumbnailSettings& Settings();

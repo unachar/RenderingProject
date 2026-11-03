@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "input.h"
 #include "main.h"
 #include "resource.h"
 #include "game.h"
@@ -12,6 +13,11 @@
 #include "performancegovernor.h"
 #include "renderbenchmark.h"
 #include "thumbnailvalidation.h"
+#include "materialmanager.h"
+#include "materialpreview.h"
+#include "materialgraphshader.h"
+#include "assetthumbnailmanager.h"
+#include <chrono>
 
 extern "C"
 {
@@ -30,6 +36,19 @@ static bool IsAutomatedBenchmark()
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    if (uMsg == WM_INPUT)
+    {
+        // マウスの相対移動量（右クリックの視点移動用）。処理後は DefWindowProc に渡す
+        RAWINPUT raw{};
+        UINT size = sizeof(raw);
+        if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) !=
+                static_cast<UINT>(-1) &&
+            raw.header.dwType == RIM_TYPEMOUSE && (raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0)
+        {
+            Input::AddRawMouseDelta(raw.data.mouse.lLastX, raw.data.mouse.lLastY);
+        }
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
     if (uMsg == WM_DROPFILES)
     {
         HDROP drop = reinterpret_cast<HDROP>(wParam);
@@ -195,8 +214,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appIcon));
         SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
     }
-    ShowWindow(hwnd, nCmdShow);
-    WriteGraphicsLog("Step: window shown\n");
+    WriteGraphicsLog("Step: window created\n");
     DragAcceptFiles(hwnd, TRUE);
 
     if (!GraphicsDevice::Init(hwnd))
@@ -219,10 +237,67 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     Game::Init();
     WriteGraphicsLog("Step: Game::Create\n");
     Game::Create();
+    MSG msg = {0};
+    // Validation sequences own their frames. Normal startup and its smoke test
+    // prepare the restored editor while the main window is still hidden.
+    char validationMode[8]{};
+    GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, static_cast<DWORD>(size(validationMode)));
+    if ((!automatedRun || startupSmokeFrames > 0) && atoi(validationMode) == 0)
+    {
+        MaterialManager::PrepareStartupAssets();
+        if (!MaterialPreview::PrepareStartupAssets())
+        {
+            WriteGraphicsLog("ERROR: startup asset preparation failed\n");
+            Game::Uninit();
+            return 1;
+        }
+        // Initialize the graph preview compute pipeline before the first double click.
+        // Its existing CPU fallback remains available if the GPU path cannot initialize.
+        if (!MaterialGraphGpu::PrepareStartupAssets())
+        {
+            WriteGraphicsLog("Startup material graph preview: CPU fallback (%s)\n", MaterialGraphGpu::LastError());
+        }
+        WriteGraphicsLog("Step: startup assets prepared\n");
+        const auto preparationStart = std::chrono::steady_clock::now();
+        unsigned preparedFrames = 0;
+        for (;;)
+        {
+            while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+                if (msg.message == WM_QUIT)
+                {
+                    Game::Uninit();
+                    return 1;
+                }
+            }
+            Game::Run();
+            ++preparedFrames;
+            if (preparedFrames >= 3 && ImGuiManager::StartupAssetBrowserReady() &&
+                !AssetThumbnailManager::HasPendingVisibleAssets())
+            {
+                // A ready thumbnail may have completed after the UI was recorded.
+                // Compose it into the back buffer before exposing the window.
+                Game::Run();
+                GraphicsDevice::WaitForGpuIdle();
+                WriteGraphicsLog("Step: startup assets ready\n");
+                break;
+            }
+            if (std::chrono::steady_clock::now() - preparationStart > std::chrono::seconds(120))
+            {
+                WriteGraphicsLog("ERROR: startup assets timed out\n");
+                Game::Uninit();
+                return 1;
+            }
+            MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+    }
+    ShowWindow(hwnd, nCmdShow);
+    WriteGraphicsLog("Step: window shown\n");
     WriteGraphicsLog("Step: initialization complete; entering main loop\n");
 
     UINT64 completedFrames = 0;
-    MSG msg = {0};
     while (msg.message != WM_QUIT)
     {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))

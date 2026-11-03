@@ -4,6 +4,7 @@
 #include "meshlets/meshletmanager.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
+#include "persistentpsocache.h"
 #include "gpuscene/gpuscene.h"
 #include "frameconstants.h"
 #include "camera.h"
@@ -111,16 +112,17 @@ namespace MeshShaderRenderer
         struct MeshStream
         {
             Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, ID3D12RootSignature*> Root;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, D3D12_SHADER_BYTECODE> MS;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, D3D12_SHADER_BYTECODE> PS;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, D3D12_SHADER_BYTECODE> MeshShader;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, D3D12_SHADER_BYTECODE> PixelShader;
             Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, D3D12_BLEND_DESC> Blend;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, D3D12_RASTERIZER_DESC> Raster;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, D3D12_DEPTH_STENCIL_DESC> Depth;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, D3D12_RT_FORMAT_ARRAY> Targets;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, D3D12_RASTERIZER_DESC> Rasterizer;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, D3D12_DEPTH_STENCIL_DESC> DepthStencil;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, D3D12_RT_FORMAT_ARRAY> RenderTargets;
             Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, DXGI_FORMAT> DepthFormat;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, DXGI_SAMPLE_DESC> Samples;
-            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, uint32_t> Mask;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, DXGI_SAMPLE_DESC> SampleDescription;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, uint32_t> SampleMask;
             Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY, D3D12_PRIMITIVE_TOPOLOGY_TYPE> Topology;
+            Subobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO, D3D12_CACHED_PIPELINE_STATE> CachedPso;
         };
 
         void Initialize()
@@ -130,6 +132,7 @@ namespace MeshShaderRenderer
             {
                 return;
             }
+            WriteGraphicsLog("Step: Mesh Shader indirect pipelines\n");
             auto* device = GraphicsDevice::GetDevice();
             CD3DX12_DESCRIPTOR_RANGE hiz, cbv;
             hiz.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 9);
@@ -153,7 +156,7 @@ namespace MeshShaderRenderer
                 D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
                 pipeline.pRootSignature = state.ComputeRoot.Get();
                 pipeline.CS = {blob->GetBufferPointer(), blob->GetBufferSize()};
-                Check(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&output)));
+                Check(PersistentPsoCache::Compute(device, pipeline, output));
             };
             cs("shader/hlsl/build/MeshletResetCS.cso", state.ResetPSO);
             cs("shader/hlsl/build/ClusterCullingCS.cso", state.ClusterPSO);
@@ -195,37 +198,36 @@ namespace MeshShaderRenderer
             auto ms = Shader("shader/hlsl/build/MeshletMS.cso"), ps = Shader("shader/hlsl/build/MeshletOpaquePS.cso");
             MeshStream stream{};
             stream.Root.Value = state.OpaqueRoot.Get();
-            stream.MS.Value = {ms->GetBufferPointer(), ms->GetBufferSize()};
-            stream.PS.Value = {ps->GetBufferPointer(), ps->GetBufferSize()};
+            stream.MeshShader.Value = {ms->GetBufferPointer(), ms->GetBufferSize()};
+            stream.PixelShader.Value = {ps->GetBufferPointer(), ps->GetBufferSize()};
             stream.Blend.Value = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-            stream.Raster.Value = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-            stream.Raster.Value.CullMode =
+            stream.Rasterizer.Value = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+            stream.Rasterizer.Value.CullMode =
                 D3D12_CULL_MODE_NONE; // メッシュ出力はプリミティブごとに片面・両面の規則を適用する。
-            stream.Depth.Value = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-            stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
-            stream.Targets.Value.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
+            stream.DepthStencil.Value = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+            stream.DepthStencil.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
+            stream.RenderTargets.Value.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
             for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i)
             {
-                stream.Targets.Value.RTFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
+                stream.RenderTargets.Value.RTFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
             }
             stream.DepthFormat.Value = DXGI_FORMAT_D32_FLOAT;
-            stream.Samples.Value = {1, 0};
-            stream.Mask.Value = UINT_MAX;
+            stream.SampleDescription.Value = {1, 0};
+            stream.SampleMask.Value = UINT_MAX;
             stream.Topology.Value = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
             ComPtr<ID3D12Device2> device2;
             Check(device->QueryInterface(IID_PPV_ARGS(&device2)));
-            D3D12_PIPELINE_STATE_STREAM_DESC meshDesc{sizeof(stream), &stream};
-            Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.OpaquePSO)));
+            Check(PersistentPsoCache::Mesh(device2.Get(), stream, state.OpaquePSO));
             auto nativeMS = Shader("shader/hlsl/build/VirtualGeometryMS.cso");
             auto nativePS = Shader("shader/hlsl/build/VirtualGeometryOpaquePS.cso");
-            stream.MS.Value = {nativeMS->GetBufferPointer(), nativeMS->GetBufferSize()};
-            stream.PS.Value = {nativePS->GetBufferPointer(), nativePS->GetBufferSize()};
-            Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeOpaquePSO)));
+            stream.MeshShader.Value = {nativeMS->GetBufferPointer(), nativeMS->GetBufferSize()};
+            stream.PixelShader.Value = {nativePS->GetBufferPointer(), nativePS->GetBufferSize()};
+            Check(PersistentPsoCache::Mesh(device2.Get(), stream, state.NativeOpaquePSO));
             auto createOverdraw = [&](ComPtr<ID3D12PipelineState>& output) {
-                const auto originalDepth = stream.Depth.Value;
+                const auto originalDepth = stream.DepthStencil.Value;
                 const auto originalBlend = stream.Blend.Value;
-                stream.Depth.Value.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-                stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+                stream.DepthStencil.Value.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+                stream.DepthStencil.Value.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
                 stream.Blend.Value.IndependentBlendEnable = TRUE;
                 for (auto& target : stream.Blend.Value.RenderTarget)
                 {
@@ -240,8 +242,8 @@ namespace MeshShaderRenderer
                 emission.SrcBlendAlpha = D3D12_BLEND_ONE;
                 emission.DestBlendAlpha = D3D12_BLEND_ZERO;
                 emission.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-                const auto result = device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&output));
-                stream.Depth.Value = originalDepth;
+                const auto result = PersistentPsoCache::Mesh(device2.Get(), stream, output);
+                stream.DepthStencil.Value = originalDepth;
                 stream.Blend.Value = originalBlend;
                 Check(result);
             };
@@ -249,16 +251,16 @@ namespace MeshShaderRenderer
             try
             {
                 auto binnedMS = Shader("shader/hlsl/build/VirtualGeometryBinnedMS.cso");
-                stream.MS.Value = {binnedMS->GetBufferPointer(), binnedMS->GetBufferSize()};
-                Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeBinnedOpaquePSO)));
+                stream.MeshShader.Value = {binnedMS->GetBufferPointer(), binnedMS->GetBufferSize()};
+                Check(PersistentPsoCache::Mesh(device2.Get(), stream, state.NativeBinnedOpaquePSO));
                 createOverdraw(state.NativeBinnedOverdrawPSO);
             }
             catch (const std::exception& error)
             {
                 WriteGraphicsLog("Native binned raster unavailable; original native path retained: %s\n", error.what());
             }
-            stream.MS.Value = {ms->GetBufferPointer(), ms->GetBufferSize()};
-            stream.PS.Value = {ps->GetBufferPointer(), ps->GetBufferSize()};
+            stream.MeshShader.Value = {ms->GetBufferPointer(), ms->GetBufferSize()};
+            stream.PixelShader.Value = {ps->GetBufferPointer(), ps->GetBufferSize()};
             D3D12_INDIRECT_ARGUMENT_DESC meshArg{};
             meshArg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH;
             D3D12_COMMAND_SIGNATURE_DESC signature{12, 1, &meshArg, 0};
@@ -281,22 +283,22 @@ namespace MeshShaderRenderer
             D3D12_GRAPHICS_PIPELINE_STATE_DESC traditional{};
             traditional.pRootSignature = state.OpaqueRoot.Get();
             traditional.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
-            traditional.PS = stream.PS.Value;
+            traditional.PS = stream.PixelShader.Value;
             traditional.InputLayout = {layout, 4};
             traditional.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
             traditional.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
             traditional.BlendState = stream.Blend.Value;
-            traditional.DepthStencilState = stream.Depth.Value;
+            traditional.DepthStencilState = stream.DepthStencil.Value;
             traditional.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
             for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i)
             {
-                traditional.RTVFormats[i] = stream.Targets.Value.RTFormats[i];
+                traditional.RTVFormats[i] = stream.RenderTargets.Value.RTFormats[i];
             }
             traditional.DSVFormat = DXGI_FORMAT_D32_FLOAT;
             traditional.SampleDesc = {1, 0};
             traditional.SampleMask = UINT_MAX;
             traditional.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            Check(device->CreateGraphicsPipelineState(&traditional, IID_PPV_ARGS(&state.FallbackPSO)));
+            Check(PersistentPsoCache::Graphics(device, traditional, state.FallbackPSO));
             D3D12_INDIRECT_ARGUMENT_DESC fallbackArgs[2]{};
             fallbackArgs[0].Type = D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT;
             fallbackArgs[0].Constant.RootParameterIndex = 0;
@@ -308,22 +310,22 @@ namespace MeshShaderRenderer
             auto velocityMS = Shader("shader/hlsl/build/MeshletVelocityMS.cso"),
                  velocityPS = Shader("shader/hlsl/build/MeshletVelocityPS.cso"),
                  velocityVS = Shader("shader/hlsl/build/MeshletVelocityVS.cso");
-            stream.MS.Value = {velocityMS->GetBufferPointer(), velocityMS->GetBufferSize()};
-            stream.PS.Value = {velocityPS->GetBufferPointer(), velocityPS->GetBufferSize()};
-            stream.Targets.Value = {};
-            stream.Targets.Value.NumRenderTargets = 1;
-            stream.Targets.Value.RTFormats[0] = RendererState::GetGBufferFormat(GBufferType::VELOCITY);
-            stream.Depth.Value.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-            stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
-            Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.VelocityPSO)));
+            stream.MeshShader.Value = {velocityMS->GetBufferPointer(), velocityMS->GetBufferSize()};
+            stream.PixelShader.Value = {velocityPS->GetBufferPointer(), velocityPS->GetBufferSize()};
+            stream.RenderTargets.Value = {};
+            stream.RenderTargets.Value.NumRenderTargets = 1;
+            stream.RenderTargets.Value.RTFormats[0] = RendererState::GetGBufferFormat(GBufferType::VELOCITY);
+            stream.DepthStencil.Value.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+            stream.DepthStencil.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+            Check(PersistentPsoCache::Mesh(device2.Get(), stream, state.VelocityPSO));
             auto nativeVelocity = Shader("shader/hlsl/build/VirtualGeometryVelocityMS.cso");
-            stream.MS.Value = {nativeVelocity->GetBufferPointer(), nativeVelocity->GetBufferSize()};
-            Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeVelocityPSO)));
+            stream.MeshShader.Value = {nativeVelocity->GetBufferPointer(), nativeVelocity->GetBufferSize()};
+            Check(PersistentPsoCache::Mesh(device2.Get(), stream, state.NativeVelocityPSO));
             try
             {
                 auto binnedVelocityMS = Shader("shader/hlsl/build/VirtualGeometryBinnedVelocityMS.cso");
-                stream.MS.Value = {binnedVelocityMS->GetBufferPointer(), binnedVelocityMS->GetBufferSize()};
-                Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeBinnedVelocityPSO)));
+                stream.MeshShader.Value = {binnedVelocityMS->GetBufferPointer(), binnedVelocityMS->GetBufferSize()};
+                Check(PersistentPsoCache::Mesh(device2.Get(), stream, state.NativeBinnedVelocityPSO));
             }
             catch (const std::exception& error)
             {
@@ -331,16 +333,16 @@ namespace MeshShaderRenderer
                                  error.what());
             }
             traditional.VS = {velocityVS->GetBufferPointer(), velocityVS->GetBufferSize()};
-            traditional.PS = stream.PS.Value;
+            traditional.PS = stream.PixelShader.Value;
             traditional.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
             traditional.NumRenderTargets = 1;
             for (auto& format : traditional.RTVFormats)
             {
                 format = DXGI_FORMAT_UNKNOWN;
             }
-            traditional.RTVFormats[0] = stream.Targets.Value.RTFormats[0];
-            traditional.DepthStencilState = stream.Depth.Value;
-            Check(device->CreateGraphicsPipelineState(&traditional, IID_PPV_ARGS(&state.VelocityFallbackPSO)));
+            traditional.RTVFormats[0] = stream.RenderTargets.Value.RTFormats[0];
+            traditional.DepthStencilState = stream.DepthStencil.Value;
+            Check(PersistentPsoCache::Graphics(device, traditional, state.VelocityFallbackPSO));
             state.Reason = "Ready";
             WriteGraphicsLog("Phase 5 Mesh Shader PSO and indirect signature ready\n");
         }

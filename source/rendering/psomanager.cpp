@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "graphicslog.h"
 #include "persistentpsocache.h"
 #include "transparencyeffects.h"
 #include "psomanager.h"
@@ -15,6 +16,7 @@ bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE
                                              ComPtr<ID3D12PipelineState>& outPso)
 {
     outPso.Reset();
+    WriteGraphicsLog("Step: graphics pipeline %s\n", debugName ? debugName : "unnamed");
     HRESULT hr = PersistentPsoCache::Graphics(m_Device.Get(), desc, outPso);
     if (FAILED(hr))
     {

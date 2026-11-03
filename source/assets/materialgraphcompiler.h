@@ -64,6 +64,7 @@ namespace MaterialGraphVm
         std::string Error;
         std::vector<std::array<float, 4>> Texels;
         bool UsesTime = false;
+        bool UsesView = false;        // カメラの位置 / 距離 / 深度（Camera Distance・Distance Fade など）を使う
         bool WorldSolidSpace = false; // ソリッド / ノイズの既定座標をワールド空間にする（既定はオブジェクト空間）
         int TargetDims = 4;           // TargetNode を指定したとき：ノード出力の成分数（1〜4）
         int Instructions = 0;
@@ -81,4 +82,5 @@ namespace MaterialGraphVm
     Program Compile(const MaterialGraph& graph, const TextureResolver& resolveTexture);
     Program Compile(const MaterialGraph& graph, const TextureResolver& resolveTexture, const Options& options);
 } // namespace MaterialGraphVm
+
 

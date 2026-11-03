@@ -12,9 +12,78 @@
 #include "sun.h"
 #include "vertexdeformation.h"
 #include "texturemanager.h"
+#include "materialgraphshader.h"
 
 namespace
 {
+    // 発光の動的ベイクに渡す視点（GatherRaytracingGeometry の最初に 1 回だけ求める）
+    struct DynamicEmissionView
+    {
+        bool Valid = false;
+        XMFLOAT3 Camera{};
+        XMFLOAT4X4 View{};
+        float Time = 0.0f;
+    };
+    DynamicEmissionView g_DynamicEmissionView;
+
+    void PrepareDynamicEmissionView()
+    {
+        auto& view = g_DynamicEmissionView;
+        view = DynamicEmissionView{};
+        const EntityID camera = Camera::GetCameraEntity();
+        if (!ComponentManager::HasComponent<TransformComponent>(camera))
+        {
+            return;
+        }
+        view.Camera = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+        XMMATRIX viewMatrix = XMMatrixIdentity(), projection = XMMatrixIdentity();
+        Camera::GetCameraMatrices(camera, viewMatrix, projection);
+        XMStoreFloat4x4(&view.View, viewMatrix);
+        view.Time = MaterialManager::GraphTime();
+        view.Valid = true;
+    }
+
+    // マテリアルグラフの Emissive がカメラ距離 / Time で変わるとき、GI・反射・Lumen が読む発光を
+    // オブジェクトごとに焼き直したテクスチャへ差し替える（ラスターの表面はもともと画素ごとに評価している）
+    void ApplyDynamicEmission(RaytracingGeometry& geometry, EntityID entity, size_t slot)
+    {
+        if (!g_DynamicEmissionView.Valid)
+        {
+            return;
+        }
+        const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        const AssetHandle handle = MaterialManager::SlotHandle(source, slot);
+        MaterialManager::DynamicEmissionSource emission;
+        if (handle == 0 || !MaterialManager::GetDynamicEmissionSource(handle, emission))
+        {
+            return;
+        }
+        const auto& view = g_DynamicEmissionView;
+        // オブジェクトの基準点 = ワールド行列の平行移動（オブジェクトの原点）
+        const XMVECTOR center = XMVectorSet(geometry.World._41, geometry.World._42, geometry.World._43, 1.0f);
+        MaterialGraphGpu::DynamicEmissionRequest request;
+        request.Key = (static_cast<uint64_t>(entity) << 32) | static_cast<uint64_t>(slot & 0xFFFFFFFFu);
+        request.Program = emission.Program;
+        request.ProgramHash = emission.Hash;
+        request.UsesTime = emission.UsesTime;
+        request.UsesView = emission.UsesView;
+        request.Time = view.Time;
+        request.Camera = {view.Camera.x, view.Camera.y, view.Camera.z};
+        request.Distance = XMVectorGetX(XMVector3Length(center - XMLoadFloat3(&view.Camera)));
+        request.Depth = XMVectorGetZ(XMVector3TransformCoord(center, XMLoadFloat4x4(&view.View)));
+        MaterialGraphGpu::DynamicEmissionTexture texture;
+        if (!MaterialGraphGpu::RequestDynamicEmission(request, texture) || !texture.Texture)
+        {
+            return; // まだ焼けていない：このフレームは従来のベイク値
+        }
+        // 焼いた値は正規化していない HDR の発光なので、色 × 強度は 1 にする
+        geometry.BakedEmission = geometry.Emission;
+        geometry.Emission = XMFLOAT4{1.0f, 1.0f, 1.0f, 1.0f};
+        geometry.EmissionTexture = texture.Texture;
+        geometry.EmissionResidentMip = 0;
+        geometry.EmissionRevision = texture.Revision;
+    }
+
     void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture = -1, size_t slot = 0)
     {
         geometry.MediumID = static_cast<UINT>(entity);
@@ -59,6 +128,10 @@ namespace
                                     ? XMFLOAT4{material.EmissiveColor.x, material.EmissiveColor.y,
                                                material.EmissiveColor.z, material.EmissiveIntensity}
                                     : XMFLOAT4{0, 0, 0, 0};
+            if (material.RuntimeHandle != 0)
+            {
+                ApplyDynamicEmission(geometry, entity, slot);
+            }
             // ラスタ描画は、マテリアルアセットではプリミティブ頂点色を、従来の頂点色描画では
             // AssetBaseColor を無視する。その規則を維持する。
             geometry.UsesAssetMaterial = material.RuntimeHandle != 0;
@@ -290,6 +363,7 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
 {
     vector<RaytracingGeometry> geometry;
     geometry.reserve(World::GetView<MeshComponent>().size());
+    PrepareDynamicEmissionView();
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
         if (!IsOpaqueCaster(entity))
@@ -329,3 +403,4 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
     }
     return geometry;
 }
+

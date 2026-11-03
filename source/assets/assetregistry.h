@@ -16,6 +16,7 @@ class AssetRegistry
     AssetHandle Register(const std::filesystem::path& path, AssetType type, std::string& error);
     std::filesystem::path Resolve(AssetHandle handle) const;
     AssetType TypeOf(AssetHandle handle) const;
+    std::vector<AssetHandle> HandlesOfType(AssetType type) const;
     bool Refresh(std::string& error);
     bool Move(AssetHandle handle, const std::filesystem::path& destination, std::string& error);
     AssetHandle Duplicate(AssetHandle handle, const std::filesystem::path& destination, std::string& error);
@@ -38,4 +39,3 @@ class AssetRegistry
     std::unordered_set<AssetHandle> m_Collisions;
     bool Contains(const std::filesystem::path& path) const;
 };
-

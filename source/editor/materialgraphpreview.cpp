@@ -132,6 +132,7 @@ namespace MaterialGraphPreview
             int Resolution = kNodeResolution;
             bool Sphere = false;
             bool Dirty = true;
+            uint64_t Key = 0; // 評価したときのノードのキー（NodeKeys）。同じなら描き直さない
             ImTextureData* Texture = nullptr;
         };
 
@@ -145,11 +146,14 @@ namespace MaterialGraphPreview
             uint32_t OutputPins = 0;
             bool Animated = false;
             int Resolution = 64;
+            uint64_t Key = 0; // コンパイルしたときのノードのキー（同じなら命令列を使い回す）
         };
 
         struct GraphCache
         {
             std::unordered_map<uint64_t, GpuNode> Gpu; // GPU で評価できたノード（無いものは CPU）
+            std::unordered_map<uint64_t, uint64_t> GpuFailed; // GPU にできなかったノード → そのときのキー
+            std::vector<uint64_t> Keys; // ノードごとのキー（自分 + 上流の内容。Topo と同じ添字）
             uint64_t Signature = ~0ull;
             int SignatureFrame = -1;
             double LastEvaluation = -1.0;
@@ -327,12 +331,17 @@ namespace MaterialGraphPreview
         }
 
         // Normal 入力の値を接空間の法線（-1〜1）に直す。Color サンプラーの法線マップ（旧グラフ）は格納値に戻す
-        void DecodeNormalInput(const MaterialGraph& graph, const MaterialGraphNode& output, Value tangent, float out[3])
+        bool IsLegacyColorNormal(const MaterialGraph& graph, const MaterialGraphNode& output)
         {
             const auto* source = ResolveSource(graph, output, PinIndex(Pin::Normal));
+            return source && source->SplitPins.empty() && source->Kind == Kind::TextureSample &&
+                   static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color);
+        }
+
+        void DecodeNormalInput(bool legacyColorNormal, Value tangent, float out[3])
+        {
             tangent = MaterialGraphEval::Promote(tangent, 3);
-            if (source && source->SplitPins.empty() && source->Kind == Kind::TextureSample &&
-                static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color))
+            if (legacyColorNormal)
             {
                 for (int i = 0; i < 3; ++i)
                 {
@@ -344,6 +353,36 @@ namespace MaterialGraphPreview
             out[2] = tangent.V[2];
         }
 
+        void DecodeNormalInput(const MaterialGraph& graph, const MaterialGraphNode& output, Value tangent, float out[3])
+        {
+            DecodeNormalInput(IsLegacyColorNormal(graph, output), tangent, out);
+        }
+
+        // Material Output のピンの状態（画素ごとに接続を探さないよう、評価の前に 1 回だけ調べる）
+        struct OutputInfo
+        {
+            bool Height = false;
+            bool Normal = false;
+            bool OpacityMask = false;
+            bool Transmission = false;
+            bool LegacyColorNormal = false;
+        };
+
+        OutputInfo BuildOutputInfo(const MaterialGraph& graph, const MaterialGraphNode& output)
+        {
+            const auto used = [&](Pin pin) {
+                return ResolveSource(graph, output, PinIndex(pin)) != nullptr ||
+                       graph.HasOutputDirectValue(output, PinIndex(pin));
+            };
+            OutputInfo info;
+            info.Height = ResolveSource(graph, output, PinIndex(Pin::Height)) != nullptr;
+            info.Normal = used(Pin::Normal);
+            info.OpacityMask = used(Pin::OpacityMask);
+            info.Transmission = used(Pin::Transmission);
+            info.LegacyColorNormal = IsLegacyColorNormal(graph, output);
+            return info;
+        }
+
         float ClipValue(const MaterialGraph& graph)
         {
             return graph.Settings.AlphaCutoff >= 0.0f ? graph.Settings.AlphaCutoff : kDefaultClip;
@@ -351,11 +390,11 @@ namespace MaterialGraphPreview
 
         // ---------------------------------------------------------------- Material Output の簡易 PBR（POM / 高さ法線込み）
         ImU32 ShadeOutput(Evaluator& evaluator, const MaterialGraph& graph, const MaterialGraphNode& output,
-                          const Context& base, int x, int y, int resolution)
+                          const OutputInfo& info, const Context& base, int x, int y, int resolution)
         {
             Context c = base;
-            const bool heightLinked = ResolveSource(graph, output, PinIndex(Pin::Height)) != nullptr;
-            const bool normalLinked = ResolveSource(graph, output, PinIndex(Pin::Normal)) != nullptr;
+            const bool heightLinked = info.Height;
+            const bool normalLinked = info.Normal;
             float depth = 0.0f;
             if (heightLinked)
             {
@@ -421,7 +460,8 @@ namespace MaterialGraphPreview
             };
             if (normalLinked)
             {
-                DecodeNormalInput(graph, output, evaluator.Input(output, PinIndex(Pin::Normal), 0), tangentNormal);
+                DecodeNormalInput(info.LegacyColorNormal, evaluator.Input(output, PinIndex(Pin::Normal), 0),
+                                  tangentNormal);
                 const float intensity = (std::max)(in(Pin::NormalIntensity).V[0], 0.0f);
                 tangentNormal[0] *= intensity;
                 tangentNormal[1] *= intensity;
@@ -436,11 +476,11 @@ namespace MaterialGraphPreview
             const float mask = in(Pin::OpacityMask).V[0];
             const float ao = Saturate(in(Pin::AO).V[0]);
             const float transmission = Saturate(in(Pin::Transmission).V[0]);
-            if (ResolveSource(graph, output, PinIndex(Pin::OpacityMask)) && mask < ClipValue(graph))
+            if (info.OpacityMask && mask < ClipValue(graph))
             {
                 return 0; // Opacity Mask
             }
-            if (ResolveSource(graph, output, PinIndex(Pin::Transmission)))
+            if (info.Transmission)
             {
                 opacity *= 1.0f - 0.7f * transmission; // 透過の目安（背景が透けて見える）
             }
@@ -537,7 +577,19 @@ namespace MaterialGraphPreview
                     {
                         continue;
                     }
+                    const uint64_t key = i < cache.Keys.size() ? cache.Keys[i] : 0;
+                    if (!timeOnly && key != 0 && !topology.TimeDependent[i])
+                    {
+                        // 上流（自分 + 入力側）が変わっていないノードは描き直さない（値の変更は下流だけ再評価）
+                        const auto existing = cache.Images.find(node.Id);
+                        if (existing != cache.Images.end() && existing->second.Key == key &&
+                            existing->second.Sphere == sphere && !existing->second.Pixels.empty())
+                        {
+                            continue;
+                        }
+                    }
                     auto& image = cache.Images[node.Id];
+                    image.Key = key;
                     image.Sphere = sphere;
                     image.Resolution = kNodeResolution;
                     image.Pixels.assign(static_cast<size_t>(kNodeResolution) * kNodeResolution, 0);
@@ -549,9 +601,20 @@ namespace MaterialGraphPreview
                     continue;
                 }
                 std::vector<uint8_t> colorNode(targets.size());
+                std::vector<uint8_t> normalNode(targets.size()); // 法線系ノード（-1〜1 を 0〜1 にして表示）
                 for (size_t t = 0; t < targets.size(); ++t)
                 {
-                    colorNode[t] = IsColorNode(graph, graph.Nodes[targets[t].first]) ? 1 : 0;
+                    const auto& target = graph.Nodes[targets[t].first];
+                    colorNode[t] = IsColorNode(graph, target) ? 1 : 0;
+                    const Kind kind = target.Kind;
+                    normalNode[t] =
+                        (kind == Kind::NormalFromHeight || kind == Kind::BlendAngleCorrectedNormals ||
+                         kind == Kind::FlattenNormal || kind == Kind::ConvertToNormal ||
+                         (kind == Kind::ConvertToNormalHeight && target.Value[0] > 0.5f) ||
+                         ((kind == Kind::TextureSample || (kind == Kind::ConvertToTexture && target.Texture != 0)) &&
+                          static_cast<int>(target.Value[0]) == static_cast<int>(MaterialSamplerType::Normal)))
+                            ? 1
+                            : 0;
                 }
                 for (int y = 0; y < kNodeResolution; ++y)
                 {
@@ -574,15 +637,7 @@ namespace MaterialGraphPreview
                         {
                             Value value = evaluator.Node(targets[t].first);
                             // 法線系ノードは -1〜1 を 0〜1 に直して表示する（UE と同じ見え方）
-                            const Kind kind = graph.Nodes[targets[t].first].Kind;
-                            if (kind == Kind::NormalFromHeight || kind == Kind::BlendAngleCorrectedNormals ||
-                                kind == Kind::FlattenNormal ||
-                                kind == Kind::ConvertToNormal ||
-                                (kind == Kind::ConvertToNormalHeight && graph.Nodes[targets[t].first].Value[0] > 0.5f) ||
-                                ((kind == Kind::TextureSample ||
-                                  (kind == Kind::ConvertToTexture && graph.Nodes[targets[t].first].Texture != 0)) &&
-                                 static_cast<int>(graph.Nodes[targets[t].first].Value[0]) ==
-                                     static_cast<int>(MaterialSamplerType::Normal)))
+                            if (normalNode[t] != 0)
                             {
                                 for (int c = 0; c < 3; ++c)
                                 {
@@ -603,11 +658,24 @@ namespace MaterialGraphPreview
                 {
                     continue;
                 }
+                const size_t outputIndex = topology.Index.at(node.Id);
+                const uint64_t key = outputIndex < cache.Keys.size() ? cache.Keys[outputIndex] : 0;
+                if (!timeOnly && key != 0 && !topology.TimeDependent[outputIndex])
+                {
+                    const auto existing = cache.Images.find(node.Id);
+                    if (existing != cache.Images.end() && existing->second.Key == key &&
+                        !existing->second.Pixels.empty())
+                    {
+                        continue; // 出力に繋がる式が変わっていない
+                    }
+                }
                 auto& image = cache.Images[node.Id];
                 image.Sphere = true;
                 image.Resolution = kOutputResolution;
                 image.Pixels.assign(static_cast<size_t>(kOutputResolution) * kOutputResolution, 0);
                 image.Dirty = true;
+                image.Key = key;
+                const OutputInfo info = BuildOutputInfo(graph, node);
                 for (int y = 0; y < kOutputResolution; ++y)
                 {
                     for (int x = 0; x < kOutputResolution; ++x)
@@ -616,7 +684,7 @@ namespace MaterialGraphPreview
                         if (SphereContext(x, y, kOutputResolution, 0.6f, 0.25f, time, context))
                         {
                             image.Pixels[static_cast<size_t>(y) * kOutputResolution + x] =
-                                ShadeOutput(evaluator, graph, node, context, x, y, kOutputResolution);
+                                ShadeOutput(evaluator, graph, node, info, context, x, y, kOutputResolution);
                         }
                     }
                 }
@@ -634,19 +702,122 @@ namespace MaterialGraphPreview
         }
 
         // プレビューを GPU で評価できるノードの命令列を作る（対応外のノードに依存するものは CPU のまま）
+        // ノードごとのキー：自分の内容 + 入力側（上流）のキー + グラフ設定 + テクスチャの世代。
+        // 値を 1 つ変えても、キーが変わるのはそのノードと下流だけになる（他のノードは命令列 / 画像を使い回す）
+        void BuildNodeKeys(const MaterialGraph& graph, GraphCache& cache)
+        {
+            const auto& topology = cache.Topo;
+            const size_t count = graph.Nodes.size();
+            uint64_t global = Mix(0xC0FFEEull, MaterialGraphTextures::Generation());
+            const auto& settings = graph.Settings;
+            for (const int v : {settings.Mode, settings.Surface, settings.ShadingModel, settings.SolidSpace,
+                                settings.RuntimeEvaluation ? 1 : 0})
+            {
+                global = Mix(global, static_cast<uint64_t>(static_cast<int64_t>(v)));
+            }
+            global = Mix(global, FloatBits(settings.AlphaCutoff));
+            cache.Keys.assign(count, 0);
+            std::vector<uint8_t> state(count, 0);
+            std::function<uint64_t(size_t, int)> visit = [&](size_t index, int depth) -> uint64_t {
+                if (state[index] == 1)
+                {
+                    return cache.Keys[index];
+                }
+                if (state[index] == 2 || depth > 256)
+                {
+                    return 0x5EEDull; // 循環（通常は Connect で防がれる）
+                }
+                state[index] = 2;
+                const auto& node = graph.Nodes[index];
+                uint64_t hash = Mix(global, node.Id);
+                hash = Mix(hash, static_cast<uint64_t>(node.Kind));
+                hash = Mix(hash, node.Texture);
+                for (const float v : node.Value)
+                {
+                    hash = Mix(hash, FloatBits(v));
+                }
+                hash = Mix(hash, node.SplitPins.size());
+                for (size_t p = 0; p < node.PinValues.size(); ++p)
+                {
+                    if (std::isfinite(node.PinValues[p]))
+                    {
+                        hash = Mix(Mix(hash, p + 1), FloatBits(node.PinValues[p]));
+                    }
+                }
+                for (size_t p = 0; p < node.PinVectors.size(); ++p)
+                {
+                    if (MaterialGraph::HasPinVector(node, p))
+                    {
+                        hash = Mix(hash, (p + 1) << 8);
+                        for (const float v : node.PinVectors[p])
+                        {
+                            hash = Mix(hash, FloatBits(v));
+                        }
+                    }
+                }
+                const bool table = topology.InputOffset.size() == count + 1;
+                for (size_t p = 0; p < node.InputPins.size(); ++p)
+                {
+                    if (!table)
+                    {
+                        hash = Mix(hash, 0xBADull); // 表が無い（通常は無い）：常に作り直す
+                        hash = Mix(hash, static_cast<uint64_t>(ImGui::GetFrameCount()));
+                        continue;
+                    }
+                    const auto& source = topology.Inputs[topology.InputOffset[index] + p];
+                    hash = Mix(hash, source.Linked ? 1u : 0u);
+                    if (source.Node >= 0)
+                    {
+                        hash = Mix(hash, visit(static_cast<size_t>(source.Node), depth + 1));
+                        hash = Mix(hash, static_cast<uint64_t>(source.Output));
+                    }
+                }
+                if (hash == 0)
+                {
+                    hash = 1;
+                }
+                cache.Keys[index] = hash;
+                state[index] = 1;
+                return hash;
+            };
+            for (size_t i = 0; i < count; ++i)
+            {
+                visit(i, 0);
+            }
+        }
+
+        // プレビューを GPU で評価できるノードの命令列を作る（対応外のノードに依存するものは CPU のまま）。
+        // キーが変わったノードだけコンパイルし直す（以前は変更のたびに全ノードをコンパイルしていた：O(ノード数²)）
         void CompileGpuPreviews(const MaterialGraph& graph, GraphCache& cache)
         {
-            cache.Gpu.clear();
             if (!MaterialGraphGpu::IsAvailable())
             {
+                cache.Gpu.clear();
                 return;
             }
+            std::unordered_map<uint64_t, GpuNode> previous;
+            previous.swap(cache.Gpu);
+            std::unordered_map<uint64_t, uint64_t> failed;
             for (size_t i = 0; i < graph.Nodes.size(); ++i)
             {
                 const auto& node = graph.Nodes[i];
                 if (!HasPreview(node) || cache.Collapsed.contains(node.Id))
                 {
                     continue;
+                }
+                const uint64_t key = i < cache.Keys.size() ? cache.Keys[i] : 0;
+                if (key != 0)
+                {
+                    if (const auto reuse = previous.find(node.Id); reuse != previous.end() && reuse->second.Key == key)
+                    {
+                        cache.Gpu.emplace(node.Id, std::move(reuse->second));
+                        continue;
+                    }
+                    if (const auto miss = cache.GpuFailed.find(node.Id); miss != cache.GpuFailed.end() && miss->second == key)
+                    {
+                        failed.emplace(node.Id, key); // 前回 GPU にできなかった：同じ内容なら試さない
+                        continue;
+                    }
                 }
                 MaterialGraphVm::Options options;
                 const bool output = node.Kind == Kind::Output;
@@ -656,9 +827,14 @@ namespace MaterialGraphPreview
                     MaterialGraphVm::Compile(graph, &MaterialManager::ResolveGraphTexture, options);
                 if (!program.Success)
                 {
+                    if (key != 0)
+                    {
+                        failed.emplace(node.Id, key);
+                    }
                     continue;
                 }
                 GpuNode gpu;
+                gpu.Key = key;
                 gpu.Program = program.Texels;
                 gpu.Hash = program.Hash;
                 gpu.Animated = program.UsesTime;
@@ -666,9 +842,13 @@ namespace MaterialGraphPreview
                 {
                     gpu.PreviewMode = MaterialGraphGpu::Mode::OutputSphere;
                     gpu.Resolution = kOutputResolution;
-                    gpu.OutputPins = (ResolveSource(graph, node, PinIndex(Pin::Normal)) ? 1u : 0u) |
-                                     (ResolveSource(graph, node, PinIndex(Pin::OpacityMask)) ? 2u : 0u) |
-                                     (ResolveSource(graph, node, PinIndex(Pin::Transmission)) ? 4u : 0u);
+                    // 接続、またはピン横の直値が入っているピン
+                    const auto used = [&](Pin pin) {
+                        return ResolveSource(graph, node, PinIndex(pin)) != nullptr ||
+                               graph.HasOutputDirectValue(node, PinIndex(pin));
+                    };
+                    gpu.OutputPins = (used(Pin::Normal) ? 1u : 0u) | (used(Pin::OpacityMask) ? 2u : 0u) |
+                                     (used(Pin::Transmission) ? 4u : 0u);
                 }
                 else
                 {
@@ -680,6 +860,7 @@ namespace MaterialGraphPreview
                 }
                 cache.Gpu[node.Id] = std::move(gpu);
             }
+            cache.GpuFailed.swap(failed);
         }
 
         uint64_t ComputeSignature(const MaterialGraph& graph, const GraphCache& cache)
@@ -712,6 +893,7 @@ namespace MaterialGraphPreview
             if (changed)
             {
                 MaterialGraphEval::BuildTopology(graph, cache.Topo);
+                BuildNodeKeys(graph, cache);
                 CompileGpuPreviews(graph, cache);
             }
             if (changed || (cache.Topo.Animated && now - cache.LastEvaluation >= kAnimatedInterval))
@@ -887,6 +1069,7 @@ namespace MaterialGraphPreview
                 return;
             }
             // GPU が使えない（初期化失敗 / プレビュー表が一杯）→ 次の評価から CPU に戻す
+            cache.GpuFailed[node.Id] = gpu->second.Key;
             cache.Gpu.erase(gpu);
             cache.Signature = ~0ull;
         }
@@ -953,6 +1136,17 @@ namespace MaterialGraphPreview
                 {
                     hash = Mix(hash, i + 1);
                     hash = Mix(hash, FloatBits(node.PinValues[i]));
+                }
+            }
+            for (size_t i = 0; i < node.PinVectors.size(); ++i)
+            {
+                if (MaterialGraph::HasPinVector(node, i))
+                {
+                    hash = Mix(hash, (i + 1) << 8);
+                    for (const float component : node.PinVectors[i])
+                    {
+                        hash = Mix(hash, FloatBits(component));
+                    }
                 }
             }
         }
@@ -1292,6 +1486,10 @@ namespace MaterialGraphPreview
         const auto source = [&](Pin pin) {
             return Source(graph, *output, PinIndex(pin));
         };
+        // 接続されている、または未接続でピン横の直値が入っている（直値は定数 = 一様）
+        const auto assigned = [&](Pin pin) {
+            return source(pin) != nullptr || graph.HasOutputDirectValue(*output, PinIndex(pin));
+        };
         const auto uniformPin = [&](Pin pin) {
             const auto* node = source(pin);
             return !node || IsUniform(graph, *node);
@@ -1328,12 +1526,12 @@ namespace MaterialGraphPreview
         // エンジンが定数しか持たない項目：接続されていれば値（ピクセルごとの式なら平均）を入れる
         const auto scalarPin = [&](Pin pin, float minimum, float maximum, float& target) {
             const auto* node = source(pin);
-            if (!node)
+            if (!node && !assigned(pin))
             {
-                return false;
+                return false; // 未接続・直値なし：マテリアルアセットの値のまま
             }
             float value = 0.0f;
-            if (IsUniform(graph, *node))
+            if (!node || IsUniform(graph, *node))
             {
                 value = scalar(reader.PinValue(*output, pin));
             }
@@ -1358,7 +1556,7 @@ namespace MaterialGraphPreview
             }
             result.Alpha = AlphaSource::BaseColor;
             // The engine clips the BaseColor texture alpha, so constant masks must be baked too.
-            if (source(Pin::OpacityMask))
+            if (assigned(Pin::OpacityMask))
             {
                 result.Alpha = AlphaSource::OpacityMask;
             }
@@ -1411,7 +1609,7 @@ namespace MaterialGraphPreview
                 result.Data.DepthWrite = true;
                 result.Data.AlphaCutoff = ClipValue(graph);
             }
-            else if (source(Pin::Opacity))
+            else if (assigned(Pin::Opacity))
             {
                 const float alpha = Saturate(scalar(reader.PinValue(*output, Pin::Opacity)));
                 result.Data.BaseColor[3] *= alpha;
@@ -1452,11 +1650,11 @@ namespace MaterialGraphPreview
         // ---- 3 / 9: Normal と Normal Intensity
         {
             const auto* normal = source(Pin::Normal);
-            if (!normal)
+            if (!normal && !assigned(Pin::Normal))
             {
                 setSlot(MaterialTextureSlot::Normal, 0);
             }
-            else if (const auto* texture = PlainTexture(graph, normal))
+            else if (const auto* texture = normal ? PlainTexture(graph, normal) : nullptr)
             {
                 if (SamplerOf(*texture) == static_cast<int>(MaterialSamplerType::Linear))
                 {
@@ -1464,7 +1662,7 @@ namespace MaterialGraphPreview
                 }
                 setSlot(MaterialTextureSlot::Normal, texture->Texture);
             }
-            else if (IsUniform(graph, *normal))
+            else if (!normal || IsUniform(graph, *normal))
             {
                 float n[3];
                 DecodeNormalInput(graph, *output, reader.PinValue(*output, Pin::Normal), n);
@@ -1529,11 +1727,11 @@ namespace MaterialGraphPreview
         {
             const auto* ao = source(Pin::AO);
             ChannelMatch match;
-            if (!ao)
+            if (!ao && !assigned(Pin::AO))
             {
                 setSlot(MaterialTextureSlot::AO, 0);
             }
-            else if (IsUniform(graph, *ao) && scalar(reader.PinValue(*output, Pin::AO)) >= 0.999f)
+            else if ((!ao || IsUniform(graph, *ao)) && scalar(reader.PinValue(*output, Pin::AO)) >= 0.999f)
             {
                 setSlot(MaterialTextureSlot::AO, 0);
             }
@@ -1577,9 +1775,10 @@ namespace MaterialGraphPreview
         scalarPin(Pin::TransmissionRoughness, 0.0f, 1.0f, result.Data.TransmissionRoughness);
         scalarPin(Pin::Thickness, 0.0f, 65504.0f, result.Data.Thickness);
         scalarPin(Pin::ShadingStrength, 0.0f, 1.0f, result.Data.ShadingStrength);
-        if (const auto* absorption = source(Pin::Absorption))
+        if (assigned(Pin::Absorption))
         {
-            if (!IsUniform(graph, *absorption))
+            const auto* absorption = source(Pin::Absorption);
+            if (absorption && !IsUniform(graph, *absorption))
             {
                 result.Notes.push_back("Absorption: エンジンは定数のみ対応のため、UV 中央の値を使います");
             }
@@ -1630,7 +1829,7 @@ namespace MaterialGraphPreview
             {
                 result.Data.Transmission = 0.0f;
             }
-            else if (!source(Pin::Transmission) && result.Data.Transmission <= 0.0f)
+            else if (!assigned(Pin::Transmission) && result.Data.Transmission <= 0.0f)
             {
                 result.Data.Transmission = 1.0f;
                 result.Notes.push_back("Glass: Transmission が未接続で 0 だったので 1 にしました");
@@ -1666,6 +1865,8 @@ namespace MaterialGraphPreview
         g_Caches.erase(&graph);
     }
 } // namespace MaterialGraphPreview
+
+
 
 
 

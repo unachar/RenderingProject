@@ -1375,10 +1375,28 @@ void EditorShell::DrawViewportHeader()
     }
     ImGui::SetItemTooltip("座標系の切り替え (X)\nスケールは常にローカル");
 
-    // ---- スナップ
-    SameLineIfFits(240.0f * scale);
-    ImGui::Dummy(ImVec2(4.0f * scale, 0.0f));
+    // ---- 再生状態（左のツール群の直後）
+    if (ProjectManager::IsPlaying())
+    {
+        const char* state = ProjectManager::IsPaused() ? "❚❚ 一時停止中" : "● 実行中";
+        ImGui::SameLine(0.0f, 10.0f * scale);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ProjectManager::IsPaused() ? EditorPreferences::Warning() : EditorPreferences::Success(),
+                           "%s", state);
+    }
+
+    // ---- 右端：スナップ / 表示 / 追加（UE と同じく右寄せ）
+    //  幅は前フレームに測った値を使う（初回は概算）。収まらないときは次の行の右端へ折り返す
+    static float rightGroupWidth = 360.0f;
     ImGui::SameLine();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (avail < rightGroupWidth)
+    {
+        ImGui::NewLine();
+    }
+    const float startX = ImGui::GetCursorPosX() + (std::max)(0.0f, ImGui::GetContentRegionAvail().x - rightGroupWidth);
+    ImGui::SetCursorPosX(startX);
+    ImGui::BeginGroup();
     SnapControl("SnapT", "⊞", prefs.Snap.Translate, prefs.Snap.TranslateStep, kTranslateSteps,
                 IM_ARRAYSIZE(kTranslateSteps), "%.2f", "移動スナップ（Ctrl で反転）");
     ImGui::SameLine();
@@ -1387,11 +1405,7 @@ void EditorShell::DrawViewportHeader()
     ImGui::SameLine();
     SnapControl("SnapS", "⇲", prefs.Snap.Scale, prefs.Snap.ScaleStep, kScaleSteps, IM_ARRAYSIZE(kScaleSteps), "%.2f",
                 "スケールスナップ（Ctrl で反転）");
-
-    // ---- 表示 / 追加
-    SameLineIfFits(140.0f * scale);
-    ImGui::Dummy(ImVec2(4.0f * scale, 0.0f));
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 8.0f * scale);
     if (ImGui::Button("表示 ▾"))
     {
         ImGui::OpenPopup("##ViewportViewMenu");
@@ -1412,22 +1426,8 @@ void EditorShell::DrawViewportHeader()
         DrawAddMenuItems();
         ImGui::EndPopup();
     }
-
-    // ---- 右端：再生状態
-    if (ProjectManager::IsPlaying())
-    {
-        const char* state = ProjectManager::IsPaused() ? "❚❚ 一時停止中" : "● 実行中";
-        const float width = ImGui::CalcTextSize(state).x;
-        ImGui::SameLine();
-        const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width;
-        if (ImGui::GetCursorPosX() < x)
-        {
-            ImGui::SetCursorPosX(x);
-        }
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ProjectManager::IsPaused() ? EditorPreferences::Warning() : EditorPreferences::Success(),
-                           "%s", state);
-    }
+    ImGui::EndGroup();
+    rightGroupWidth = ImGui::GetItemRectSize().x;
     ImGui::PopStyleVar(2);
 }
 
@@ -1574,7 +1574,10 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
 
     const float bubble = 9.0f * scale;
     int hoveredItem = -1;
-    if (hovered && !active)
+    // 修正：以前は !active の条件があり、押した瞬間（activated のフレームは active も true）に
+    // hoveredItem が常に -1 になって g_NavPressedAxis が設定されず、クリックで視点が切り替わらなかった。
+    // ドラッグ中（オービット）はハイライトしない
+    if (hovered && !(active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)))
     {
         float bestDepth = 1e9f;
         for (int i = 0; i < 6; ++i)
@@ -1601,7 +1604,7 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
             OrbitEditorCamera(delta.x * 0.008f, delta.y * 0.008f);
         }
     }
-    if (deactivated && g_NavPressedAxis >= 0)
+    if (deactivated && g_NavPressedAxis >= 0 && inDisk)
     {
         const AxisItem& item = items[g_NavPressedAxis];
         float direction[3] = {0.0f, 0.0f, 0.0f};
@@ -1992,3 +1995,4 @@ void EditorShell::DrawPreferencesWindow()
     EditorPreferences::DrawPreferencesContent();
     ImGui::End();
 }
+

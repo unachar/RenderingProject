@@ -81,6 +81,8 @@ class ImGuiManager
     inline static bool m_GizmoLocalSpace = false;
     inline static ImVec2 m_SceneViewPos = {0.0f, 0.0f};
     inline static ImVec2 m_SceneViewSize = {1.0f, 1.0f};
+    // 右クリックの視点移動中、カーソルをビューポート内にとどめる（Update から毎フレーム）
+    static void UpdateRightLookCursorLock();
     inline static bool m_IsSceneViewHovered = false;
     inline static bool m_SceneGizmoCapturesMouse = false;
     inline static ImVec2 m_LastPickMouse = {-10000.0f, -10000.0f};
@@ -91,13 +93,16 @@ class ImGuiManager
     inline static string m_NewFolderName = "NewFolder";
     inline static string m_NewFileName = "NewMaterial.txt";
     inline static string m_TexturePathInput;
+
     struct DroppedFile
     {
         string Path;
         bool HasPoint = false;
         ImVec2 Point{0.0f, 0.0f};
     };
+
     inline static vector<DroppedFile> m_DroppedFiles;
+
     struct LiveMonitorDropTarget
     {
         EntityID Entity = g_kINVALID_ENTITY;
@@ -105,7 +110,9 @@ class ImGuiManager
         ImVec2 Min, Max;
         int Frame = 0;
     };
+
     inline static vector<LiveMonitorDropTarget> m_LiveMonitorDropTargets;
+
     struct TimelineAnimationDropTarget
     {
         EntityID Entity = g_kINVALID_ENTITY;
@@ -113,7 +120,9 @@ class ImGuiManager
         ImVec2 Min, Max;
         int Frame = 0;
     };
+
     inline static vector<TimelineAnimationDropTarget> m_TimelineAnimationDropTargets;
+
     // ---- ログ（コンソール）：重要度・時刻・連続重複のまとめ表示。ワーカースレッドからも安全に追加できる
     struct LogEntry
     {
@@ -123,6 +132,7 @@ class ImGuiManager
         double Time = 0.0;
         char Clock[9]{};
     };
+
     static constexpr size_t kMaxLogEntries = 2000;
     inline static deque<LogEntry> m_Logs;
     inline static std::recursive_mutex m_LogMutex;
@@ -410,6 +420,7 @@ class ImGuiManager
     }
 
     static void SaveProjectSettings();
+    static bool StartupAssetBrowserReady();
     static string SerializeProjectSettings();
     static constexpr UINT kSrvDescriptorCount = 64;
     inline static bool m_AssetBrowserStandalone = false;
@@ -459,5 +470,4 @@ class ImGuiManager
         return m_Exposure;
     }
 };
-
 

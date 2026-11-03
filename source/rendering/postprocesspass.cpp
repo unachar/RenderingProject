@@ -115,34 +115,11 @@ void PostProcessPass::UpdateCameraConstants()
     memcpy(m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), &constants, sizeof(constants));
 }
 
-namespace
-{
-    bool s_ColorManagementInitialized = false;
-    ColorManagement::ColorSpaceConfig s_ColorConfig;
-}
-
-void InitializeColorManagement()
-{
-    if (!s_ColorManagementInitialized)
-    {
-        s_ColorConfig.exposure = ImGuiManager::GetExposure();
-        s_ColorConfig.gamma = 2.2f;
-        s_ColorConfig.enableOCIO = true;
-
-        ColorManagement::GetColorManager().Initialize(s_ColorConfig);
-        s_ColorManagementInitialized = true;
-    }
-    else if (s_ColorConfig.exposure != ImGuiManager::GetExposure())
-    {
-        // Update exposure from ImGui
-        s_ColorConfig.exposure = ImGuiManager::GetExposure();
-        ColorManagement::GetColorManager().Initialize(s_ColorConfig);
-    }
-}
-
 void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 {
-    InitializeColorManagement();
+    // OCIO is initialized explicitly by consumers of its CPU/GPU transforms.
+    // The editor output does not use those transforms yet; exposure is already
+    // applied by the final shader and must not reload an OCIO config each frame.
     const uint64_t historyConfiguration =
         static_cast<uint64_t>(m_AntiAliasingMode) |
         (static_cast<uint64_t>(ResolveUpscaleMode(m_SceneWidth, m_SceneHeight, m_Width, m_Height)) << 8) |

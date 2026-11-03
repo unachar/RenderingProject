@@ -10,6 +10,7 @@
 #include "rendertargets.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
+#include "persistentpsocache.h"
 #include "lightingresources.h"
 #include "world.h"
 #include "renderersettings.h"
@@ -479,6 +480,8 @@ namespace
     bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false,
                                  bool sharc = false)
     {
+        WriteGraphicsLog("Step: radiance shader %s (telemetry=%u sharc=%u)\n", entry,
+                         static_cast<UINT>(telemetry), static_cast<UINT>(sharc));
         const D3D_SHADER_MACRO defines[] = {{"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
                                             {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"},
                                             {"RTXGI_SHARC", sharc ? "1" : "0"},
@@ -507,7 +510,7 @@ namespace
         D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
         desc.pRootSignature = g_Root.Get();
         desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
-        if (SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf()))))
+        if (SUCCEEDED(PersistentPsoCache::Compute(g_Device.Get(), desc, pipeline)))
         {
             return true;
         }
@@ -1123,6 +1126,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         HashEmission(emissionSignature, &source.World, sizeof(source.World));
         const auto texture = reinterpret_cast<uintptr_t>(source.EmissionTexture.Get());
         HashEmission(emissionSignature, &texture, sizeof(texture));
+        HashEmission(emissionSignature, &source.EmissionRevision, sizeof(source.EmissionRevision));
     }
     const float giDistance = RendererSettings::GetGiDistance();
     HashEmission(emissionSignature, &giDistance, sizeof(giDistance));
@@ -1241,6 +1245,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         const auto emission = entry.EmissionTexture.Get();
         HashEmission(signature, &texture, sizeof(texture));
         HashEmission(signature, &emission, sizeof(emission));
+        HashEmission(signature, &entry.EmissionRevision, sizeof(entry.EmissionRevision));
         HashEmission(signature, &entry.TextureResidentMip, sizeof(entry.TextureResidentMip));
         const auto height = entry.HeightTexture.Get();
         HashEmission(signature, &height, sizeof(height));
@@ -1820,3 +1825,4 @@ ID3D12Resource* RayReflections::GetGiNoisyResource()
 {
     return g_Frames[g_LastFrame].GiNoisy.Get();
 }
+

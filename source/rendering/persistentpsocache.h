@@ -35,6 +35,42 @@ class PersistentPsoCache final
         {
             Add(text, text ? strlen(text) : 0);
         }
+
+        void Blend(const D3D12_BLEND_DESC& state)
+        {
+            Add(state.AlphaToCoverageEnable);
+            Add(state.IndependentBlendEnable);
+            for (const auto& target : state.RenderTarget)
+            {
+                Add(target.BlendEnable);
+                Add(target.LogicOpEnable);
+                Add(target.SrcBlend);
+                Add(target.DestBlend);
+                Add(target.BlendOp);
+                Add(target.SrcBlendAlpha);
+                Add(target.DestBlendAlpha);
+                Add(target.BlendOpAlpha);
+                Add(target.LogicOp);
+                Add(target.RenderTargetWriteMask);
+            }
+        }
+
+        void DepthStencil(const D3D12_DEPTH_STENCIL_DESC& state)
+        {
+            Add(state.DepthEnable);
+            Add(state.DepthWriteMask);
+            Add(state.DepthFunc);
+            Add(state.StencilEnable);
+            Add(state.StencilReadMask);
+            Add(state.StencilWriteMask);
+            for (const auto& face : {state.FrontFace, state.BackFace})
+            {
+                Add(face.StencilFailOp);
+                Add(face.StencilDepthFailOp);
+                Add(face.StencilPassOp);
+                Add(face.StencilFunc);
+            }
+        }
     };
 
     template <class Fn> static HRESULT Create(ID3D12Device* device, Key key, ComPtr<ID3D12PipelineState>& pso, Fn fn)
@@ -68,6 +104,12 @@ class PersistentPsoCache final
             data.clear();
         }
         HRESULT hr = fn(data.empty() ? nullptr : data.data(), data.size());
+        if (SUCCEEDED(hr) && !data.empty())
+        {
+            // A driver-accepted cache entry is already complete. Avoid exporting
+            // and rewriting the same potentially large blob on every launch.
+            return hr;
+        }
         if (FAILED(hr) && !data.empty())
         {
             hr = fn(nullptr, 0);
@@ -103,6 +145,41 @@ class PersistentPsoCache final
     }
 
   public:
+    // Mesh streams contain shader/root-signature pointers, so hash the shader
+    // bytes and fixed state rather than the addresses in the stream itself.
+    template <class Stream>
+    static HRESULT Mesh(ID3D12Device2* device, Stream& stream, ComPtr<ID3D12PipelineState>& pso,
+                        D3D12_SHADER_BYTECODE amplificationShader = {})
+    {
+        if (!device)
+        {
+            return E_POINTER;
+        }
+        Key key;
+        key.Text("mesh-v1");
+        for (auto shader : {amplificationShader, stream.MeshShader.Value, stream.PixelShader.Value})
+        {
+            key.Add(shader.pShaderBytecode, shader.BytecodeLength);
+        }
+        // Hash named members: blend/depth descriptors contain padding that
+        // CD3DX12 default constructors do not initialize.
+        key.Blend(stream.Blend.Value);
+        key.Add(stream.SampleMask.Value);
+        key.Add(stream.Rasterizer.Value);
+        key.DepthStencil(stream.DepthStencil.Value);
+        key.Add(stream.Topology.Value);
+        key.Add(stream.RenderTargets.Value);
+        key.Add(stream.DepthFormat.Value);
+        key.Add(stream.SampleDescription.Value);
+        return Create(device, key, pso, [&](const void* bytes, size_t size) {
+            stream.CachedPso.Value = D3D12_CACHED_PIPELINE_STATE{bytes, size};
+            const D3D12_PIPELINE_STATE_STREAM_DESC description{sizeof(stream), &stream};
+            const HRESULT result = device->CreatePipelineState(&description, IID_PPV_ARGS(pso.ReleaseAndGetAddressOf()));
+            stream.CachedPso.Value = D3D12_CACHED_PIPELINE_STATE{};
+            return result;
+        });
+    }
+
     static HRESULT Graphics(ID3D12Device* device, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& source,
                             ComPtr<ID3D12PipelineState>& pso)
     {
@@ -111,15 +188,15 @@ class PersistentPsoCache final
             return E_POINTER;
         }
         Key key;
-        key.Text("graphics-v2");
+        key.Text("graphics-v3");
         for (auto shader : {source.VS, source.PS, source.DS, source.HS, source.GS})
         {
             key.Add(shader.pShaderBytecode, shader.BytecodeLength);
         }
-        key.Add(source.BlendState);
+        key.Blend(source.BlendState);
         key.Add(source.SampleMask);
         key.Add(source.RasterizerState);
-        key.Add(source.DepthStencilState);
+        key.DepthStencil(source.DepthStencilState);
         key.Add(source.IBStripCutValue);
         key.Add(source.PrimitiveTopologyType);
         key.Add(source.NumRenderTargets);

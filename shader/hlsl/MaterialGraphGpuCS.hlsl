@@ -3,6 +3,8 @@
 //  ・ノードプレビュー（平面 / 球）と Material Output のプレビュー（簡易 PBR）
 //  ・テクスチャへのベイク（Base Color / Normal / Metallic Roughness / AO / Emissive / Height）
 //  ・Convert To Texture / Convert To Solid の「作成」（ノード単体を UV 0〜1 で焼く）
+//  ・発光の動的ベイク（モード 5）：カメラ距離 / 時刻で変わる Emissive を、オブジェクトごとに毎フレーム焼く。
+//    GI / 反射 / Lumen のサーフェスキャッシュが読む発光テクスチャ（RayReflectionsCS の SampleEmission）になる
 // エンジンの描画と同じ命令列（MaterialGraphVM.hlsli）を使うので、プレビュー・ベイク・シーンの結果が一致する。
 // 実行時に DXC でコンパイルする（MaterialGraphGpu / materialgraphshader.cpp）。vcxproj への登録は不要
 // =====================================================================================================
@@ -10,7 +12,8 @@
 // ルート定数（materialgraphshader.cpp の GpuConstants と同じ並び）
 cbuffer GraphGpuConstants : register(b0)
 {
-    uint g_Mode;        // 0 ノード（平面）, 1 ノード（球）, 2 Material Output（球）, 3 ベイク, 4 ノードを焼く
+    uint g_Mode;        // 0 ノード（平面）, 1 ノード（球）, 2 Material Output（球）, 3 ベイク, 4 ノードを焼く,
+                        // 5 発光の動的ベイク
     uint g_ProgramRow;  // プログラム表の行
     uint g_CellX;       // 出力先の左上（プレビューの表）
     uint g_CellY;
@@ -24,6 +27,10 @@ cbuffer GraphGpuConstants : register(b0)
     uint g_OutputPins;  // 2：bit0 Normal, bit1 Opacity Mask, bit2 Transmission, bit3 Opacity が繋がっている
     float g_Yaw;
     float g_Pitch;
+    float3 g_ViewCamera;   // 5：実カメラのワールド座標（Camera Position ノード）
+    float g_ViewDistance;  // 5：カメラからオブジェクトまでの距離（Camera Distance / Distance Fade）
+    float g_ViewDepth;     // 5：オブジェクトのビュー深度（Pixel Depth）
+    float3 g_ViewPadding;
 };
 
 Texture2D<float4> GraphPrograms : register(t0);
@@ -47,9 +54,29 @@ float3 SurfaceViewDirectionCommon(float3 worldPosition, float3 cameraPosition)
     return float3(0, 0, -1);
 }
 
+// The editor compute root signature binds a texture table in space1. It does
+// not provide the per-material constants used by the scene's bindless path.
+#ifdef RP_BINDLESS
+#undef RP_BINDLESS
+#endif
+#define RP_BINDLESS 0
 #include "MaterialTextureHeap.hlsli"
 #include "noise.hlsl"
 
+// モード 5 だけ、視点に関わる入力を実カメラとオブジェクトの関係に置き換える（0〜4 は従来どおり）
+// （MaterialGraphVmInput はこの後の include で定義されるので、成分で受け取る）
+float StandaloneCameraDistance(float3 worldPos, float3 cameraPos)
+{
+    return g_Mode == 5u ? g_ViewDistance : length(worldPos - cameraPos);
+}
+
+float StandalonePixelDepth(float3 worldPos)
+{
+    return g_Mode == 5u ? g_ViewDepth : mul(float4(worldPos, 1), View).z;
+}
+
+#define MG_VM_CAMERA_DISTANCE(input) StandaloneCameraDistance((input).WorldPos, (input).CameraPos)
+#define MG_VM_PIXEL_DEPTH(input) StandalonePixelDepth((input).WorldPos)
 #define MG_VM_STANDALONE
 #define MG_VM_PROGRAM_TEXTURE GraphPrograms
 #define MG_VM_ROW ((int)g_ProgramRow)
@@ -205,7 +232,15 @@ void main(uint3 id : SV_DispatchThreadID)
     uint2 p = id.xy;
     if (g_Mode <= 2u)
     {
-        PreviewPoint pt = g_Mode == 0u ? PlanePoint(p, g_Resolution) : SpherePoint(p, g_Resolution);
+        PreviewPoint pt;
+        if (g_Mode == 0u)
+        {
+            pt = PlanePoint(p, g_Resolution);
+        }
+        else
+        {
+            pt = SpherePoint(p, g_Resolution);
+        }
         float4 color = float4(0, 0, 0, 0);
         if (pt.Valid)
         {
@@ -218,6 +253,17 @@ void main(uint3 id : SV_DispatchThreadID)
 
     // ---- ベイク：CPU の MaterialGraphBake::Evaluate と同じ（UV 0〜1、正面から見た値）
     PreviewPoint pt = PlanePoint(p, g_Resolution);
+    if (g_Mode == 5u)
+    {
+        // 発光の動的ベイク：模様（UV / 位置）は通常のベイクと同じ点で評価し、
+        // カメラ位置・距離・深度・時刻だけを実際の値にする。正規化せず HDR のまま書く（RGBA16F）
+        pt.Input.CameraPos = g_ViewCamera;
+        MaterialGraphVmOutput dynamicGraph = EvaluateMaterialGraphVm(1u, pt.Input, g_GraphSampler);
+        float3 e = dynamicGraph.Emissive;
+        e = float3(isfinite(e.x) ? max(e.x, 0) : 0, isfinite(e.y) ? max(e.y, 0) : 0, isfinite(e.z) ? max(e.z, 0) : 0);
+        BakeOutput[uint3(p, 0)] = float4(min(e, 65504.0f), 1);
+        return;
+    }
     MaterialGraphVmOutput graph = EvaluateMaterialGraphVm(1u, pt.Input, g_GraphSampler);
     if (g_Mode == 4u)
     {
@@ -284,3 +330,4 @@ void main(uint3 id : SV_DispatchThreadID)
         BakeOutput[uint3(p, 5)] = float4(h, h, h, 1);
     }
 }
+

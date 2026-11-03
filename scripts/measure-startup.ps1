@@ -2,6 +2,8 @@ param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [ValidateRange(1, 10)][int]$Runs = 1,
     [ValidateRange(1, 10000)][int]$Frames = 3,
+    [ValidateRange(30, 900)][int]$TimeoutSeconds = 180,
+    [string]$Executable,
     [string]$Scene,
     [switch]$DisableShaderCache,
     [switch]$DisableDxr,
@@ -55,13 +57,21 @@ try {
         if (Test-Path -LiteralPath $deviceLogPath) {
             $deviceLogLength = (Get-Item -LiteralPath $deviceLogPath).Length
         }
-        $process = Start-Process -FilePath (Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe") `
+        $executablePath = Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe"
+        if ($Executable) {
+            $executablePath = $Executable
+        }
+        $process = Start-Process -FilePath $executablePath `
             -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
         try {
             $timeout = [Diagnostics.Stopwatch]::StartNew()
+            $timedOut = $false
             while (-not $process.WaitForExit(1000)) {
-                if ($timeout.Elapsed.TotalSeconds -gt 180) {
-                    throw 'Startup smoke exceeded 180 seconds.'
+                if ($timeout.Elapsed.TotalSeconds -gt $TimeoutSeconds) {
+                    $timedOut = $true
+                    $process.Kill()
+                    $process.WaitForExit()
+                    break
                 }
             }
             $process.Refresh()
@@ -77,6 +87,9 @@ try {
             }
             $destination = Join-Path $outputDirectory "$Label-$Configuration-$run.log"
             Set-Content -LiteralPath $destination -Value $runLog -Encoding utf8
+            if ($timedOut) {
+                throw "Startup smoke exceeded $TimeoutSeconds seconds. See $destination"
+            }
             if ($process.ExitCode -ne 0 -or $runLog -notmatch 'startup smoke test complete; shutdown complete') {
                 throw "Startup smoke failed (exit $($process.ExitCode)). See $destination"
             }
@@ -85,6 +98,8 @@ try {
                 throw "GPU submission failed during startup. See $deviceLogPath"
             }
             $shown = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: window shown')
+            $started = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: WinMain begin')
+            $assetsReady = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: startup assets ready')
             $ready = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: first frame complete')
             if (-not $shown.Success -or -not $ready.Success) {
                 throw "Missing startup timings: $destination"
@@ -97,6 +112,14 @@ try {
                 Frames = $Frames
                 Scene = $Scene
                 WindowToFirstFrameMs = [math]::Round($duration, 1)
+                WinMainToFirstFrameMs = if ($started.Success) {
+                    [math]::Round([double]::Parse($ready.Groups[1].Value, $culture) -
+                        [double]::Parse($started.Groups[1].Value, $culture), 1)
+                } else { $null }
+                WinMainToAssetsReadyMs = if ($assetsReady.Success -and $started.Success) {
+                    [math]::Round([double]::Parse($assetsReady.Groups[1].Value, $culture) -
+                        [double]::Parse($started.Groups[1].Value, $culture), 1)
+                } else { $null }
                 Log = $destination
             }
         }

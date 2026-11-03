@@ -17,7 +17,8 @@ namespace
     constexpr size_t MaxLinks = 8192;
     constexpr uint64_t MaxIdentity = (uint64_t{1} << 53) - 1;
     const std::vector<MaterialNodeDefinition> NodeDefinitions = {
-        {Kind::Constant, "Constant", Type::Scalar, {}},
+        // 定数：入力ピンは成分ごと（未接続 = ノード上の値 node.Value[i]。接続 = 入力の値）
+        {Kind::Constant, "Constant", Type::Scalar, {{"Value", Type::Scalar}}},
         {Kind::ScalarParameter, "Scalar Parameter", Type::Scalar, {}},
         {Kind::VectorParameter, "Vector Parameter", Type::Vector3, {}},
         {Kind::ColorParameter, "Color Parameter", Type::Vector4, {}},
@@ -72,9 +73,15 @@ namespace
           {"Absorption", Type::Vector3},
           {"Shading Model Strength", Type::Scalar, {1}}}},
         {Kind::Group, "Comment Group", Type::Numeric, {}},
-        {Kind::Constant2Vector, "Constant2Vector", Type::Vector2, {}},
-        {Kind::Constant3Vector, "Constant3Vector", Type::Vector3, {}},
-        {Kind::Constant4Vector, "Constant4Vector", Type::Vector4, {}},
+        {Kind::Constant2Vector, "Constant2Vector", Type::Vector2, {{"R", Type::Scalar}, {"G", Type::Scalar}}},
+        {Kind::Constant3Vector,
+         "Constant3Vector",
+         Type::Vector3,
+         {{"R", Type::Scalar}, {"G", Type::Scalar}, {"B", Type::Scalar}}},
+        {Kind::Constant4Vector,
+         "Constant4Vector",
+         Type::Vector4,
+         {{"R", Type::Scalar}, {"G", Type::Scalar}, {"B", Type::Scalar}, {"A", Type::Scalar, {1, 1, 1, 1}}}},
         {Kind::TextureCoordinate, "TexCoord", Type::Vector2, {}},
         {Kind::Panner,
          "Panner",
@@ -1117,7 +1124,8 @@ bool MaterialGraph::RecombineOutput(uint64_t id)
 
 bool MaterialGraph::IsPinValueEditable(MaterialNodeKind kind, size_t input)
 {
-    if (kind == Kind::Output || kind == Kind::Reroute || kind == Kind::Group || kind == Kind::NoiseLayers ||
+    // 定数の成分ピンは node.Value[i] を直接編集する（PinValues は使わない）
+    if (IsComponentConstant(kind) || kind == Kind::Reroute || kind == Kind::Group || kind == Kind::NoiseLayers ||
         kind == Kind::BreakVector)
     {
         return false;
@@ -1148,6 +1156,75 @@ bool MaterialGraph::IsPinValueEditable(MaterialNodeKind kind, size_t input)
     }
 }
 
+bool MaterialGraph::IsComponentConstant(MaterialNodeKind kind)
+{
+    return kind == Kind::Constant || kind == Kind::Constant2Vector || kind == Kind::Constant3Vector ||
+           kind == Kind::Constant4Vector;
+}
+
+bool MaterialGraph::HasConnectedComponent(const MaterialGraphNode& node) const
+{
+    if (!IsComponentConstant(node.Kind))
+    {
+        return false;
+    }
+    for (const auto pin : node.InputPins)
+    {
+        if (InputLink(pin))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MaterialGraph::IsPinVectorEditable(MaterialNodeKind kind, size_t input)
+{
+    if (kind != Kind::Output)
+    {
+        return false;
+    }
+    const auto& definition = Definition(kind);
+    if (input >= definition.Inputs.size())
+    {
+        return false;
+    }
+    const auto type = definition.Inputs[input].Type;
+    return type == Type::Vector2 || type == Type::Vector3 || type == Type::Vector4;
+}
+
+bool MaterialGraph::HasPinVector(const MaterialGraphNode& node, size_t input)
+{
+    return input < node.PinVectors.size() && std::isfinite(node.PinVectors[input][0]);
+}
+
+bool MaterialGraph::ClearPinOverride(MaterialGraphNode& node, size_t input)
+{
+    bool cleared = false;
+    if (HasPinValue(node, input))
+    {
+        node.PinValues[input] = std::numeric_limits<float>::quiet_NaN();
+        cleared = true;
+    }
+    if (HasPinVector(node, input))
+    {
+        node.PinVectors[input].fill(std::numeric_limits<float>::quiet_NaN());
+        cleared = true;
+    }
+    return cleared;
+}
+
+bool MaterialGraph::HasOutputDirectValue(const MaterialGraphNode& output, size_t input) const
+{
+    if (output.Kind != Kind::Output || input >= output.InputPins.size() || InputLink(output.InputPins[input]) ||
+        !IsOutputPinActive(input))
+    {
+        return false;
+    }
+    return (IsPinValueEditable(output.Kind, input) && HasPinValue(output, input)) ||
+           (IsPinVectorEditable(output.Kind, input) && HasPinVector(output, input));
+}
+
 bool MaterialGraph::HasPinValue(const MaterialGraphNode& node, size_t input)
 {
     return input < node.PinValues.size() && std::isfinite(node.PinValues[input]);
@@ -1160,6 +1237,16 @@ std::array<float, 4> MaterialGraph::UnconnectedInputValue(const MaterialGraphNod
     if (input < definition.Inputs.size())
     {
         value = definition.Inputs[input].Default;
+    }
+    if (IsComponentConstant(node.Kind) && input < definition.Inputs.size() && input < node.Value.size())
+    {
+        value.fill(node.Value[input]); // 未接続の成分 = ノード上の値
+        return value;
+    }
+    if (HasPinVector(node, input) && IsPinVectorEditable(node.Kind, input))
+    {
+        value = node.PinVectors[input]; // Material Output の色 / 法線の直値
+        return value;
     }
     if (HasPinValue(node, input) && IsPinValueEditable(node.Kind, input))
     {
@@ -1450,6 +1537,25 @@ std::string MaterialGraph::Serialize() const
                     any = true;
                 }
             }
+            Json::Value vectors(Json::objectValue);
+            bool anyVector = false;
+            for (size_t i = 0; i < node.PinVectors.size(); ++i)
+            {
+                if (HasPinVector(node, i))
+                {
+                    Json::Value components(Json::arrayValue);
+                    for (const float component : node.PinVectors[i])
+                    {
+                        components.append(std::isfinite(component) ? component : 0.0f);
+                    }
+                    vectors[std::to_string(i)] = components;
+                    anyVector = true;
+                }
+            }
+            if (anyVector)
+            {
+                value["pinVectors"] = vectors;
+            }
             if (any)
             {
                 value["pinValues"] = pins;
@@ -1608,6 +1714,39 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
                 node.PinValues[index] = pinValue;
             }
         }
+        if (value.isMember("pinVectors") && value["pinVectors"].isObject())
+        {
+            const Json::Value& vectors = value["pinVectors"];
+            for (const auto& key : vectors.getMemberNames())
+            {
+                char* end = nullptr;
+                const unsigned long index = std::strtoul(key.c_str(), &end, 10);
+                const Json::Value& components = vectors[key];
+                if (!end || *end != '\0' || index >= definition->Inputs.size() || !components.isArray() ||
+                    components.size() != 4)
+                {
+                    continue;
+                }
+                std::array<float, 4> vector{};
+                bool valid = true;
+                for (Json::ArrayIndex c = 0; c < 4; ++c)
+                {
+                    valid &= components[c].isNumeric() && std::isfinite(components[c].asFloat());
+                    vector[c] = valid ? components[c].asFloat() : 0.0f;
+                }
+                if (!valid)
+                {
+                    continue;
+                }
+                if (node.PinVectors.size() <= index)
+                {
+                    std::array<float, 4> unset;
+                    unset.fill(std::numeric_limits<float>::quiet_NaN());
+                    node.PinVectors.resize(index + 1, unset);
+                }
+                node.PinVectors[index] = vector;
+            }
+        }
         for (const auto& pin : value["inputs"])
         {
             if (!pin.isUInt64())
@@ -1731,6 +1870,7 @@ bool MaterialGraph::Load(const std::filesystem::path& path, MaterialGraph& graph
     }
     return Deserialize(contents.str(), graph, error);
 }
+
 
 
 

@@ -46,6 +46,7 @@ namespace MaterialGraphGpu
         OutputSphere = 2,
         Bake = 3,
         BakeNode = 4,
+        DynamicEmission = 5,
     };
 
     // ---- プレビュー（UI スレッド）
@@ -88,10 +89,37 @@ namespace MaterialGraphGpu
     // 完了まで待ち、スロットごとの値（線形 RGBA）を返す。失敗 / タイムアウトは false（CPU 評価に戻す）
     bool Wait(const std::shared_ptr<Job>& job, double timeoutSeconds, std::array<Texels, 6>& slices);
 
+    // ---- 発光の動的ベイク（GI / 反射 / Lumen 用）
+    //  カメラ距離・Time などで変わる Emissive を、オブジェクト（エンティティ + スロット）ごとに RGBA16F へ焼く。
+    //  毎フレーム要求し、入力（プログラム / カメラ / 時刻）が変わったときだけ GPU で焼き直す。
+    //  Execute（フレームの最後）で記録するので、結果は次のフレームの GI から使われる（1 フレーム遅れ）。
+    //  テクスチャは焼いていない間 PIXEL_SHADER_RESOURCE（RayReflections の発光テクスチャと同じ前提）
+    struct DynamicEmissionRequest
+    {
+        uint64_t Key = 0;              // (エンティティ << 32) | スロット
+        const Texels* Program = nullptr;
+        uint64_t ProgramHash = 0;
+        bool UsesTime = false;
+        bool UsesView = false;
+        float Time = 0.0f;
+        std::array<float, 3> Camera{}; // 実カメラのワールド座標
+        float Distance = 0.0f;         // カメラ → オブジェクトの距離
+        float Depth = 0.0f;            // オブジェクトのビュー深度
+    };
+    struct DynamicEmissionTexture
+    {
+        Microsoft::WRL::ComPtr<ID3D12Resource> Texture;
+        uint64_t Revision = 0; // 焼き直すたびに増える（GI / Lumen のキャッシュ判定用）
+    };
+    // 1 回以上焼いたテクスチャがあれば true（まだ無ければ false：呼び出し側は従来のベイク値を使う）
+    bool RequestDynamicEmission(const DynamicEmissionRequest& request, DynamicEmissionTexture& result);
+
     // RenderFrame::EndDraw から呼ぶ（UI の後、ImGui の描画の前）
     void Execute(ID3D12GraphicsCommandList* commandList);
     bool IsAvailable();
+    bool PrepareStartupAssets();
     const char* LastError();
     void Shutdown();
 } // namespace MaterialGraphGpu
+
 

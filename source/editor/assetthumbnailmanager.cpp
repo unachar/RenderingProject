@@ -709,6 +709,23 @@ void AssetThumbnailManager::ProcessGenerationBudget()
     }
 }
 
+bool AssetThumbnailManager::HasPendingVisibleAssets()
+{
+    for (const auto& [handle, entry] : entries)
+    {
+        const auto* record = cache.Find(handle);
+        if (!record || entry.LastUsedFrame + 1 < frame || record->Priority > ThumbnailPriority::Visible)
+        {
+            continue;
+        }
+        if (record->State != ThumbnailState::Ready && record->State != ThumbnailState::Failed)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void AssetThumbnailManager::Refresh()
 {
     for (auto& [handle, entry] : entries)

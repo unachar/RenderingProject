@@ -328,6 +328,9 @@ struct MaterialGraphNode
     std::vector<uint64_t> SplitPins;
     // 未接続の入力ピンの値（UE と同じく、ピンの横のボックスで編集する）。添字 = 入力ピン。NaN = 定義の既定値
     std::vector<float> PinValues;
+    // 未接続のベクトル入力ピンの直値（Material Output の Base Color / Normal / Emissive / Absorption）。
+    // 添字 = 入力ピン。[0] が NaN = 未設定（定義の既定値 / マテリアルアセットの値を使う）
+    std::vector<std::array<float, 4>> PinVectors;
 
     // pin がこのノードの出力（まとめた出力 / 分割した成分）か
     bool OwnsOutput(uint64_t pin) const
@@ -380,6 +383,18 @@ class MaterialGraph
     // 未接続の入力ピンの値（ボックスで設定した値、無ければ定義の既定値）
     static std::array<float, 4> UnconnectedInputValue(const MaterialGraphNode& node, size_t input);
     static bool HasPinValue(const MaterialGraphNode& node, size_t input);
+    // ---- ベクトルの直値（Material Output の色 / 法線ピン）
+    static bool IsPinVectorEditable(MaterialNodeKind kind, size_t input);
+    static bool HasPinVector(const MaterialGraphNode& node, size_t input);
+    // 直値を消す（スカラー / ベクトルとも）。消したら true
+    static bool ClearPinOverride(MaterialGraphNode& node, size_t input);
+    // Material Output のピンが「未接続だが直値が入っている」か（マテリアルモードで使えないピンは false）
+    bool HasOutputDirectValue(const MaterialGraphNode& output, size_t input) const;
+    // ---- 定数ノード（Constant / Constant2〜4Vector）の成分ピン
+    // 成分ごとに入力ピンを持ち、未接続の成分はノード上の値（node.Value[i]）、接続した成分は入力の値を使う
+    static bool IsComponentConstant(MaterialNodeKind kind);
+    // 成分ピンのどれかが接続されているか（false = 従来どおりの定数 / パラメーターとして扱う）
+    bool HasConnectedComponent(const MaterialGraphNode& node) const;
     // ---- 出力ピンの分割（UE の Split Struct Pin / Recombine）
     // 出力ピンの成分番号：-1 = まとめた出力、0〜3 = X / Y / Z / W
     int OutputComponent(uint64_t pin) const;
@@ -427,6 +442,7 @@ class MaterialGraph
     MaterialGraphType OutputType(uint64_t node, std::vector<uint64_t>& visiting) const;
     MaterialGraphType SourcePinType(uint64_t pin, std::vector<uint64_t>& visiting) const;
 };
+
 
 
 

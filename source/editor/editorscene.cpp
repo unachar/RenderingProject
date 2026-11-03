@@ -126,8 +126,9 @@ void ImGuiManager::DrawSceneViewWindow()
         return;
     }
 
-    // UE / Blender 風のビューポートヘッダー：変形ツール（Q/W/E/R）・座標系（X）・スナップ・表示・追加
-    EditorShell::DrawViewportHeader();
+    // ビューポートヘッダーは UE と同じく画像の上に重ねて描く（後述）。画像は領域いっぱいに使う
+    static float toolbarHeight = 0.0f; // 前フレームのツールバーの高さ（統計・ナビギズモを下へずらす）
+    static bool toolbarHoveredLastFrame = false;
 
     const auto& preferences = EditorPreferences::Get();
     const bool sceneFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -201,14 +202,49 @@ void ImGuiManager::DrawSceneViewWindow()
     DrawTransformGizmo();
     // 修正：ホバー判定を Image に限定しない（ギズモの軸が画像の端からはみ出しても掴めるように）
     const bool gizmoHot = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
-    gizmoHotLastFrame = gizmoHot;
+    // ツールバーの上でドラッグしてもウィンドウが動かないようにする
+    gizmoHotLastFrame = gizmoHot || toolbarHoveredLastFrame;
     m_SceneGizmoCapturesMouse |= gizmoHot;
     if (preferences.ShowViewportStats)
     {
-        EditorSceneNavigation::DrawOverlay(drawList, cursor, imageSize);
+        EditorSceneNavigation::DrawOverlay(drawList, ImVec2(cursor.x, cursor.y + toolbarHeight),
+                                           ImVec2(imageSize.x, (std::max)(1.0f, imageSize.y - toolbarHeight)));
     }
-    // 右上のナビゲーションギズモ（軸クリックで視点切り替え / ドラッグでオービット）
-    m_SceneGizmoCapturesMouse |= EditorShell::DrawNavigationGizmo(drawList, cursor, imageSize);
+    // 右上のナビゲーションギズモ（軸クリックで視点切り替え / ドラッグでオービット）。ツールバーの下に置く
+    m_SceneGizmoCapturesMouse |= EditorShell::DrawNavigationGizmo(
+        drawList, ImVec2(cursor.x, cursor.y + toolbarHeight),
+        ImVec2(imageSize.x, (std::max)(1.0f, imageSize.y - toolbarHeight)));
+
+    // ---- UE 風：ビューの中に重ねるツールバー（変形ツール・座標系・スナップ・表示・追加）
+    //  子ウィンドウにすると、ツールバーの上ではシーンの Image がホバーされず、
+    //  クリックが選択 / カメラ操作 / ギズモに渡らない。背景は透過してシーンが透けて見える
+    {
+        const float pad = 6.0f * preferences.UiScale;
+        ImGui::SetCursorScreenPos(ImVec2(cursor.x + pad, cursor.y + pad));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.08f, 0.08f, 0.72f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.08f, 0.72f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * preferences.UiScale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        if (ImGui::BeginChild("##ViewportOverlayToolbar", ImVec2((std::max)(1.0f, imageSize.x - pad * 2.0f), 0.0f),
+                              ImGuiChildFlags_AutoResizeY,
+                              ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+                                  ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings))
+        {
+            EditorShell::DrawViewportHeader();
+        }
+        toolbarHeight = ImGui::GetWindowHeight() + pad;
+        // 子ウィンドウの矩形（IsItemHovered は ChildWindows フラグを受け付けないため、矩形で判定する）
+        const ImVec2 toolbarMin = ImGui::GetWindowPos();
+        const ImVec2 toolbarMax(toolbarMin.x + ImGui::GetWindowWidth(), toolbarMin.y + ImGui::GetWindowHeight());
+        ImGui::EndChild();
+        // ツールバーの帯の上ではシーンの選択 / カメラ操作 / ギズモを止める
+        toolbarHoveredLastFrame =
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseHoveringRect(toolbarMin, toolbarMax, false);
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+        m_SceneGizmoCapturesMouse |= toolbarHoveredLastFrame;
+    }
 
     // 再生中は UE と同じくビューポートの枠をハイライトする
     if (ProjectManager::IsPlaying())
@@ -3268,3 +3304,4 @@ void ImGuiManager::ValidateEditorObjects()
     m_EditRevision = revision;
     WriteGraphicsLog("Editor object validation failures = %d\n", failures);
 }
+

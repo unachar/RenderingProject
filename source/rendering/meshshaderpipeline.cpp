@@ -7,6 +7,7 @@
 #include "rendertargets.h"
 #include "meshdispatch.h"
 #include "graphicslog.h"
+#include "persistentpsocache.h"
 
 static ComPtr<ID3D12Device> g_Device;
 static ComPtr<ID3D12RootSignature> g_RootSignature;
@@ -45,6 +46,7 @@ struct MeshPipelineStream
     StreamSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, D3D12_RT_FORMAT_ARRAY> RenderTargets;
     StreamSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, DXGI_FORMAT> DepthFormat;
     StreamSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, DXGI_SAMPLE_DESC> SampleDescription;
+    StreamSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO, D3D12_CACHED_PIPELINE_STATE> CachedPso;
 };
 
 bool CompileShader(const wchar_t* path, const char* entry, const char* target, ComPtr<ID3DBlob>& output)
@@ -131,12 +133,9 @@ bool MeshShaderPipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* r
     stream.DepthFormat = DXGI_FORMAT_D32_FLOAT;
     stream.SampleDescription = DXGI_SAMPLE_DESC{1, 0};
 
-    D3D12_PIPELINE_STATE_STREAM_DESC streamDescription{};
-    streamDescription.SizeInBytes = sizeof(stream);
-    streamDescription.pPipelineStateSubobjectStream = &stream;
     ComPtr<ID3D12Device2> device2;
     if (FAILED(device->QueryInterface(IID_PPV_ARGS(&device2))) ||
-        FAILED(device2->CreatePipelineState(&streamDescription, IID_PPV_ARGS(&g_PipelineState))))
+        FAILED(PersistentPsoCache::Mesh(device2.Get(), stream, g_PipelineState, stream.AmplificationShader.Value)))
     {
         g_FeatureSupported = false;
         WriteGraphicsLog("Mesh shaders: visibility pipeline creation failed\n");
@@ -153,7 +152,8 @@ bool MeshShaderPipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* r
         renderTargets.RTFormats[index] = RenderTargets::GetGBufferFormat(static_cast<GBufferType>(index));
     }
     stream.RenderTargets = renderTargets;
-    if (FAILED(device2->CreatePipelineState(&streamDescription, IID_PPV_ARGS(&g_GeometryPipelineState))))
+    if (FAILED(PersistentPsoCache::Mesh(device2.Get(), stream, g_GeometryPipelineState,
+                                     stream.AmplificationShader.Value)))
     {
         return false;
     }

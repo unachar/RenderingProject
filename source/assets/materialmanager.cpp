@@ -44,6 +44,21 @@ void MaterialManager::Shutdown()
     sceneHasAssets = false;
 }
 
+void MaterialManager::PrepareStartupAssets()
+{
+    // Decode independent textures concurrently and submit their uploads as one batch.
+    const auto handles = registry.HandlesOfType(AssetType::Material);
+    {
+        TextureManager::ScopedBatch batch;
+        for (const auto handle : handles)
+        {
+            GetRuntime(handle);
+        }
+        UpdateGraphPrograms();
+    }
+    WriteGraphicsLog("Startup materials: prepared %zu materials and their texture dependencies\n", handles.size());
+}
+
 void MaterialManager::Refresh()
 {
     string error;
@@ -237,6 +252,9 @@ namespace
     {
         runtime.GraphActive = false;
         runtime.GraphProgramHash = 0;
+        runtime.GraphTexels.clear();
+        runtime.GraphUsesView = false;
+        runtime.GraphEmissive = false;
         if (runtime.GraphPublished)
         {
             runtime.GraphPublished = false;
@@ -276,13 +294,18 @@ void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* g
     runtime.GraphStatus.clear();
     runtime.GraphInstructions = program.Instructions;
     runtime.GraphRegisters = program.Registers;
+    // 発光の動的ベイク（GI / 反射）用：出力レジスタ [2].x = Emissive（-1 = 未接続）
+    runtime.GraphUsesView = program.UsesView;
+    runtime.GraphEmissive = program.Texels.size() > 2 && program.Texels[2][0] >= 0.0f;
+    runtime.GraphTexels = program.Texels;
     if (runtime.GraphActive && runtime.GraphProgramHash == program.Hash)
     {
         return;
     }
     if (runtime.GraphProgramSrv < 0)
     {
-        runtime.GraphProgramSrv = TextureManager::CreateDataTexture("MaterialGraphProgram", MaterialGraphVm::kMaxTexels);
+        runtime.GraphProgramSrv =
+            TextureManager::CreateDataTexture("MaterialGraphProgram", MaterialGraphVm::kMaxTexels);
         if (runtime.GraphProgramSrv < 0)
         {
             runtime.GraphStatus = "プログラム用のテクスチャを作れません（テクスチャ表が一杯です）";
@@ -297,10 +320,30 @@ void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* g
     runtime.GraphActive = true;
 }
 
-void MaterialManager::UpdateGraphPrograms()
+float MaterialManager::GraphTime()
 {
     static const auto start = std::chrono::steady_clock::now();
-    const float time = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+    return std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+}
+
+bool MaterialManager::GetDynamicEmissionSource(AssetHandle handle, DynamicEmissionSource& source)
+{
+    const auto* runtime = FindRuntime(handle);
+    if (!runtime || !runtime->GraphActive || !runtime->GraphPublished || !runtime->GraphEmissive ||
+        runtime->GraphTexels.empty() || !(runtime->GraphUsesView || runtime->GraphUsesTime))
+    {
+        return false;
+    }
+    source.Program = &runtime->GraphTexels;
+    source.Hash = runtime->GraphProgramHash;
+    source.UsesTime = runtime->GraphUsesTime;
+    source.UsesView = runtime->GraphUsesView;
+    return true;
+}
+
+void MaterialManager::UpdateGraphPrograms()
+{
+    const float time = GraphTime();
     for (auto& [handle, runtimePointer] : runtimes)
     {
         auto& runtime = *runtimePointer;
@@ -356,8 +399,9 @@ int MaterialManager::ResolveGraphTexture(AssetHandle texture, MaterialSamplerTyp
         return -1;
     }
     // エンジンのベースカラーと同じく、格納値をそのまま読む（Normal は法線マップとして読み込む）
-    const int srv = sampler == MaterialSamplerType::Normal ? TextureManager::LoadNormalTexture(path.generic_string().c_str())
-                                                           : TextureManager::LoadTexture(path, TextureUsage::Color);
+    const int srv = sampler == MaterialSamplerType::Normal
+                        ? TextureManager::LoadNormalTexture(path.generic_string().c_str())
+                        : TextureManager::LoadTexture(path, TextureUsage::Color);
     const int index = srv - static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX);
     return index >= 0 && index < 512 ? index : -1;
 }

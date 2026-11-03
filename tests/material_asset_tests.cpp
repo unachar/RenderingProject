@@ -91,6 +91,14 @@ int main()
         AssetRegistry registry(root);
         const auto handle = registry.Register(path, AssetType::Material, error);
         Check(handle != 0, error.c_str());
+        const auto texturePath = root / "startup.png";
+        std::ofstream(texturePath) << "fixture";
+        const auto textureHandle = registry.Register(texturePath, AssetType::Texture, error);
+        Check(textureHandle != 0, error.c_str());
+        Check(registry.HandlesOfType(AssetType::Material) == std::vector<AssetHandle>{handle},
+              "startup enumeration includes materials and excludes textures");
+        Check(registry.HandlesOfType(AssetType::Texture) == std::vector<AssetHandle>{textureHandle},
+              "startup enumeration preserves registered texture identity");
         const auto moved = root / "Environment" / "Wall.material";
         Check(registry.Move(handle, moved, error), error.c_str());
         registry.Refresh(error);

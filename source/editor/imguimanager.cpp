@@ -38,6 +38,7 @@
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
 #include "rendertargets.h"
+#include "input.h"
 #include "frameconstants.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
@@ -375,6 +376,12 @@ void ImGuiManager::Update()
         ImGui::SetMouseCursor(ImGuiMouseCursor_None); // フライ中はカーソルを隠す（UE と同じ）
     }
     UpdateSceneNavigation();
+    // 右クリックの視点移動中はカーソルをビューポート内にとどめる（UE と同じ）
+    //  ・押した位置を基準にし、毎フレーム（視点の更新でマウス差分を使い終えた後）そこへ戻す
+    //    → 画面端で回転が止まらず、カーソルがビューポートの外（他のパネル / 別ウィンドウ）へ出ない
+    //  ・フレーム間の速い動きでも外に出ないよう、OS のカーソル範囲もビューポートの矩形に制限する
+    //  ・離すと制限を解除し、カーソルは押した位置に表示される
+    UpdateRightLookCursorLock();
     if (m_IsSceneViewHovered)
         PickEntityFromMouse();
     DrawPrimitiveSettingsWindow();
@@ -560,6 +567,43 @@ void ImGuiManager::Draw(ID3D12GraphicsCommandList* commandList)
 {
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
+}
+
+void ImGuiManager::UpdateRightLookCursorLock()
+{
+    // 右クリックの視点移動中は、カーソルを押した位置に固定する（UE と同じ）
+    //  ・以前は毎フレーム SetCursorPos で戻していたが、ワープとフレームの間の動きが捨てられて
+    //    回転量が毎フレームばらつき、ガタついていた
+    //  ・現在は ClipCursor で押した位置の 1 画素に閉じ込めるだけ。回転量は Raw Input（WM_INPUT）
+    //    から取るので、カーソルが動かなくても途切れず、ワープによる取りこぼしも無い
+    static bool locked = false;
+    static RECT clip{};
+    HWND hwnd = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
+    const bool active = ViewportInputGate::g_RightLookActive && hwnd && GetForegroundWindow() == hwnd &&
+                        Input::UsesRawMouse(); // Raw Input が無い環境では固定しない（回転できなくなるため）
+    if (!active)
+    {
+        if (locked)
+        {
+            ClipCursor(nullptr);
+            locked = false;
+        }
+        return;
+    }
+    if (!locked)
+    {
+        // 押した位置（ビューポートの内側に寄せる）
+        ImGuiIO& io = ImGui::GetIO();
+        const float inset = 2.0f;
+        const float x = std::clamp(io.MousePos.x, m_SceneViewPos.x + inset, m_SceneViewPos.x + m_SceneViewSize.x - inset);
+        const float y = std::clamp(io.MousePos.y, m_SceneViewPos.y + inset, m_SceneViewPos.y + m_SceneViewSize.y - inset);
+        POINT anchor{static_cast<LONG>(x), static_cast<LONG>(y)};
+        ClientToScreen(hwnd, &anchor);
+        clip = {anchor.x, anchor.y, anchor.x + 1, anchor.y + 1};
+        locked = true;
+    }
+    // 他アプリやウィンドウ操作で解除されることがあるので毎フレーム掛け直す（同じ矩形なので軽い）
+    ClipCursor(&clip);
 }
 
 bool ImGuiManager::HandleWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -768,4 +812,5 @@ void ImGuiManager::DrawAdjustmentPanel()
         ImGui::End();
     }
 }
+
 
