@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "backgroundtasks.h"
 #include "materialgraphbake.h"
 #include "materialgraphtextures.h"
 #include "proceduralio.h"
@@ -1034,7 +1035,10 @@ namespace MaterialGraphLive
             }
             const float rate = std::clamp(entry.Data->Graph.Settings.LiveRate, 1.0f, 120.0f);
             entry.NextTime = time + 1.0 / rate;
-            entry.Job = std::async(std::launch::async, Evaluate, entry.Data, entry.Textures, static_cast<float>(time));
+            entry.Job = std::async(std::launch::async, [data = entry.Data, textures = entry.Textures, time] {
+                BackgroundTasks::Scope task("ライブプレビューの評価");
+                return Evaluate(data, textures, static_cast<float>(time));
+            });
         }
     }
 
@@ -1066,4 +1070,5 @@ namespace MaterialGraphLive
         return found != g_Entries.end() ? found->second.LastSeconds : 0.0;
     }
 } // namespace MaterialGraphLive
+
 

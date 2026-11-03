@@ -1,4 +1,7 @@
 #include "pch.h"
+#include "editorpreferences.h"
+#include "assetthumbnailmanager.h"
+#include "editorwidgets.h"
 #include "editorworkspace.h"
 #include "imguimanager.h"
 #include "materialmanager.h"
@@ -569,7 +572,7 @@ void ImGuiManager::AssignMaterialAsset(EntityID entity, size_t slot, AssetHandle
 
 void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
 {
-    if (!MaterialManager::IsRenderable(entity) || !ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!MaterialManager::IsRenderable(entity) || !EditorWidgets::InspectorSection("Materials", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
@@ -579,13 +582,60 @@ void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
     {
         ImGui::PushID(static_cast<int>(slot));
         const auto handle = MaterialManager::SlotHandle(component, slot);
-        ImGui::Text("Element %zu", slot);
-        if (ImGui::Button(AssetName(handle, "Legacy / Imported").c_str(), ImVec2(-40, 0)) && handle != 0)
-        {
-            OpenMaterialAsset(handle);
-        }
+        // #10 UE と同じく、サムネイル + 名前のスロット。
+        //  ・ドロップで差し替え / クリックでプロパティ / ダブルクリックでマテリアルグラフを開く
+        const float thumb = ImGui::GetFrameHeight() * 2.4f;
+        ImGui::TextDisabled("Element %zu", slot);
+        const ImVec2 slotStart = ImGui::GetCursorScreenPos();
+        const float slotWidth = (std::max)(thumb + 40.0f, ImGui::GetContentRegionAvail().x - 34.0f);
+        const bool clicked = ImGui::Selectable("##MaterialSlot", false, ImGuiSelectableFlags_AllowDoubleClick,
+                                               ImVec2(slotWidth, thumb));
         const auto slotMinimum = ImGui::GetItemRectMin();
         const auto slotMaximum = ImGui::GetItemRectMax();
+        const bool slotHovered = ImGui::IsItemHovered();
+        {
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(slotStart, ImVec2(slotStart.x + thumb, slotStart.y + thumb),
+                                ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+            bool drewThumbnail = false;
+            if (handle != 0)
+            {
+                const auto thumbnail = AssetThumbnailManager::Request(handle, ThumbnailPriority::Visible);
+                if (thumbnail.State == ThumbnailState::Ready && thumbnail.Image)
+                {
+                    draw->AddImage(static_cast<ImTextureID>(thumbnail.GetImGuiTextureID().ptr), slotStart,
+                                   ImVec2(slotStart.x + thumb, slotStart.y + thumb));
+                    drewThumbnail = true;
+                }
+            }
+            if (!drewThumbnail)
+            {
+                const char* mark = handle != 0 ? "…" : "－";
+                const ImVec2 size = ImGui::CalcTextSize(mark);
+                draw->AddText(ImVec2(slotStart.x + (thumb - size.x) * 0.5f, slotStart.y + (thumb - size.y) * 0.5f),
+                              ImGui::GetColorU32(ImGuiCol_TextDisabled), mark);
+            }
+            draw->AddRect(slotStart, ImVec2(slotStart.x + thumb, slotStart.y + thumb),
+                          ImGui::GetColorU32(slotHovered ? ImGuiCol_ButtonHovered : ImGuiCol_Border), 3.0f);
+            const float textX = slotStart.x + thumb + 8.0f;
+            const float lineHeight = ImGui::GetTextLineHeight();
+            draw->PushClipRect(ImVec2(textX, slotStart.y), slotMaximum, true);
+            draw->AddText(ImVec2(textX, slotStart.y + thumb * 0.5f - lineHeight), ImGui::GetColorU32(ImGuiCol_Text),
+                          AssetName(handle, "Legacy / Imported").c_str());
+            draw->AddText(ImVec2(textX, slotStart.y + thumb * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                          handle != 0 ? "クリック: プロパティ / ダブルクリック: グラフ" : "マテリアルをドロップして割り当て");
+            draw->PopClipRect();
+        }
+        if (clicked && handle != 0)
+        {
+            OpenMaterialAsset(handle);
+            // クリック = プロパティ、ダブルクリック = マテリアルグラフ
+            showMaterialGraph = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        }
+        if (handle != 0)
+        {
+            ImGui::SetItemTooltip("%s", MaterialManager::Registry().Resolve(handle).generic_string().c_str());
+        }
         MaterialValidation::CaptureDropTarget("Inspector", slotMinimum.x, slotMinimum.y, slotMaximum.x, slotMaximum.y);
         if (ImGui::BeginDragDropTarget())
         {
@@ -597,10 +647,12 @@ void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
             ImGui::EndDragDropTarget();
         }
         ImGui::SameLine();
-        if (ImGui::SmallButton("X"))
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (thumb - ImGui::GetFrameHeight()) * 0.5f);
+        if (ImGui::Button("X", ImVec2(24.0f, 0.0f)))
         {
             AssignMaterialAsset(entity, slot, 0);
         }
+        ImGui::SetItemTooltip("割り当てを外す（Legacy に戻す）");
         ImGui::PopID();
     }
 }
@@ -736,3 +788,4 @@ void ImGuiManager::DrawMaterialDropTarget()
         ImGui::EndPopup();
     }
 }
+

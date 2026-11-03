@@ -207,8 +207,66 @@ void ProjectManager::Stop()
         return;
     }
     RestoreRuntimeState();
+    if (s_RestoreMainCameraPending)
+    {
+        // PlayWithCamera で切り替えたメインゲームカメラを戻す（InputComponent の有効状態も戻る）
+        s_RestoreMainCameraPending = false;
+        if (s_RestoreMainCamera != g_kINVALID_ENTITY && Registry::IsAlive(s_RestoreMainCamera))
+        {
+            Camera::SetMainGameCamera(s_RestoreMainCamera);
+        }
+        s_RestoreMainCamera = g_kINVALID_ENTITY;
+    }
     Camera::NotifyCut();
     s_State = ProjectPlayState::Edit;
+}
+
+void ProjectManager::PlayFromEditorView()
+{
+    if (s_State != ProjectPlayState::Edit)
+    {
+        return;
+    }
+    const EntityID editorCamera = Camera::GetEditorCameraEntity();
+    const bool hasEditorView = ComponentManager::HasComponent<TransformComponent>(editorCamera);
+    const TransformComponent editorTransform =
+        hasEditorView ? ComponentManager::GetComponentUnchecked<TransformComponent>(editorCamera) : TransformComponent{};
+    Play(); // ここでカメラの状態を記録するので、下で動かしても停止で元に戻る
+    const EntityID gameCamera = Camera::GetGameCameraEntity();
+    if (!hasEditorView || gameCamera == g_kINVALID_ENTITY || gameCamera == editorCamera ||
+        !ComponentManager::HasComponent<TransformComponent>(gameCamera) ||
+        !ComponentManager::HasComponent<CameraComponent>(gameCamera))
+    {
+        return; // ゲームカメラが無い：通常の再生
+    }
+    auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(gameCamera);
+    auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(gameCamera);
+    if (camera.Animation.IsActive)
+    {
+        return; // カメラアニメーションで動くカメラは、その位置を優先する
+    }
+    transform.Position = editorTransform.Position;
+    transform.Rotation = editorTransform.Rotation;
+    transform.IsDirty = true;
+    const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(transform.Rotation.x, transform.Rotation.y, 0.0f);
+    const XMVECTOR forward = XMVector3TransformNormal(XMVectorSet(0, 0, 1, 0), rotation);
+    XMStoreFloat3(&camera.Target, XMVectorAdd(XMLoadFloat3(&transform.Position), forward));
+    Camera::NotifyCut();
+}
+
+void ProjectManager::PlayWithCamera(EntityID cameraEntity)
+{
+    if (s_State != ProjectPlayState::Edit || !Registry::IsAlive(cameraEntity) ||
+        !ComponentManager::HasComponent<CameraComponent>(cameraEntity) ||
+        cameraEntity == Camera::GetEditorCameraEntity())
+    {
+        return;
+    }
+    s_RestoreMainCamera = Camera::GetGameCameraEntity();
+    s_RestoreMainCameraPending = true;
+    Play(); // CameraComponent（IsGameCamera / IsMainGameCamera）はここで記録され、停止で戻る
+    Camera::SetMainGameCamera(cameraEntity);
+    Camera::NotifyCut();
 }
 
 void ProjectManager::TogglePlay()
@@ -235,3 +293,4 @@ void ProjectManager::TogglePause()
         s_State = ProjectPlayState::Playing;
     }
 }
+

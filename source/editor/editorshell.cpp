@@ -13,6 +13,15 @@
 #include "graphicsdevice.h"
 #include "gpumemorybudget.h"
 #include "performancegovernor.h"
+#include "renderconfiguration.h"
+#include "renderersettings.h"
+#include "editoricons.h"
+#include "editorvisibility.h"
+#include "backgroundtasks.h"
+#include "assetthumbnailmanager.h"
+#include <unordered_map>
+#include <fstream>
+#include <filesystem>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
 #include <algorithm>
@@ -47,6 +56,7 @@ namespace
         std::string Category;
         std::string Label;
         std::string Shortcut;
+        std::string DefaultShortcut; // #16 既定のショートカット（ユーザー割り当て前）
         std::string SearchKey; // 小文字化した検索対象
         std::function<void()> Run;
         bool Enabled = true;
@@ -70,6 +80,78 @@ namespace
 
     // ------------------------------------------------------------------ その他の状態
     bool g_ShowShortcuts = false;
+
+    // ------------------------------------------------------------------ #16 キー割り当て
+    //  キー：「カテゴリ/コマンド名」、値：「Ctrl+Shift+K」の形の文字列。Save/editor_keymap.cfg に保存
+    //  既定のショートカット（コードに書かれたもの）はそのまま有効。ユーザー割り当ては追加で効く
+    std::unordered_map<std::string, std::string> g_UserKeys;
+    bool g_KeymapLoaded = false;
+    std::string g_CapturingCommand; // 割り当て待ちのコマンド（空 = 待っていない）
+    constexpr const char* kKeymapPath = "Save/editor_keymap.cfg";
+
+    void LoadKeymapOnce()
+    {
+        if (g_KeymapLoaded)
+        {
+            return;
+        }
+        g_KeymapLoaded = true;
+        std::ifstream input(kKeymapPath);
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const auto separator = line.rfind('=');
+            if (separator == std::string::npos || separator == 0 || separator + 1 >= line.size())
+            {
+                continue;
+            }
+            g_UserKeys[line.substr(0, separator)] = line.substr(separator + 1);
+        }
+    }
+
+    void SaveKeymap()
+    {
+        std::error_code error;
+        std::filesystem::create_directories("Save", error);
+        std::ofstream output(kKeymapPath, std::ios::trunc);
+        for (const auto& [command, chord] : g_UserKeys)
+        {
+            output << command << "=" << chord << "\n";
+        }
+    }
+
+    bool IsModifierKey(ImGuiKey key)
+    {
+        return key == ImGuiKey_LeftCtrl || key == ImGuiKey_RightCtrl || key == ImGuiKey_LeftShift ||
+               key == ImGuiKey_RightShift || key == ImGuiKey_LeftAlt || key == ImGuiKey_RightAlt ||
+               key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper || key == ImGuiKey_ReservedForModCtrl ||
+               key == ImGuiKey_ReservedForModShift || key == ImGuiKey_ReservedForModAlt ||
+               key == ImGuiKey_ReservedForModSuper;
+    }
+
+    // このフレームに押されたキーの組み合わせ（修飾キーだけ / マウスは除く）。無ければ空
+    std::string PressedChord()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
+        {
+            const auto named = static_cast<ImGuiKey>(key);
+            if (IsModifierKey(named) || (named >= ImGuiKey_MouseLeft && named <= ImGuiKey_MouseWheelY) ||
+                !ImGui::IsKeyPressed(named, false))
+            {
+                continue;
+            }
+            std::string chord;
+            if (io.KeyCtrl)
+                chord += "Ctrl+";
+            if (io.KeyShift)
+                chord += "Shift+";
+            if (io.KeyAlt)
+                chord += "Alt+";
+            return chord + ImGui::GetKeyName(named);
+        }
+        return {};
+    }
     bool g_OpenViewportAddMenu = false;
 
     struct PieState
@@ -442,25 +524,33 @@ void EditorShell::DrawAddMenuItems()
     }
 }
 
+static void DrawViewDirectionItems()
+{
+    if (ImGui::MenuItem("正面", "Num 1"))
+        EditorShell::SetViewDirection(0.0f, 0.0f, 1.0f);
+    if (ImGui::MenuItem("背面", "Ctrl+Num 1"))
+        EditorShell::SetViewDirection(0.0f, 0.0f, -1.0f);
+    if (ImGui::MenuItem("右", "Num 3"))
+        EditorShell::SetViewDirection(-1.0f, 0.0f, 0.0f);
+    if (ImGui::MenuItem("左", "Ctrl+Num 3"))
+        EditorShell::SetViewDirection(1.0f, 0.0f, 0.0f);
+    if (ImGui::MenuItem("上", "Num 7"))
+        EditorShell::SetViewDirection(0.0f, -1.0f, 0.0f);
+    if (ImGui::MenuItem("下", "Ctrl+Num 7"))
+        EditorShell::SetViewDirection(0.0f, 1.0f, 0.0f);
+}
+
 void EditorShell::DrawViewMenuItems()
 {
     auto& prefs = EditorPreferences::Get();
     ImGui::MenuItem("ライト可視化", nullptr, &ImGuiManager::m_ShowLightDebug);
     ImGui::MenuItem("ナビゲーションギズモ", nullptr, &prefs.ShowNavigationGizmo);
+    ImGui::MenuItem("XYZ 軸（左下）", nullptr, &prefs.ShowViewportAxis);
+    ImGui::MenuItem("カメラ速度ボタン", nullptr, &prefs.ShowViewportSpeed);
     ImGui::MenuItem("統計オーバーレイ", nullptr, &prefs.ShowViewportStats);
+    ImGui::SetItemTooltip("FPS / GPU 時間 / 品質 / 解像度はステータスバーにも表示しています");
     ImGui::Separator();
-    if (ImGui::MenuItem("正面", "Num 1"))
-        SetViewDirection(0.0f, 0.0f, 1.0f);
-    if (ImGui::MenuItem("背面", "Ctrl+Num 1"))
-        SetViewDirection(0.0f, 0.0f, -1.0f);
-    if (ImGui::MenuItem("右", "Num 3"))
-        SetViewDirection(-1.0f, 0.0f, 0.0f);
-    if (ImGui::MenuItem("左", "Ctrl+Num 3"))
-        SetViewDirection(1.0f, 0.0f, 0.0f);
-    if (ImGui::MenuItem("上", "Num 7"))
-        SetViewDirection(0.0f, -1.0f, 0.0f);
-    if (ImGui::MenuItem("下", "Ctrl+Num 7"))
-        SetViewDirection(0.0f, 1.0f, 0.0f);
+    DrawViewDirectionItems();
     ImGui::Separator();
     if (ImGui::MenuItem("選択にフォーカス", "F / Num ."))
     {
@@ -488,6 +578,189 @@ void EditorShell::HandleGlobalShortcuts()
     {
         EditorWorkspaceManager::Get().Registry().ShowEditorType("preferences");
     }
+    RunUserShortcuts();
+}
+
+const char* EditorShell::Shortcut(const char* category, const char* label, const char* fallback)
+{
+    LoadKeymapOnce();
+    if (!g_UserKeys.empty())
+    {
+        const auto found = g_UserKeys.find(std::string(category) + "/" + label);
+        if (found != g_UserKeys.end())
+        {
+            return found->second.c_str();
+        }
+    }
+    return fallback ? fallback : "";
+}
+
+void EditorShell::LoadKeymap()
+{
+    g_KeymapLoaded = false;
+    g_UserKeys.clear();
+    LoadKeymapOnce();
+}
+
+void EditorShell::RunUserShortcuts()
+{
+    LoadKeymapOnce();
+    if (g_UserKeys.empty() || !g_CapturingCommand.empty() || g_Palette.Open)
+    {
+        return;
+    }
+    const std::string chord = PressedChord();
+    if (chord.empty())
+    {
+        return;
+    }
+    std::string target;
+    for (const auto& [command, keys] : g_UserKeys)
+    {
+        if (keys == chord)
+        {
+            target = command;
+            break;
+        }
+    }
+    if (target.empty())
+    {
+        return;
+    }
+    std::vector<PaletteCommand> commands;
+    BuildCommandList(&commands);
+    for (const auto& command : commands)
+    {
+        if (command.Enabled && command.Category + "/" + command.Label == target && command.Run)
+        {
+            command.Run();
+            break;
+        }
+    }
+}
+
+// #16 F1 の一覧の「割り当て」タブ：コマンドごとにショートカットを設定する
+void EditorShell::DrawKeymapEditor()
+{
+    LoadKeymapOnce();
+    static std::vector<PaletteCommand> commands;
+    static double nextRefresh = 0.0;
+    if (ImGui::GetTime() >= nextRefresh)
+    {
+        commands.clear();
+        BuildCommandList(&commands);
+        nextRefresh = ImGui::GetTime() + 1.0;
+    }
+    static ImGuiTextFilter filter;
+    filter.Draw("検索##KeymapFilter", 260.0f * Scale());
+    ImGui::SameLine();
+    ImGui::TextDisabled("「設定」を押してからキーを押す（Esc でキャンセル / Backspace で解除）");
+
+    // 割り当て待ち：次に押されたキーを記録する
+    if (!g_CapturingCommand.empty())
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            g_CapturingCommand.clear();
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false))
+        {
+            g_UserKeys.erase(g_CapturingCommand);
+            g_CapturingCommand.clear();
+            SaveKeymap();
+        }
+        else
+        {
+            const std::string chord = PressedChord();
+            if (!chord.empty())
+            {
+                // 同じキーの割り当ては 1 つだけ（後から設定した方を残す）
+                for (auto it = g_UserKeys.begin(); it != g_UserKeys.end();)
+                {
+                    it = it->second == chord ? g_UserKeys.erase(it) : std::next(it);
+                }
+                g_UserKeys[g_CapturingCommand] = chord;
+                g_CapturingCommand.clear();
+                SaveKeymap();
+            }
+        }
+    }
+
+    // 既定のショートカットとの重複を調べる
+    std::unordered_map<std::string, int> chordUse;
+    for (const auto& command : commands)
+    {
+        if (!command.DefaultShortcut.empty())
+        {
+            ++chordUse[command.DefaultShortcut];
+        }
+    }
+    for (const auto& [command, chord] : g_UserKeys)
+    {
+        ++chordUse[chord];
+    }
+
+    const float height = 360.0f * Scale();
+    if (ImGui::BeginTable("##Keymap", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0.0f, height)))
+    {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("コマンド", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("既定", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("割り当て", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 110.0f * Scale());
+        ImGui::TableHeadersRow();
+        for (const auto& command : commands)
+        {
+            const std::string key = command.Category + "/" + command.Label;
+            if (filter.IsActive() && !filter.PassFilter(key.c_str()))
+            {
+                continue;
+            }
+            ImGui::PushID(key.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", command.Category.c_str());
+            ImGui::SameLine();
+            ImGui::TextUnformatted(command.Label.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", command.DefaultShortcut.empty() ? "-" : command.DefaultShortcut.c_str());
+            ImGui::TableNextColumn();
+            const auto user = g_UserKeys.find(key);
+            if (g_CapturingCommand == key)
+            {
+                ImGui::TextColored(EditorPreferences::Accent(), "キーを押してください...");
+            }
+            else if (user != g_UserKeys.end())
+            {
+                const bool conflict = chordUse[user->second] > 1;
+                ImGui::TextColored(conflict ? EditorPreferences::Warning() : EditorPreferences::Accent(), "%s",
+                                   user->second.c_str());
+                if (conflict)
+                {
+                    ImGui::SetItemTooltip("既定のショートカットと重なっています（両方が実行されます）");
+                }
+            }
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("設定"))
+            {
+                g_CapturingCommand = key;
+            }
+            if (user != g_UserKeys.end())
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("解除"))
+                {
+                    g_UserKeys.erase(key);
+                    SaveKeymap();
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
 }
 
 void EditorShell::ToggleShortcutHelp()
@@ -505,16 +778,30 @@ void EditorShell::OpenCommandPalette()
     palette.Selected = 0;
     palette.Commands.clear();
 
+    BuildCommandList(&palette.Commands);
+}
+
+// 型（PaletteCommand）は無名名前空間にあるので、ヘッダーには void* で宣言している
+void EditorShell::BuildCommandList(void* output)
+{
+    auto& out = *static_cast<std::vector<PaletteCommand>*>(output);
+    LoadKeymapOnce();
     auto add = [&](const char* category, std::string label, const char* shortcut, std::function<void()> run,
                    bool enabled = true) {
         PaletteCommand command;
         command.Category = category;
         command.Label = std::move(label);
         command.Shortcut = shortcut ? shortcut : "";
+        command.DefaultShortcut = command.Shortcut;
+        // #16 ユーザー割り当てがあればそれを表示する
+        if (const auto user = g_UserKeys.find(command.Category + "/" + command.Label); user != g_UserKeys.end())
+        {
+            command.Shortcut = user->second;
+        }
         command.SearchKey = ToLowerAscii((command.Category + " " + command.Label + " " + command.Shortcut).c_str());
         command.Run = std::move(run);
         command.Enabled = enabled;
-        palette.Commands.push_back(std::move(command));
+        out.push_back(std::move(command));
     };
 
     const bool hasSelection =
@@ -552,6 +839,16 @@ void EditorShell::OpenCommandPalette()
     add("再生", ProjectManager::IsPlaying() ? "停止" : "再生", "Ctrl+P", [] { ProjectManager::TogglePlay(); });
     add("再生", ProjectManager::IsPaused() ? "再開" : "一時停止", "Ctrl+Shift+P", [] { ProjectManager::TogglePause(); },
         ProjectManager::IsPlaying());
+    add("再生", "ここから再生", "", [] { ProjectManager::PlayFromEditorView(); }, !ProjectManager::IsPlaying());
+    add("再生", "選択中のカメラで再生", "", [] { ProjectManager::PlayWithCamera(ImGuiManager::m_SelectedEntity); },
+        !ProjectManager::IsPlaying() && hasSelection &&
+            ComponentManager::HasComponent<CameraComponent>(ImGuiManager::m_SelectedEntity));
+    add("表示", "表示モード: ライティングあり", "", [] {
+        EditorPreferences::Get().ViewportViewMode = EditorPreferences::ViewMode::Lit;
+    });
+    add("表示", "表示モード: ライティングなし", "", [] {
+        EditorPreferences::Get().ViewportViewMode = EditorPreferences::ViewMode::Unlit;
+    });
 
     add("作成", "空のオブジェクト", "", [] { ImGuiManager::SelectEntity(ImGuiManager::CreateEmptyEntity()); });
     for (const auto& primitive : kPrimitives)
@@ -913,18 +1210,31 @@ namespace
                     ImGui::EndTable();
                 }
             };
-            if (ImGui::BeginTable("##ShortcutColumns", 2, ImGuiTableFlags_SizingStretchSame))
+            if (ImGui::BeginTabBar("##ShortcutTabs"))
             {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::SeparatorText("全般");
-                table("##General", general, IM_ARRAYSIZE(general));
-                ImGui::TableNextColumn();
-                ImGui::SeparatorText("3D ビューポート");
-                table("##Viewport", viewport3d, IM_ARRAYSIZE(viewport3d));
-                ImGui::EndTable();
+                if (ImGui::BeginTabItem("一覧"))
+                {
+                    if (ImGui::BeginTable("##ShortcutColumns", 2, ImGuiTableFlags_SizingStretchSame))
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::SeparatorText("全般");
+                        table("##General", general, IM_ARRAYSIZE(general));
+                        ImGui::TableNextColumn();
+                        ImGui::SeparatorText("3D ビューポート");
+                        table("##Viewport", viewport3d, IM_ARRAYSIZE(viewport3d));
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("割り当て"))
+                {
+                    EditorShell::DrawKeymapEditor();
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
             }
-            if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && g_CapturingCommand.empty())
             {
                 g_ShowShortcuts = false;
             }
@@ -1094,29 +1404,29 @@ void EditorShell::DrawToolbar()
     {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * scale, 4.0f * scale));
         // ---- 左：保存 / 履歴 / 追加
-        if (ImGui::Button("保存"))
+        if (ImGui::Button(EditorIcons::Label(EditorIcons::Save(), "保存").c_str()))
         {
             SaveSceneAndReferences(false);
         }
-        ImGui::SetItemTooltip("シーンを保存 (Ctrl+S)");
+        ImGui::SetItemTooltip("シーンを保存 (%s)", Shortcut("ファイル", "シーンを保存", "Ctrl+S"));
         ImGui::SameLine();
         ImGui::BeginDisabled(ImGuiManager::m_UndoStack.empty() && !ImGuiManager::m_HasPendingUndo);
-        if (ImGui::Button("↶"))
+        if (ImGui::Button((std::string(EditorIcons::Undo()) + "##ToolbarUndo").c_str()))
         {
             ImGuiManager::Undo();
         }
-        ImGui::SetItemTooltip("元に戻す (Ctrl+Z)");
+        ImGui::SetItemTooltip("元に戻す (%s)", Shortcut("編集", "元に戻す", "Ctrl+Z"));
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(ImGuiManager::m_RedoStack.empty());
-        if (ImGui::Button("↷"))
+        if (ImGui::Button((std::string(EditorIcons::Redo()) + "##ToolbarRedo").c_str()))
         {
             ImGuiManager::Redo();
         }
-        ImGui::SetItemTooltip("やり直し (Ctrl+Y)");
+        ImGui::SetItemTooltip("やり直し (%s)", Shortcut("編集", "やり直し", "Ctrl+Y"));
         ImGui::EndDisabled();
         VerticalSeparator();
-        if (ImGui::Button("✚ 追加 ▾"))
+        if (ImGui::Button((EditorIcons::Label(EditorIcons::Add(), "追加") + " ▾##ToolbarAdd").c_str()))
         {
             ImGui::OpenPopup("##ToolbarAddMenu");
         }
@@ -1127,7 +1437,7 @@ void EditorShell::DrawToolbar()
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("⌕ コマンド"))
+        if (ImGui::Button(EditorIcons::Label(EditorIcons::Search(), "コマンド").c_str()))
         {
             OpenCommandPalette();
         }
@@ -1137,7 +1447,8 @@ void EditorShell::DrawToolbar()
         const bool playing = ProjectManager::IsPlaying();
         const bool paused = ProjectManager::IsPaused();
         const float buttonWidth = ImGui::GetFrameHeight() * 1.6f;
-        const float playGroupWidth = buttonWidth * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        const float optionsWidth = ImGui::GetFrameHeight() * 0.9f;
+        const float playGroupWidth = buttonWidth * 3.0f + optionsWidth + ImGui::GetStyle().ItemSpacing.x * 3.0f;
         const float centerX = (ImGui::GetWindowWidth() - playGroupWidth) * 0.5f;
         ImGui::SameLine();
         if (ImGui::GetCursorPosX() < centerX)
@@ -1147,7 +1458,8 @@ void EditorShell::DrawToolbar()
         {
             const ImVec4 green(0.20f, 0.62f, 0.32f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, playing && !paused ? ImVec4(1, 1, 1, 1) : green);
-            if (ToggleButton("▶##ToolbarPlay", playing && !paused, playing ? "再開" : "再生 (Ctrl+P)",
+            const std::string playLabel = std::string(EditorIcons::Play()) + "##ToolbarPlay";
+            if (ToggleButton(playLabel.c_str(), playing && !paused, playing ? "再開" : "再生 (Ctrl+P)",
                              ImVec2(buttonWidth, 0.0f)))
             {
                 if (!playing)
@@ -1160,15 +1472,51 @@ void EditorShell::DrawToolbar()
                 }
             }
             ImGui::PopStyleColor();
+            // #12 再生オプション（UE の「︙」と同じ）
+            ImGui::SameLine(0.0f, 1.0f);
+            ImGui::BeginDisabled(playing);
+            if (ImGui::Button((std::string(EditorIcons::ChevronDown()) + "##PlayOptions").c_str(),
+                              ImVec2(optionsWidth, 0.0f)))
+            {
+                ImGui::OpenPopup("##PlayOptionsPopup");
+            }
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("再生オプション");
+            if (ImGui::BeginPopup("##PlayOptionsPopup"))
+            {
+                if (ImGui::MenuItem("再生（ゲームカメラ）", Shortcut("再生", "再生", "Ctrl+P")))
+                {
+                    ProjectManager::Play();
+                }
+                if (ImGui::MenuItem("ここから再生", Shortcut("再生", "ここから再生", "")))
+                {
+                    ProjectManager::PlayFromEditorView();
+                }
+                ImGui::SetItemTooltip("今のビューポートの視点にゲームカメラを置いて再生します（停止で元に戻ります）");
+                const EntityID selected = ImGuiManager::m_SelectedEntity;
+                const bool selectedCamera = selected != g_kINVALID_ENTITY && Registry::IsAlive(selected) &&
+                                            ComponentManager::HasComponent<CameraComponent>(selected) &&
+                                            selected != Camera::GetEditorCameraEntity();
+                if (ImGui::MenuItem("選択中のカメラで再生", Shortcut("再生", "選択中のカメラで再生", ""), false,
+                                    selectedCamera))
+                {
+                    ProjectManager::PlayWithCamera(selected);
+                }
+                if (!selectedCamera)
+                {
+                    ImGui::SetItemTooltip("アウトライナーでカメラを選ぶと使えます");
+                }
+                ImGui::EndPopup();
+            }
             ImGui::SameLine();
             ImGui::BeginDisabled(!playing);
-            if (ToggleButton("❚❚##ToolbarPause", paused, "一時停止 (Ctrl+Shift+P)", ImVec2(buttonWidth, 0.0f)))
+            if (ToggleButton((std::string(EditorIcons::Pause()) + "##ToolbarPause").c_str(), paused, "一時停止 (Ctrl+Shift+P)", ImVec2(buttonWidth, 0.0f)))
             {
                 ProjectManager::TogglePause();
             }
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, playing ? EditorPreferences::Error() : ImGui::GetStyleColorVec4(ImGuiCol_Text));
-            if (ImGui::Button("■##ToolbarStop", ImVec2(buttonWidth, 0.0f)))
+            if (ImGui::Button((std::string(EditorIcons::Stop()) + "##ToolbarStop").c_str(), ImVec2(buttonWidth, 0.0f)))
             {
                 ProjectManager::Stop();
             }
@@ -1178,9 +1526,11 @@ void EditorShell::DrawToolbar()
         }
 
         // ---- 右：表示切替 / 設定
-        const char* lightLabel = "☀ ライト";
-        const char* prefsLabel = "⚙";
-        const float rightWidth = ImGui::CalcTextSize(lightLabel).x + ImGui::CalcTextSize(prefsLabel).x +
+        const std::string lightText = EditorIcons::Label(EditorIcons::Sun(), "ライト");
+        const std::string prefsText = std::string(EditorIcons::Settings()) + "##ToolbarPrefs";
+        const char* lightLabel = lightText.c_str();
+        const char* prefsLabel = prefsText.c_str();
+        const float rightWidth = ImGui::CalcTextSize(lightLabel).x + ImGui::CalcTextSize(prefsLabel, nullptr, true).x +
                                  ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetStyle().ItemSpacing.x;
         const float rightX = ImGui::GetWindowWidth() - rightWidth - 8.0f * scale;
         ImGui::SameLine();
@@ -1256,7 +1606,7 @@ void EditorShell::DrawStatusBar()
         ImGui::TextColored(dim, "%s", hint);
 
         // ---- 右：統計
-        char stats[256];
+        char stats[384];
         int length = 0;
         const size_t selected = ImGuiManager::m_SelectedEntities.size();
         length += snprintf(stats + length, sizeof(stats) - length, "選択 %zu", selected);
@@ -1268,16 +1618,38 @@ void EditorShell::DrawStatusBar()
         }
         if (length < static_cast<int>(sizeof(stats)))
         {
-            length += snprintf(stats + length, sizeof(stats) - length, "   GPU %.2f ms   %ux%u",
-                               PerformanceGovernor::GetSmoothedGpuMs(), GraphicsDevice::GetSceneWidth(),
-                               GraphicsDevice::GetSceneHeight());
+            // #4 ビューポートの統計オーバーレイと同じ内容（品質も含む）をここにまとめる
+            length += snprintf(stats + length, sizeof(stats) - length, "   GPU %.2f / %.2f ms   品質 %s   %ux%u",
+                               PerformanceGovernor::GetSmoothedGpuMs(), PerformanceGovernor::GetBudgetMs(),
+                               PerformanceGovernor::GetTierName(PerformanceGovernor::GetTier()),
+                               GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
         }
         const float fps = World::GetFrameRate();
         char fpsText[32];
         snprintf(fpsText, sizeof(fpsText), "%.0f FPS", fps);
+        // #11 裏で動いている処理（シェーダーのコンパイル / ベイク / サムネイル生成など）
+        BackgroundTasks::SetPolled("サムネイルの生成", AssetThumbnailManager::HasPendingVisibleAssets() ? 1 : 0);
+        const auto tasks = BackgroundTasks::Snapshot();
+        std::string taskText;
+        if (!tasks.empty())
+        {
+            static const char* const kSpinner[] = {"◐", "◓", "◑", "◒"};
+            const int frame = static_cast<int>(ImGui::GetTime() * 8.0) & 3;
+            int total = 0;
+            for (const auto& task : tasks)
+            {
+                total += task.Count;
+            }
+            taskText = std::string(kSpinner[frame]) + " " + tasks.front().Name;
+            if (tasks.size() > 1 || total > 1)
+            {
+                taskText += " ほか " + std::to_string(total - 1) + " 件";
+            }
+        }
+        const float taskWidth = taskText.empty() ? 0.0f : ImGui::CalcTextSize(taskText.c_str()).x + 16.0f * scale;
         const float statsWidth = ImGui::CalcTextSize(stats).x;
         const float fpsWidth = ImGui::CalcTextSize(fpsText).x;
-        const float rightStart = ImGui::GetWindowWidth() - statsWidth - fpsWidth - 24.0f * scale;
+        const float rightStart = ImGui::GetWindowWidth() - statsWidth - fpsWidth - taskWidth - 24.0f * scale;
 
         // ---- 中央：最新ログ（クリックでコンソール）
         std::string lastLog;
@@ -1325,6 +1697,21 @@ void EditorShell::DrawStatusBar()
         {
             ImGui::SetCursorPosX(rightStart);
         }
+        if (!taskText.empty())
+        {
+            ImGui::TextColored(EditorPreferences::Accent(), "%s", taskText.c_str());
+            if (ImGui::IsItemHovered() && ImGui::BeginTooltip())
+            {
+                ImGui::TextUnformatted("実行中の処理");
+                ImGui::Separator();
+                for (const auto& task : tasks)
+                {
+                    ImGui::Text("%s  ×%d", task.Name.c_str(), task.Count);
+                }
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine(0.0f, 16.0f * scale);
+        }
         ImGui::TextColored(dim, "%s", stats);
         ImGui::SameLine(0.0f, 12.0f * scale);
         const int target = World::GetTargetFrameRate();
@@ -1343,6 +1730,88 @@ void EditorShell::DrawViewportHeader()
     const float scale = Scale();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * scale, 3.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3.0f * scale, 4.0f * scale));
+
+    // ---- #2 左端：投影（パースペクティブ / 正投影）と表示モード（UE の「パースペクティブ」「ライティングあり」）
+    {
+        const EntityID editorCamera = Camera::GetEditorCameraEntity();
+        CameraComponent* camera = ComponentManager::HasComponent<CameraComponent>(editorCamera)
+                                      ? &ComponentManager::GetComponentUnchecked<CameraComponent>(editorCamera)
+                                      : nullptr;
+        const bool ortho = camera && camera->IsOrthographic;
+        if (ImGui::Button(ortho ? "正投影 ▾##Projection" : "パースペクティブ ▾##Projection"))
+        {
+            ImGui::OpenPopup("##ViewportProjection");
+        }
+        ImGui::SetItemTooltip("投影の切り替え");
+        if (ImGui::BeginPopup("##ViewportProjection"))
+        {
+            if (ImGui::MenuItem("パースペクティブ", nullptr, !ortho, camera != nullptr) && camera)
+            {
+                camera->IsOrthographic = false;
+            }
+            if (ImGui::MenuItem("正投影", nullptr, ortho, camera != nullptr) && camera)
+            {
+                camera->IsOrthographic = true;
+                // 今の注視距離で見える範囲に合わせる（切り替えで大きさがほぼ変わらない）
+                camera->OrthographicHeight =
+                    (std::max)(0.1f, 2.0f * EditorSceneNavigation::PivotDistance() * tanf(camera->Fov * 0.5f));
+            }
+            if (camera && camera->IsOrthographic)
+            {
+                ImGui::SetNextItemWidth(160.0f * scale);
+                ImGui::DragFloat("表示の高さ", &camera->OrthographicHeight, 0.05f, 0.1f, 10000.0f, "%.2f m",
+                                 ImGuiSliderFlags_Logarithmic);
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("視点");
+            DrawViewDirectionItems();
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        using EditorPreferences::ViewMode;
+        const bool deferred = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED;
+        std::string viewLabel = std::string(EditorPreferences::ViewModeName(prefs.ViewportViewMode));
+        if (const auto bracket = viewLabel.find("（"); bracket != std::string::npos)
+        {
+            viewLabel.resize(bracket); // ボタンには短い名前だけ
+        }
+        viewLabel += " ▾##ViewMode";
+        if (ImGui::Button(viewLabel.c_str()))
+        {
+            ImGui::OpenPopup("##ViewportViewMode");
+        }
+        ImGui::SetItemTooltip("表示モード（G-Buffer の確認）");
+        if (ImGui::BeginPopup("##ViewportViewMode"))
+        {
+            for (int i = 0; i < static_cast<int>(ViewMode::Count); ++i)
+            {
+                const auto mode = static_cast<ViewMode>(i);
+                if (ImGui::MenuItem(EditorPreferences::ViewModeName(mode), nullptr,
+                                    prefs.ViewportViewMode == mode, i == 0 || deferred))
+                {
+                    prefs.ViewportViewMode = mode;
+                }
+            }
+            if (!deferred)
+            {
+                ImGui::Separator();
+                ImGui::TextDisabled("G-Buffer の表示はディファード描画のときだけ使えます");
+            }
+            ImGui::Separator();
+            int lumenView = RendererSettings::GetLumenDebugView();
+            ImGui::TextDisabled("GI（Lumen）");
+            const char* lumenViews[] = {"ライティング", "プローブの範囲", "サーフェスキャッシュの範囲"};
+            for (int i = 0; i < 3; ++i)
+            {
+                if (ImGui::MenuItem(lumenViews[i], nullptr, lumenView == i))
+                {
+                    RendererSettings::SetLumenDebugView(i);
+                }
+            }
+            ImGui::EndPopup();
+        }
+        VerticalSeparator();
+    }
 
     // ---- 変形ツール（UE のビューポートツールバーと同じ並び）
     struct Tool
@@ -1397,6 +1866,38 @@ void EditorShell::DrawViewportHeader()
     const float startX = ImGui::GetCursorPosX() + (std::max)(0.0f, ImGui::GetContentRegionAvail().x - rightGroupWidth);
     ImGui::SetCursorPosX(startX);
     ImGui::BeginGroup();
+    // #3 カメラ速度（右ドラッグ中のホイールでも変更）
+    if (prefs.ShowViewportSpeed)
+    {
+        char speedLabel[48];
+        snprintf(speedLabel, sizeof(speedLabel), "%s %.2g##CameraSpeed", EditorIcons::Camera(), prefs.EditorCameraSpeed);
+        if (ImGui::Button(speedLabel))
+        {
+            ImGui::OpenPopup("##CameraSpeedPopup");
+        }
+        ImGui::SetItemTooltip("カメラの移動速度\n右ドラッグ中のマウスホイールでも変更");
+        if (ImGui::BeginPopup("##CameraSpeedPopup"))
+        {
+            ImGui::SetNextItemWidth(180.0f * scale);
+            ImGui::SliderFloat("速度", &prefs.EditorCameraSpeed, 0.03125f, 32.0f, "×%.3g", ImGuiSliderFlags_Logarithmic);
+            static const float presets[] = {0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
+            for (int i = 0; i < IM_ARRAYSIZE(presets); ++i)
+            {
+                char item[16];
+                snprintf(item, sizeof(item), "×%g", presets[i]);
+                if (i > 0)
+                {
+                    ImGui::SameLine();
+                }
+                if (ImGui::SmallButton(item))
+                {
+                    prefs.EditorCameraSpeed = presets[i];
+                }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+    }
     SnapControl("SnapT", "⊞", prefs.Snap.Translate, prefs.Snap.TranslateStep, kTranslateSteps,
                 IM_ARRAYSIZE(kTranslateSteps), "%.2f", "移動スナップ（Ctrl で反転）");
     ImGui::SameLine();

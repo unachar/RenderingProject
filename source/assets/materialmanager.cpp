@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "materialmanager.h"
+#include "editorvisibility.h"
 #include "assetthumbnailmanager.h"
 #include "texturemanager.h"
 #include "noiseasset.h"
@@ -500,6 +501,10 @@ void MaterialManager::Discard(AssetHandle handle)
 
 bool MaterialManager::HasSurfaceForPass(EntityID entity, bool transparent)
 {
+    if (EditorVisibility::IsHidden(entity))
+    {
+        return false; // #5 アウトライナーで非表示
+    }
     if (!ComponentManager::HasComponent<MaterialComponent>(entity))
     {
         return !transparent;

@@ -7,6 +7,7 @@
 // ============================================================================
 #include <imgui.h>
 #include <string>
+#include <vector>
 
 namespace EditorPreferences
 {
@@ -16,6 +17,34 @@ namespace EditorPreferences
         Blender,
         Unity,
         Midnight,
+        Light, // #14 ライトテーマ
+        Count
+    };
+
+    // #2 ビューポートの表示モード（Lit 以外は G-Buffer をそのまま表示する）
+    enum class ViewMode : int
+    {
+        Lit = 0,
+        Unlit,    // ベースカラー
+        Normal,
+        Depth,
+        Material, // メタリック / ラフネス / フレネル
+        Emission,
+        AO,
+        Velocity,
+        Count
+    };
+
+    // #8 コンテンツブラウザの種類フィルター
+    enum class AssetFilter : int
+    {
+        All = 0,
+        Folder,
+        Material,
+        Texture,
+        Mesh,
+        Scene,
+        Other,
         Count
     };
 
@@ -51,12 +80,25 @@ namespace EditorPreferences
 
         bool ShowToolbar = true;
         bool ShowStatusBar = true;
-        bool ShowAreaHeaders = true;
+        bool ShowAreaHeaders = false; // #1 既定はオフ（タブの右クリックで切り替え / 最大化）
         bool ShowToasts = true;
         bool ToastOnSuccess = true;
         bool ShowNavigationGizmo = true;
-        bool ShowViewportStats = true;
+        bool ShowViewportStats = false; // #4 既定はオフ（FPS / GPU / 品質 / 解像度はステータスバーに表示）
         bool ShowOutlinerTypeColumn = true;
+        bool ShowViewportAxis = true;     // #3 左下の XYZ 軸
+        bool ShowViewportSpeed = true;    // #3 カメラ速度ボタン
+        ViewMode ViewportViewMode = ViewMode::Lit; // #2
+        float EditorCameraSpeed = 1.0f;   // #3 フライ速度の倍率（右ドラッグ + ホイールでも変更）
+
+        // ---- コンテンツブラウザ（#7〜#9）
+        bool AssetFolderTree = true;
+        float AssetTreeWidth = 200.0f;
+        bool AssetListView = false;
+        AssetFilter AssetTypeFilter = AssetFilter::All;
+        bool AssetHideCompanions = true; // .graph.json などの付属ファイルを隠す
+        std::string AssetFavorites;      // '|' 区切り（asset からの相対パス）
+        std::string AssetRecent;         // '|' 区切り、新しい順
 
         int UndoLimit = 30;
         SnapSettings Snap;
@@ -64,6 +106,11 @@ namespace EditorPreferences
 
     Settings& Get();
     const char* ThemeName(ThemePreset preset);
+    const char* ViewModeName(ViewMode mode);
+    const char* AssetFilterName(AssetFilter filter);
+    // '|' 区切りリストの操作（お気に入り / 最近使ったもの）
+    std::vector<std::string> SplitList(const std::string& list);
+    std::string JoinList(const std::vector<std::string>& items);
     const char* FontName(FontChoice font);
 
     // Init（バックエンド初期化前）に一度だけ呼ぶ
@@ -89,7 +136,15 @@ namespace EditorPreferences
     ImVec4 Warning();
     ImVec4 Error();
     ImU32 AxisColor(int axis, float alpha = 1.0f); // 0:X(赤) 1:Y(緑) 2:Z(青)
+    // #14 これまで各所に直書きしていた色をここに集約
+    bool IsLightTheme();
+    ImVec4 OverlayBg();      // ビューポート上に重ねる UI の背景（半透明）
+    ImVec4 OverlayText();
+    ImVec4 Selection();      // 選択中の強調色
+    ImVec4 PrefabColor();
+    ImVec4 Favorite();
 
     // 設定ウィンドウの中身（BeginEditorWindow の内側から呼ぶ）
     void DrawPreferencesContent();
 } // namespace EditorPreferences
+

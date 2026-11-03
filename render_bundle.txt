@@ -8424,6 +8424,7 @@ namespace MaterialGraphMath
 ===== FILE: source\assets\materialmanager.cpp =====
 #include "pch.h"
 #include "materialmanager.h"
+#include "editorvisibility.h"
 #include "assetthumbnailmanager.h"
 #include "texturemanager.h"
 #include "noiseasset.h"
@@ -8924,6 +8925,10 @@ void MaterialManager::Discard(AssetHandle handle)
 
 bool MaterialManager::HasSurfaceForPass(EntityID entity, bool transparent)
 {
+    if (EditorVisibility::IsHidden(entity))
+    {
+        return false; // #5 アウトライナーで非表示
+    }
     if (!ComponentManager::HasComponent<MaterialComponent>(entity))
     {
         return !transparent;
@@ -14017,6 +14022,99 @@ namespace CacheCompressionPolicy
     }
 }
 
+===== FILE: source\core\backgroundtasks.h =====
+#pragma once
+// ============================================================================
+// BackgroundTasks（#11）：裏で動いている処理の数を集計し、エディターのステータスバーに出す
+//  ・ワーカースレッドから使える（mutex で保護）
+//  ・Scope：処理の間だけ数える（std::async のラムダの先頭に置くだけ）
+//  ・SetPolled：毎フレーム数を問い合わせるもの（サムネイル生成の待ちなど）
+// ============================================================================
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace BackgroundTasks
+{
+    struct Entry
+    {
+        std::string Name;
+        int Count = 0;
+    };
+
+    inline std::mutex g_Mutex;
+    inline std::map<std::string, int> g_Running; // 名前 → 実行中の数
+    inline std::map<std::string, int> g_Polled;  // 名前 → 毎フレーム更新される数
+
+    inline void Begin(const char* name)
+    {
+        std::lock_guard lock(g_Mutex);
+        ++g_Running[name];
+    }
+
+    inline void End(const char* name)
+    {
+        std::lock_guard lock(g_Mutex);
+        auto found = g_Running.find(name);
+        if (found != g_Running.end() && --found->second <= 0)
+        {
+            g_Running.erase(found);
+        }
+    }
+
+    // 0 で消える
+    inline void SetPolled(const char* name, int count)
+    {
+        std::lock_guard lock(g_Mutex);
+        if (count > 0)
+        {
+            g_Polled[name] = count;
+        }
+        else
+        {
+            g_Polled.erase(name);
+        }
+    }
+
+    inline std::vector<Entry> Snapshot()
+    {
+        std::lock_guard lock(g_Mutex);
+        std::map<std::string, int> merged = g_Polled;
+        for (const auto& [name, count] : g_Running)
+        {
+            merged[name] += count;
+        }
+        std::vector<Entry> entries;
+        for (const auto& [name, count] : merged)
+        {
+            if (count > 0)
+            {
+                entries.push_back({name, count});
+            }
+        }
+        return entries;
+    }
+
+    class Scope
+    {
+      public:
+        explicit Scope(const char* name) : m_Name(name)
+        {
+            Begin(m_Name);
+        }
+        ~Scope()
+        {
+            End(m_Name);
+        }
+        Scope(const Scope&) = delete;
+        Scope& operator=(const Scope&) = delete;
+
+      private:
+        const char* m_Name;
+    };
+} // namespace BackgroundTasks
+
 ===== FILE: source\core\celestialocclusionvalidation.cpp =====
 #include "pch.h"
 #include "celestialocclusionvalidation.h"
@@ -14315,6 +14413,92 @@ namespace CelestialOcclusionValidation
     void AfterFrame(uint64_t frame);
     bool Finish();
 } // 名前空間 CelestialOcclusionValidation の終わり。
+
+===== FILE: source\core\editorvisibility.h =====
+#pragma once
+// ============================================================================
+// EditorVisibility：アウトライナーの「表示（目）」と「ロック（鍵）」（#5、UE の Hidden in Editor と同じ）
+//  ・エディター上だけの状態。シーンファイルには保存しない（再生中は非表示を無視してすべて描く）
+//  ・非表示：各描画経路（ラスター / インスタンス / GPU シーン / レイトレーシング）が IsHidden で除外する
+//  ・ロック：ビューポートのクリック選択とギズモの対象から外す（アウトライナーからは選択できる）
+// ============================================================================
+#include <cstdint>
+#include <unordered_set>
+#include "gpuscene/gpuscenechanges.h"
+
+namespace EditorVisibility
+{
+    inline std::unordered_set<uint32_t> g_Hidden;
+    inline std::unordered_set<uint32_t> g_Locked;
+    inline bool g_Enabled = true; // false = 再生中（非表示を無視）
+    inline uint64_t g_Revision = 1;
+
+    inline bool IsHidden(uint32_t entity)
+    {
+        return g_Enabled && !g_Hidden.empty() && g_Hidden.contains(entity);
+    }
+
+    inline bool IsHiddenFlag(uint32_t entity)
+    {
+        return g_Hidden.contains(entity);
+    }
+
+    inline bool IsLocked(uint32_t entity)
+    {
+        return !g_Locked.empty() && g_Locked.contains(entity);
+    }
+
+    inline void SetHidden(uint32_t entity, bool hidden)
+    {
+        const bool changed = hidden ? g_Hidden.insert(entity).second : g_Hidden.erase(entity) != 0;
+        if (changed)
+        {
+            ++g_Revision;
+            GpuSceneChanges::Notify(entity); // GPU シーンのインスタンスを作り直す
+        }
+    }
+
+    inline void SetLocked(uint32_t entity, bool locked)
+    {
+        if (locked)
+        {
+            g_Locked.insert(entity);
+        }
+        else
+        {
+            g_Locked.erase(entity);
+        }
+    }
+
+    // 再生の開始 / 終了で切り替える（非表示のエンティティを GPU シーンに出し入れする）
+    inline void SetEnabled(bool enabled)
+    {
+        if (g_Enabled == enabled)
+        {
+            return;
+        }
+        g_Enabled = enabled;
+        ++g_Revision;
+        for (const uint32_t entity : g_Hidden)
+        {
+            GpuSceneChanges::Notify(entity);
+        }
+    }
+
+    // エンティティの削除 / シーンの読み替え
+    inline void Forget(uint32_t entity)
+    {
+        g_Hidden.erase(entity);
+        g_Locked.erase(entity);
+    }
+
+    inline void Clear()
+    {
+        g_Hidden.clear();
+        g_Locked.clear();
+        ++g_Revision;
+    }
+} // namespace EditorVisibility
 
 ===== FILE: source\core\game.cpp =====
 #include "pch.h"
@@ -20764,6 +20948,8 @@ namespace ViewportInputGate
 {
     inline bool g_EditorDrivesInput = false; // エディターが毎フレーム状態を更新しているか
     inline bool g_RightLookActive = false;   // ビューポートで右ボタンを押し始め、まだ離していない
+    // #3 エディターカメラのフライ速度の倍率（ビューポートのカメラ速度ボタン / 右ドラッグ + ホイール）
+    inline float g_EditorCameraSpeedScale = 1.0f;
 
     inline bool CameraLookActive()
     {
@@ -20784,6 +20970,7 @@ namespace ViewportInputGate
         }
     }
 } // namespace ViewportInputGate
+
 
 ===== FILE: source\core\world.cpp =====
 #include "pch.h"
@@ -25029,6 +25216,11 @@ namespace EditorConfig
 
 ===== FILE: source\editor\editorassets.cpp =====
 #include "pch.h"
+#include "editorpreferences.h"
+#include "editoricons.h"
+#include <chrono>
+#include <ctime>
+#include <functional>
 #include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
@@ -25270,6 +25462,190 @@ bool ImGuiManager::StartupAssetBrowserReady()
 namespace
 {
     int g_AssetBrowserItemCount = 0; // 前のフレームの一覧の件数（ツールバーの行に表示）
+
+    // #8 付属ファイル（元のアセットの横に自動で作られるもの）
+    bool IsCompanionFile(const string& name)
+    {
+        const auto endsWith = [&](const char* suffix) {
+            const size_t length = strlen(suffix);
+            return name.size() >= length && _stricmp(name.c_str() + name.size() - length, suffix) == 0;
+        };
+        return endsWith(".graph.json") || endsWith(".graph.recovery.json") || endsWith(".meta");
+    }
+
+    bool IsSceneAsset(const filesystem::path& path)
+    {
+        return _wcsicmp(path.extension().c_str(), L".scene") == 0;
+    }
+
+    // #8 種類フィルター
+    bool PassAssetTypeFilter(const AssetBrowserItem& item, EditorPreferences::AssetFilter filter)
+    {
+        using EditorPreferences::AssetFilter;
+        if (filter == AssetFilter::All)
+        {
+            return true;
+        }
+        if (item.IsDirectory)
+        {
+            return filter == AssetFilter::Folder;
+        }
+        const AssetType type = AssetRegistry::Classify(item.Path);
+        switch (filter)
+        {
+            case AssetFilter::Material:
+                return type == AssetType::Material;
+            case AssetFilter::Texture:
+                return type == AssetType::Texture;
+            case AssetFilter::Mesh:
+                return type == AssetType::Mesh;
+            case AssetFilter::Scene:
+                return IsSceneAsset(item.Path);
+            case AssetFilter::Other:
+                return type == AssetType::Unknown && !IsSceneAsset(item.Path);
+            default:
+                return false;
+        }
+    }
+
+    const char* AssetTypeLabel(const AssetBrowserItem& item)
+    {
+        if (item.IsDirectory)
+        {
+            return "フォルダ";
+        }
+        if (IsSceneAsset(item.Path))
+        {
+            return "シーン";
+        }
+        switch (AssetRegistry::Classify(item.Path))
+        {
+            case AssetType::Material:
+                return "マテリアル";
+            case AssetType::Texture:
+                return "テクスチャ";
+            case AssetType::Mesh:
+                return "メッシュ";
+            case AssetType::Noise:
+                return "ノイズ";
+            default:
+                return IsCompanionFile(item.Name) ? "付属ファイル" : "ファイル";
+        }
+    }
+
+    // #9 お気に入り / 最近使ったもの（EditorPreferences に '|' 区切りの UTF-8 パスで保存）
+    string AssetListKey(const filesystem::path& path)
+    {
+        const auto u8 = path.lexically_normal().generic_u8string();
+        return string(u8.begin(), u8.end());
+    }
+
+    bool IsFavoriteAsset(const filesystem::path& path)
+    {
+        const auto favorites = EditorPreferences::SplitList(EditorPreferences::Get().AssetFavorites);
+        return std::find(favorites.begin(), favorites.end(), AssetListKey(path)) != favorites.end();
+    }
+
+    void ToggleFavoriteAsset(const filesystem::path& path)
+    {
+        auto favorites = EditorPreferences::SplitList(EditorPreferences::Get().AssetFavorites);
+        const string key = AssetListKey(path);
+        const auto found = std::find(favorites.begin(), favorites.end(), key);
+        if (found != favorites.end())
+        {
+            favorites.erase(found);
+        }
+        else
+        {
+            favorites.push_back(key);
+        }
+        EditorPreferences::Get().AssetFavorites = EditorPreferences::JoinList(favorites);
+    }
+
+    void PushRecentAsset(const filesystem::path& path)
+    {
+        auto recent = EditorPreferences::SplitList(EditorPreferences::Get().AssetRecent);
+        const string key = AssetListKey(path);
+        recent.erase(std::remove(recent.begin(), recent.end(), key), recent.end());
+        recent.insert(recent.begin(), key);
+        if (recent.size() > 12)
+        {
+            recent.resize(12);
+        }
+        EditorPreferences::Get().AssetRecent = EditorPreferences::JoinList(recent);
+    }
+
+    filesystem::path AssetListPath(const string& key)
+    {
+        return filesystem::path(std::u8string(key.begin(), key.end()));
+    }
+
+    string FormatFileSize(uintmax_t bytes)
+    {
+        char text[32];
+        if (bytes < 1024)
+            snprintf(text, sizeof(text), "%llu B", static_cast<unsigned long long>(bytes));
+        else if (bytes < 1024ull * 1024)
+            snprintf(text, sizeof(text), "%.1f KB", bytes / 1024.0);
+        else if (bytes < 1024ull * 1024 * 1024)
+            snprintf(text, sizeof(text), "%.1f MB", bytes / (1024.0 * 1024.0));
+        else
+            snprintf(text, sizeof(text), "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+        return text;
+    }
+
+    string FormatFileTime(filesystem::file_time_type time)
+    {
+        if (time == filesystem::file_time_type{})
+        {
+            return "-";
+        }
+        const auto system = std::chrono::clock_cast<std::chrono::system_clock>(time);
+        const std::time_t value = std::chrono::system_clock::to_time_t(system);
+        std::tm local{};
+        localtime_s(&local, &value);
+        char text[32];
+        strftime(text, sizeof(text), "%Y/%m/%d %H:%M", &local);
+        return text;
+    }
+
+    // #7 フォルダツリー（2 秒ごと / 再スキャンで作り直す。ファイルは見ない）
+    struct FolderNode
+    {
+        filesystem::path Path;
+        string Name;
+        vector<FolderNode> Children;
+    };
+
+    void BuildFolderTree(FolderNode& node, int depth)
+    {
+        node.Children.clear();
+        if (depth > 12)
+        {
+            return;
+        }
+        error_code ec;
+        for (filesystem::directory_iterator it(node.Path, filesystem::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec))
+        {
+            if (!it->is_directory(ec))
+            {
+                continue;
+            }
+            FolderNode child;
+            child.Path = it->path();
+            const auto u8 = child.Path.filename().u8string();
+            child.Name.assign(u8.begin(), u8.end());
+            if (!child.Name.empty() && child.Name[0] == '.')
+            {
+                continue;
+            }
+            BuildFolderTree(child, depth + 1);
+            node.Children.push_back(std::move(child));
+        }
+        std::sort(node.Children.begin(), node.Children.end(),
+                  [](const FolderNode& a, const FolderNode& b) { return _stricmp(a.Name.c_str(), b.Name.c_str()) < 0; });
+    }
 }
 
 void ImGuiManager::DrawAssetBrowserWindow()
@@ -25462,9 +25838,14 @@ void ImGuiManager::DrawAssetBrowserWindow()
     const ImGuiStyle& style = ImGui::GetStyle();
     const float spacing = style.ItemSpacing.x;
     const float sliderWidth = 110.0f;
-    const float refreshWidth = ImGui::CalcTextSize("サムネイル更新").x + style.FramePadding.x * 2.0f;
-    const float searchMin = 160.0f, searchMax = 360.0f;
-    const float rightFixed = sliderWidth + spacing + refreshWidth + spacing;
+    auto& browserPrefs = EditorPreferences::Get();
+    const float iconButton = ImGui::GetFrameHeight() + style.FramePadding.x;
+    const float refreshWidth = iconButton;
+    const float typeWidth = 110.0f;
+    const float searchMin = 140.0f, searchMax = 320.0f;
+    // 種類フィルター / 検索 / サイズ / 表示切り替え ×2 / サムネイル更新
+    const float rightFixed = typeWidth + spacing + sliderWidth + spacing + iconButton * 2.0f + spacing * 2.0f +
+                             refreshWidth + spacing;
     ImGui::SameLine(0.0f, 16.0f);
     float rightAvail = ImGui::GetContentRegionAvail().x;
     if (rightAvail < rightFixed + searchMin)
@@ -25478,6 +25859,28 @@ void ImGuiManager::DrawAssetBrowserWindow()
     static ImGuiTextFilter assetFilter;
     static vector<filesystem::path> pendingDeletePaths;
     bool deleteRequested = false;
+    // #8 種類フィルター
+    {
+        using EditorPreferences::AssetFilter;
+        ImGui::SetNextItemWidth(typeWidth);
+        if (ImGui::BeginCombo("##AssetTypeFilter", EditorPreferences::AssetFilterName(browserPrefs.AssetTypeFilter)))
+        {
+            for (int i = 0; i < static_cast<int>(AssetFilter::Count); ++i)
+            {
+                const auto filter = static_cast<AssetFilter>(i);
+                if (ImGui::Selectable(EditorPreferences::AssetFilterName(filter), browserPrefs.AssetTypeFilter == filter))
+                {
+                    browserPrefs.AssetTypeFilter = filter;
+                }
+            }
+            ImGui::Separator();
+            ImGui::Checkbox("付属ファイルを隠す", &browserPrefs.AssetHideCompanions);
+            ImGui::SetItemTooltip(".graph.json などは元のアセットと一緒に移動・複製されます");
+            ImGui::EndCombo();
+        }
+        ImGui::SetItemTooltip("種類で絞り込み");
+        ImGui::SameLine();
+    }
     ImGui::BeginGroup();
     {
         // DrawSearchField は残り幅いっぱいに広がるので、子領域で幅を制限する
@@ -25503,20 +25906,198 @@ void ImGuiManager::DrawAssetBrowserWindow()
     {
         ImGui::SetTooltip("サムネイルサイズ（Ctrl+ホイールでも変更）");
     }
+    // #9 表示切り替え（サムネイル / 一覧）、#7 フォルダツリー
     ImGui::SameLine();
-    if (ImGui::Button("サムネイル更新"))
+    if (ImGui::Button(browserPrefs.AssetListView ? EditorIcons::GridView() : EditorIcons::ListView(),
+                      ImVec2(iconButton, 0.0f)))
+    {
+        browserPrefs.AssetListView = !browserPrefs.AssetListView;
+    }
+    ImGui::SetItemTooltip(browserPrefs.AssetListView ? "サムネイル表示に切り替え" : "一覧表示に切り替え（名前 / 種類 / サイズ / 更新日）");
+    ImGui::SameLine();
+    if (ImGui::Button(EditorIcons::Folder(), ImVec2(iconButton, 0.0f)))
+    {
+        browserPrefs.AssetFolderTree = !browserPrefs.AssetFolderTree;
+    }
+    ImGui::SetItemTooltip(browserPrefs.AssetFolderTree ? "フォルダツリーを隠す" : "フォルダツリーを表示");
+    ImGui::SameLine();
+    if (ImGui::Button((std::string(EditorIcons::Refresh()) + "##ThumbRefresh").c_str(), ImVec2(refreshWidth, 0.0f)))
     {
         AssetThumbnailManager::Refresh();
     }
-    const float cellSize = static_cast<float>(thumbnailSize);
-    const float rowHeight = cellSize + ImGui::GetTextLineHeightWithSpacing() + 12.0f;
+    ImGui::SetItemTooltip("サムネイル更新");
+
+    // ---- #7 左：フォルダツリー（お気に入り / 最近使ったもの / フォルダ）
+    if (browserPrefs.AssetFolderTree)
+    {
+        static FolderNode root;
+        static double nextTreeScan = 0.0;
+        if (ImGui::GetTime() >= nextTreeScan || m_AssetBrowserRescan || root.Path != m_AssetRoot)
+        {
+            root.Path = m_AssetRoot;
+            root.Name = "asset";
+            BuildFolderTree(root, 0);
+            nextTreeScan = ImGui::GetTime() + 2.0;
+        }
+        ImGui::BeginChild("AssetFolderTree", ImVec2(browserPrefs.AssetTreeWidth, 0.0f), true);
+        filesystem::path navigate;
+        filesystem::path selectInFolder;
+        const auto drawShortcutList = [&](const char* title, const std::string& list, bool favorites) {
+            const auto items = EditorPreferences::SplitList(list);
+            ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            if (!ImGui::TreeNodeEx(title, ImGuiTreeNodeFlags_SpanAvailWidth))
+            {
+                return;
+            }
+            if (items.empty())
+            {
+                ImGui::TextDisabled(favorites ? "（右クリック → お気に入りに追加）" : "（まだありません）");
+            }
+            for (const auto& key : items)
+            {
+                const filesystem::path path = AssetListPath(key);
+                error_code exists;
+                if (!filesystem::exists(path, exists))
+                {
+                    continue;
+                }
+                const auto name = path.filename().u8string();
+                ImGui::PushID(key.c_str());
+                const std::string label =
+                    std::string(favorites ? EditorIcons::StarFill() : EditorIcons::History()) + " " +
+                    std::string(name.begin(), name.end());
+                if (ImGui::Selectable(label.c_str()))
+                {
+                    if (filesystem::is_directory(path, exists))
+                    {
+                        navigate = path;
+                    }
+                    else
+                    {
+                        navigate = path.parent_path();
+                        selectInFolder = path;
+                    }
+                }
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
+                    !filesystem::is_directory(path, exists))
+                {
+                    OpenAssetItem(path);
+                }
+                ImGui::SetItemTooltip("%s", key.c_str());
+                if (favorites && ImGui::BeginPopupContextItem("FavoriteContext"))
+                {
+                    if (ImGui::MenuItem("お気に入りから外す"))
+                    {
+                        ToggleFavoriteAsset(path);
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
+            }
+            if (!favorites && !items.empty() && ImGui::SmallButton("履歴を消去"))
+            {
+                EditorPreferences::Get().AssetRecent.clear();
+            }
+            ImGui::TreePop();
+        };
+        drawShortcutList("お気に入り", browserPrefs.AssetFavorites, true);
+        drawShortcutList("最近使ったもの", browserPrefs.AssetRecent, false);
+        ImGui::Separator();
+        std::function<void(const FolderNode&)> drawFolder = [&](const FolderNode& node) {
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                                       ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (node.Children.empty())
+            {
+                flags |= ImGuiTreeNodeFlags_Leaf;
+            }
+            const bool current = node.Path.lexically_normal() == m_CurrentAssetDirectory.lexically_normal();
+            if (current)
+            {
+                flags |= ImGuiTreeNodeFlags_Selected;
+            }
+            // 今いるフォルダまでの親は開いておく
+            const auto relative = m_CurrentAssetDirectory.lexically_relative(node.Path);
+            if (!relative.empty() && *relative.begin() != ".." && !current)
+            {
+                ImGui::SetNextItemOpen(true, ImGuiCond_Appearing);
+            }
+            ImGui::PushID(AssetListKey(node.Path).c_str());
+            const std::string label = std::string(EditorIcons::Folder()) + " " + node.Name;
+            const bool open = ImGui::TreeNodeEx("##Folder", flags, "%s", label.c_str());
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            {
+                navigate = node.Path;
+            }
+            if (ImGui::BeginDragDropTarget())
+            {
+                AcceptAssetMoveDrop(node.Path); // アセット / フォルダをドロップして移動
+                ImGui::EndDragDropTarget();
+            }
+            if (ImGui::BeginPopupContextItem("FolderTreeContext"))
+            {
+                if (ImGui::MenuItem(IsFavoriteAsset(node.Path) ? "お気に入りから外す" : "お気に入りに追加"))
+                {
+                    ToggleFavoriteAsset(node.Path);
+                }
+                if (ImGui::BeginMenu("このフォルダに作成"))
+                {
+                    DrawAssetCreateMenuItems(node.Path);
+                    ImGui::EndMenu();
+                }
+                ImGui::EndPopup();
+            }
+            if (open)
+            {
+                for (const auto& child : node.Children)
+                {
+                    drawFolder(child);
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        };
+        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        drawFolder(root);
+        ImGui::EndChild();
+        if (!navigate.empty())
+        {
+            m_CurrentAssetDirectory = navigate;
+            if (!selectInFolder.empty())
+            {
+                SelectAssetOnly(selectInFolder);
+            }
+            else
+            {
+                m_SelectedAssetPath.clear();
+            }
+        }
+        // ツリーと一覧の境界：ドラッグで幅を変える
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::InvisibleButton("##AssetTreeSplitter", ImVec2(5.0f, (std::max)(1.0f, ImGui::GetContentRegionAvail().y)));
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (ImGui::IsItemActive())
+        {
+            browserPrefs.AssetTreeWidth =
+                std::clamp(browserPrefs.AssetTreeWidth + ImGui::GetIO().MouseDelta.x, 100.0f, 600.0f);
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+    }
+
+    // #9 一覧表示：小さいアイコン + 名前 / 種類 / サイズ / 更新日の行
+    const bool listView = browserPrefs.AssetListView;
+    const float cellSize = listView ? ImGui::GetTextLineHeight() * 1.4f : static_cast<float>(thumbnailSize);
+    const float rowHeight =
+        listView ? cellSize + 4.0f : cellSize + ImGui::GetTextLineHeightWithSpacing() + 12.0f;
     // 矢印キーは自前で処理するため、このリストでは ImGui のキーボードナビゲーションを止める
     ImGui::BeginChild("AssetList", ImVec2(0, 0), true,
                       ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoNavInputs |
                           (ImGui::GetIO().KeyCtrl ? ImGuiWindowFlags_NoScrollWithMouse : 0));
     const bool listFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     // Ctrl+ホイールでサムネイルサイズを変える（一覧の上だけ）
-    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::GetIO().KeyCtrl &&
+    if (!listView && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::GetIO().KeyCtrl &&
         ImGui::GetIO().MouseWheel != 0.0f)
     {
         const int resized = std::clamp(thumbnailSize + static_cast<int>(ImGui::GetIO().MouseWheel * 8.0f), 32, 256);
@@ -25534,7 +26115,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
     static unordered_map<string, AssetHandle> browserHandles;
     static filesystem::path listedDirectory;
     static string listedFilter;
-    const string currentFilter = assetFilter.InputBuf;
+    // 検索文字列 + 種類フィルター + 付属ファイルの表示（どれかが変わったら作り直す）
+    const string currentFilter = string(assetFilter.InputBuf) + "\x1F" +
+                                 std::to_string(static_cast<int>(browserPrefs.AssetTypeFilter)) +
+                                 (browserPrefs.AssetHideCompanions ? "h" : "s");
     const bool directoryChanged = listedDirectory != m_CurrentAssetDirectory;
     const bool forceScan = m_AssetBrowserRescan;
     m_AssetBrowserRescan = false;
@@ -25554,10 +26138,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
         listedFilter = currentFilter;
         for (const auto& entry : listing.Items())
         {
-            if (assetFilter.PassFilter(entry.Name.c_str()))
+            if (!assetFilter.PassFilter(entry.Name.c_str()) ||
+                !PassAssetTypeFilter(entry, browserPrefs.AssetTypeFilter) ||
+                (browserPrefs.AssetHideCompanions && !entry.IsDirectory && IsCompanionFile(entry.Name)))
             {
-                entries.push_back(entry);
+                continue;
             }
+            entries.push_back(entry);
         }
     }
     if (listing.Error())
@@ -25608,7 +26195,29 @@ void ImGuiManager::DrawAssetBrowserWindow()
             AssetThumbnailManager::Request(handle, ThumbnailPriority::Selected);
         }
     }
-    const int columnCount = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (cellSize + 16.0f)), 1, 64);
+    const int columnCount =
+        listView ? 1 : std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (cellSize + 16.0f)), 1, 64);
+    // #9 一覧表示の列（名前の右に 種類 / サイズ / 更新日）
+    const float listTypeWidth = 90.0f, listSizeWidth = 80.0f, listTimeWidth = 130.0f;
+    if (listView)
+    {
+        const float x0 = ImGui::GetCursorScreenPos().x;
+        const float right = x0 + ImGui::GetContentRegionAvail().x;
+        const float y = ImGui::GetCursorScreenPos().y;
+        ImDrawList* header = ImGui::GetWindowDrawList();
+        const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        header->AddText(ImVec2(x0 + cellSize + 8.0f, y), dim, "名前");
+        header->AddText(ImVec2(right - listTimeWidth - listSizeWidth - listTypeWidth, y), dim, "種類");
+        header->AddText(ImVec2(right - listTimeWidth - listSizeWidth, y), dim, "サイズ");
+        header->AddText(ImVec2(right - listTimeWidth, y), dim, "更新日");
+        ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
+        ImGui::Separator();
+    }
+    static unordered_map<string, uintmax_t> listSizes; // 一覧表示のファイルサイズ（キー → バイト数）
+    if (directoryChanged || forceScan || listingChanged)
+    {
+        listSizes.clear();
+    }
     const float rowStride = rowHeight + ImGui::GetStyle().CellPadding.y * 2.0f;
 
     // 表示順のインデックス（Shift 範囲選択・矢印キー用）
@@ -25806,11 +26415,19 @@ void ImGuiManager::DrawAssetBrowserWindow()
 
     static vector<VisibleCell> visibleCells;
     visibleCells.clear();
-    if (ImGui::BeginTable("AssetGrid", columnCount, ImGuiTableFlags_SizingFixedSame))
+    if (ImGui::BeginTable("AssetGrid", columnCount,
+                          listView ? ImGuiTableFlags_SizingStretchSame : ImGuiTableFlags_SizingFixedSame))
     {
         for (int column = 0; column < columnCount; ++column)
         {
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellSize + 8.0f);
+            if (listView)
+            {
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
+            }
+            else
+            {
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellSize + 8.0f);
+            }
         }
         ImGuiListClipper clipper;
         clipper.Begin((static_cast<int>(entries.size()) + columnCount - 1) / columnCount,
@@ -25848,7 +26465,9 @@ void ImGuiManager::DrawAssetBrowserWindow()
 
                     const ImVec2 cellPosition = ImGui::GetCursorScreenPos();
                     const bool clicked = ImGui::Selectable(
-                        "##AssetCell", selected, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(cellSize, rowHeight));
+                        "##AssetCell", selected, ImGuiSelectableFlags_AllowDoubleClick,
+                        ImVec2(listView ? 0.0f : cellSize, rowHeight));
+                    const float rowRight = ImGui::GetItemRectMax().x;
                     visibleCells.push_back({i, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()});
                     // 右クリックした項目が選択外なら、その項目だけを選択（エクスプローラーと同じ）
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !selected)
@@ -25895,17 +26514,53 @@ void ImGuiManager::DrawAssetBrowserWindow()
                         ImGui::GetWindowDrawList()->AddText(ImVec2(cellPosition.x + cellSize - 12, cellPosition.y),
                                                             IM_COL32(255, 110, 90, 255), "!");
                     }
-                    const ImVec2 labelPosition(cellPosition.x, cellPosition.y + cellSize + 4.0f);
+                    // #9 一覧表示：アイコンの右に名前、右側に 種類 / サイズ / 更新日
+                    const ImVec2 labelPosition =
+                        listView ? ImVec2(cellPosition.x + cellSize + 8.0f,
+                                          cellPosition.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f)
+                                 : ImVec2(cellPosition.x, cellPosition.y + cellSize + 4.0f);
+                    const float nameRight =
+                        listView ? rowRight - listTimeWidth - listSizeWidth - listTypeWidth - 8.0f
+                                 : cellPosition.x + cellSize;
+                    if (listView)
+                    {
+                        ImDrawList* rowDraw = ImGui::GetWindowDrawList();
+                        const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                        rowDraw->AddText(ImVec2(rowRight - listTimeWidth - listSizeWidth - listTypeWidth, labelPosition.y),
+                                         dim, AssetTypeLabel(entries[i]));
+                        if (!isDir)
+                        {
+                            auto [size, inserted] = listSizes.try_emplace(itemId, 0);
+                            if (inserted)
+                            {
+                                error_code sizeError;
+                                const auto bytes = filesystem::file_size(path, sizeError);
+                                size->second = sizeError ? 0 : bytes;
+                            }
+                            rowDraw->AddText(ImVec2(rowRight - listTimeWidth - listSizeWidth, labelPosition.y), dim,
+                                             FormatFileSize(size->second).c_str());
+                        }
+                        rowDraw->AddText(ImVec2(rowRight - listTimeWidth, labelPosition.y), dim,
+                                         FormatFileTime(entries[i].MetadataTime).c_str());
+                    }
+                    // #9 お気に入りの印
+                    if (IsFavoriteAsset(path))
+                    {
+                        const ImVec2 starPosition = listView ? ImVec2(nameRight - ImGui::GetTextLineHeight(), labelPosition.y)
+                                                             : ImVec2(cellPosition.x + 2.0f, cellPosition.y + 2.0f);
+                        ImGui::GetWindowDrawList()->AddText(starPosition,
+                                                            ImGui::GetColorU32(EditorPreferences::Favorite()),
+                                                            EditorIcons::StarFill());
+                    }
                     ImGui::GetWindowDrawList()->PushClipRect(
-                        labelPosition, ImVec2(cellPosition.x + cellSize, labelPosition.y + ImGui::GetTextLineHeight()),
-                        true);
+                        labelPosition, ImVec2(nameRight, labelPosition.y + ImGui::GetTextLineHeight()), true);
                     const bool renamingThis = !m_RenamingAssetPath.empty() && path == m_RenamingAssetPath;
                     if (!renamingThis)
                     {
                         ImU32 labelColor = ImGui::GetColorU32(ImGuiCol_Text);
                         if (IsPrefabFile(path))
                         {
-                            labelColor = ImGui::GetColorU32(kPrefabColor);
+                            labelColor = ImGui::GetColorU32(EditorPreferences::PrefabColor());
                         }
                         ImGui::GetWindowDrawList()->AddText(labelPosition, labelColor, displayName.c_str());
                     }
@@ -25974,6 +26629,16 @@ void ImGuiManager::DrawAssetBrowserWindow()
                             {
                                 DuplicateSelectedAssets();
                             }
+                            if (ImGui::MenuItem("お気に入りに追加"))
+                            {
+                                for (const auto& selectedPath : GetSelectedAssetPaths())
+                                {
+                                    if (!IsFavoriteAsset(selectedPath))
+                                    {
+                                        ToggleFavoriteAsset(selectedPath);
+                                    }
+                                }
+                            }
                             ImGui::Separator();
                             if (ImGui::MenuItem("削除", "Delete"))
                             {
@@ -26007,6 +26672,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
                             if (ImGui::MenuItem("名前を変更", "F2"))
                             {
                                 BeginAssetRename(path);
+                            }
+                            if (ImGui::MenuItem(IsFavoriteAsset(path) ? "お気に入りから外す" : "お気に入りに追加"))
+                            {
+                                ToggleFavoriteAsset(path);
                             }
                             if (isDir && ImGui::MenuItem("開く"))
                             {
@@ -26085,7 +26754,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
                     // リネーム入力欄はセルの最後に描く（右クリック / ドラッグの対象を Selectable のままにするため）
                     if (renamingThis)
                     {
-                        DrawAssetRenameField(path, isDir, labelPosition, cellSize);
+                        DrawAssetRenameField(path, isDir, labelPosition, (std::max)(cellSize, nameRight - labelPosition.x));
                     }
 
                     ImGui::PopID();
@@ -26405,6 +27074,15 @@ void ImGuiManager::DeleteAssetPath(const filesystem::path& path)
     else
     {
         filesystem::remove(path, ec);
+        if (!ec)
+        {
+            // #8 付属ファイル（マテリアルグラフ）も一緒に削除する
+            for (const wchar_t* suffix : {L".graph.json", L".graph.recovery.json"})
+            {
+                error_code companionError;
+                filesystem::remove(filesystem::path(path.wstring() + suffix), companionError);
+            }
+        }
     }
 
     if (ec)
@@ -26890,6 +27568,20 @@ bool ImGuiManager::RelocateAssetPath(const filesystem::path& from, const filesys
                 return false;
             }
         }
+        // #8 付属ファイル（マテリアルグラフ）も一緒に動かす。一覧で隠していても取り残さない
+        for (const wchar_t* suffix : {L".graph.json", L".graph.recovery.json"})
+        {
+            const filesystem::path fromCompanion(from.wstring() + suffix);
+            error_code companionError;
+            if (filesystem::exists(fromCompanion, companionError))
+            {
+                filesystem::rename(fromCompanion, filesystem::path(target.wstring() + suffix), companionError);
+                if (companionError)
+                {
+                    AddLog("%s: 付属ファイルを移動できません: %s", verb, PathToUtf8(fromCompanion).c_str());
+                }
+            }
+        }
     }
 
     // ブラウザの状態を付け替える（パスは "asset/..." の作業フォルダ相対で保持している）
@@ -27238,6 +27930,10 @@ void ImGuiManager::OpenAssetItem(const filesystem::path& path)
         LoadPrefabInstance(path);
         return;
     }
+    if (!filesystem::is_directory(path))
+    {
+        PushRecentAsset(path); // #9 最近使ったもの
+    }
     if (IsSceneFile(path))
     {
         RequestOpenScene(path); // 未保存なら確認ポップアップ
@@ -27302,6 +27998,14 @@ bool ImGuiManager::CopyAssetPath(const filesystem::path& source, const filesyste
     if (!isDirectory)
     {
         filesystem::copy_file(from, target, filesystem::copy_options::none, ec);
+        // #8 付属ファイル（マテリアルグラフ）も複製する
+        const filesystem::path graph(from.wstring() + L".graph.json");
+        error_code graphError;
+        if (!ec && filesystem::exists(graph, graphError))
+        {
+            filesystem::copy_file(graph, filesystem::path(target.wstring() + L".graph.json"),
+                                  filesystem::copy_options::skip_existing, graphError);
+        }
     }
     else
     {
@@ -28571,8 +29275,205 @@ void ImGuiManager::Redo()
     RestoreHistoryGroup(snapshots);
 }
 
+===== FILE: source\editor\editoricons.h =====
+#pragma once
+#include <string>
+// ============================================================================
+// EditorIcons（#13）：エディターのアイコンを一か所で管理する
+//  ・Windows のアイコンフォント（Segoe Fluent Icons → Segoe MDL2 Assets）を私用領域 U+E700〜U+F8FF に
+//    結合して使う。どちらも無い環境では Unicode 記号（Segoe UI Symbol から補完）に戻す
+//  ・Unicode 記号は日本語フォント側の字形を除外し、すべて Segoe UI Symbol から取る（見た目を統一）
+//  ・コードの中でアイコン文字を直書きせず、ここの関数を使う
+// ============================================================================
+namespace EditorIcons
+{
+    // EditorPreferences::LoadFonts が、アイコンフォントを結合できたときに true にする
+    inline bool g_IconFont = false;
+
+    // アイコンフォントの候補（上から順に使う）
+    inline const char* const kIconFontPaths[] = {
+        "C:\\Windows\\Fonts\\SegoeIcons.ttf", // Segoe Fluent Icons（Windows 11）
+        "C:\\Windows\\Fonts\\segmdl2.ttf",    // Segoe MDL2 Assets（Windows 10）
+    };
+
+    // 表示（U+E890）
+    inline const char* Visible()
+    {
+        return g_IconFont ? "\xEE\xA2\x90" : "●";
+    }
+
+    // 非表示（U+ED1A）
+    inline const char* Hidden()
+    {
+        return g_IconFont ? "\xEE\xB4\x9A" : "◌";
+    }
+
+    // ロック（U+E72E）
+    inline const char* Lock()
+    {
+        return g_IconFont ? "\xEE\x9C\xAE" : "■";
+    }
+
+    // ロック解除（U+E785）
+    inline const char* Unlock()
+    {
+        return g_IconFont ? "\xEE\x9E\x85" : "□";
+    }
+
+    // フォルダ（U+E8B7）
+    inline const char* Folder()
+    {
+        return g_IconFont ? "\xEE\xA2\xB7" : "▤";
+    }
+
+    // 再生（U+E768）
+    inline const char* Play()
+    {
+        return g_IconFont ? "\xEE\x9D\xA8" : "▶";
+    }
+
+    // 一時停止（U+E769）
+    inline const char* Pause()
+    {
+        return g_IconFont ? "\xEE\x9D\xA9" : "❚❚";
+    }
+
+    // 停止（U+E71A）
+    inline const char* Stop()
+    {
+        return g_IconFont ? "\xEE\x9C\x9A" : "■";
+    }
+
+    // 保存（U+E74E）
+    inline const char* Save()
+    {
+        return g_IconFont ? "\xEE\x9D\x8E" : "保存";
+    }
+
+    // 元に戻す（U+E7A7）
+    inline const char* Undo()
+    {
+        return g_IconFont ? "\xEE\x9E\xA7" : "↶";
+    }
+
+    // やり直し（U+E7A6）
+    inline const char* Redo()
+    {
+        return g_IconFont ? "\xEE\x9E\xA6" : "↷";
+    }
+
+    // 検索（U+E721）
+    inline const char* Search()
+    {
+        return g_IconFont ? "\xEE\x9C\xA1" : "⌕";
+    }
+
+    // 設定（U+E713）
+    inline const char* Settings()
+    {
+        return g_IconFont ? "\xEE\x9C\x93" : "⚙";
+    }
+
+    // 追加（U+E710）
+    inline const char* Add()
+    {
+        return g_IconFont ? "\xEE\x9C\x90" : "✚";
+    }
+
+    // 再読み込み（U+E72C）
+    inline const char* Refresh()
+    {
+        return g_IconFont ? "\xEE\x9C\xAC" : "↻";
+    }
+
+    // お気に入り（U+E734）
+    inline const char* Star()
+    {
+        return g_IconFont ? "\xEE\x9C\xB4" : "☆";
+    }
+
+    // お気に入り（登録済み）（U+E735）
+    inline const char* StarFill()
+    {
+        return g_IconFont ? "\xEE\x9C\xB5" : "★";
+    }
+
+    // 履歴（U+E81C）
+    inline const char* History()
+    {
+        return g_IconFont ? "\xEE\xA0\x9C" : "◷";
+    }
+
+    // 一覧表示（U+E8FD）
+    inline const char* ListView()
+    {
+        return g_IconFont ? "\xEE\xA3\xBD" : "☰";
+    }
+
+    // サムネイル表示（U+ECA5）
+    inline const char* GridView()
+    {
+        return g_IconFont ? "\xEE\xB2\xA5" : "▦";
+    }
+
+    // 上へ（U+E74A）
+    inline const char* Up()
+    {
+        return g_IconFont ? "\xEE\x9D\x8A" : "↑";
+    }
+
+    // ルート（U+E80F）
+    inline const char* Home()
+    {
+        return g_IconFont ? "\xEE\xA0\x8F" : "⌂";
+    }
+
+    // フィルター（U+E71C）
+    inline const char* Filter()
+    {
+        return g_IconFont ? "\xEE\x9C\x9C" : "⏷";
+    }
+
+    // カメラ（U+E722）
+    inline const char* Camera()
+    {
+        return g_IconFont ? "\xEE\x9C\xA2" : "◉";
+    }
+
+    // ライト（U+E706）
+    inline const char* Sun()
+    {
+        return g_IconFont ? "\xEE\x9C\x86" : "☀";
+    }
+
+    // 回転（U+E7AD）
+    inline const char* Rotate()
+    {
+        return g_IconFont ? "\xEE\x9E\xAD" : "↻";
+    }
+
+    // スケール（U+E740）
+    inline const char* Scale()
+    {
+        return g_IconFont ? "\xEE\x9D\x80" : "⤢";
+    }
+
+    // 展開（U+E70D）
+    inline const char* ChevronDown()
+    {
+        return g_IconFont ? "\xEE\x9C\x8D" : "▾";
+    }
+
+    // ラベル付きボタン用："<アイコン> テキスト"
+    inline std::string Label(const char* icon, const char* text)
+    {
+        return std::string(icon) + " " + text;
+    }
+} // namespace EditorIcons
+
 ===== FILE: source\editor\editorinspectors.cpp =====
 #include "pch.h"
+#include "editorpreferences.h"
 #include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
@@ -29057,6 +29958,7 @@ void ImGuiManager::DrawInspectorWindow()
     }
     if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
     {
+        EditorWidgets::g_InspectorFiltering = false;
         ImGui::SeparatorText("オブジェクト未選択");
         ImGui::TextWrapped(
             "ヒエラルキーまたはシーンビューでオブジェクトを選択すると、ここでプロパティを編集できます。");
@@ -29085,7 +29987,7 @@ void ImGuiManager::DrawInspectorWindow()
     {
         if (GetPrefabRoot(m_SelectedEntity) != g_kINVALID_ENTITY)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorPreferences::PrefabColor());
         }
         ImGui::TextWrapped("%s", GetEntityDisplayName(m_SelectedEntity));
         if (GetPrefabRoot(m_SelectedEntity) != g_kINVALID_ENTITY)
@@ -29094,6 +29996,16 @@ void ImGuiManager::DrawInspectorWindow()
         }
         ImGui::TextDisabled("Entity #%u", m_SelectedEntity);
     }
+    // #6 検索欄とカテゴリのタブ（このウィンドウの中だけ絞り込む。End の直前で戻す）
+    EditorWidgets::DrawInspectorFilterBar();
+    EditorWidgets::g_InspectorFiltering = true;
+    struct FilteringScope // どの return でも絞り込みを戻す
+    {
+        ~FilteringScope()
+        {
+            EditorWidgets::g_InspectorFiltering = false;
+        }
+    } filteringScope;
     ImGui::Separator();
 
     if (ImGui::BeginPopupContextWindow("InspectorEntityContext", ImGuiPopupFlags_MouseButtonRight))
@@ -29134,20 +30046,22 @@ void ImGuiManager::DrawInspectorWindow()
         return;
     }
     if (ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity) &&
-        ImGui::CollapsingHeader("トランスフォーム", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("トランスフォーム", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const auto before = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
         auto transform = before;
         ImGui::TextDisabled("ワールド座標 / 最後に選択したオブジェクトが基準");
         float rotationDeg[3] = {transform.Rotation.x * kRadToDeg, transform.Rotation.y * kRadToDeg,
                                 transform.Rotation.z * kRadToDeg};
-        bool changed = DrawAxisFloat3("位置", transform.Position, 0.01f);
-        if (DrawAxisFloat3("回転", rotationDeg, 0.1f))
+        static const float kZero[3] = {0.0f, 0.0f, 0.0f};
+        static const float kOne[3] = {1.0f, 1.0f, 1.0f};
+        bool changed = DrawAxisFloat3("位置", transform.Position, 0.01f, 0.0f, 0.0f, kZero);
+        if (DrawAxisFloat3("回転", rotationDeg, 0.1f, 0.0f, 0.0f, kZero))
         {
             transform.Rotation = {rotationDeg[0] * kDegToRad, rotationDeg[1] * kDegToRad, rotationDeg[2] * kDegToRad};
             changed = true;
         }
-        changed |= DrawScaleAxisFloat3("スケール", transform.Scale, 0.01f, 0.001f, 100.0f);
+        changed |= DrawScaleAxisFloat3("スケール", transform.Scale, 0.01f, 0.001f, 100.0f, kOne);
         if (changed)
         {
             ApplySelectionTransform(before, transform);
@@ -29160,7 +30074,7 @@ void ImGuiManager::DrawInspectorWindow()
     }
 
     if (ComponentManager::HasComponent<AABBComponent>(m_SelectedEntity) &&
-        ImGui::CollapsingHeader("AABB", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("AABB", ImGuiTreeNodeFlags_DefaultOpen))
     {
         auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(m_SelectedEntity);
         EntitySnapshot before = CaptureEntity(m_SelectedEntity);
@@ -29181,7 +30095,10 @@ void ImGuiManager::DrawInspectorWindow()
     DrawMaterialAssetSlots(m_SelectedEntity);
     DrawComponentInspector(m_SelectedEntity);
 
-    ImGui::TextUnformatted("右クリック: カメラ / 左クリック: 選択");
+    if (EditorWidgets::g_InspectorFilter.IsActive() || EditorWidgets::g_InspectorCategory != EditorWidgets::InspectorCategory::All)
+    {
+        ImGui::TextDisabled("絞り込み中：一部のセクションを隠しています");
+    }
     ImGui::End();
 }
 
@@ -29423,7 +30340,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
         return;
     }
 
-    if (!ImGui::CollapsingHeader("マテリアル", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!EditorWidgets::InspectorSection("マテリアル", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
@@ -29702,7 +30619,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 
     if (!isManualMode && IsModelMaterialEntity(entity))
     {
-        if (ImGui::CollapsingHeader("シェーディングパラメータ", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("シェーディングパラメータ", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool partChanged = false;
             for (int i = 0; i < IM_ARRAYSIZE(shaderClassValues); ++i)
@@ -29722,7 +30639,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 
     if (isManualMode && IsModelMaterialEntity(entity))
     {
-        if (ImGui::CollapsingHeader("ディファード Toon / PBR", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("ディファード Toon / PBR", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool toonChanged = false;
             toonChanged |= ImGui::SliderFloat("法線ブレンド", &material.NormalBlend, 0.0f, 1.0f);
@@ -29736,7 +30653,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
             }
         }
 
-        if (ImGui::CollapsingHeader("影", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("影", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool shadowChanged = false;
             shadowChanged |= ImGui::SliderFloat("影しきい値", &material.ShadowThreshold, 0.0f, 1.0f);
@@ -29752,7 +30669,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
             }
         }
 
-        if (ImGui::CollapsingHeader("ライティング", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("ライティング", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool lightingChanged = false;
             lightingChanged |= ImGui::SliderFloat("リム強度", &material.RimStrength, 0.0f, 2.0f);
@@ -29770,7 +30687,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
             }
         }
 
-        if (ImGui::CollapsingHeader("肌", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("肌", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool skinChanged = false;
             skinChanged |= ImGui::SliderFloat("肌散乱強度", &material.SkinScatterStrength, 0.0f, 3.0f);
@@ -30340,7 +31257,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
         return;
     }
 
-    if (!ImGui::CollapsingHeader("ライト", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!EditorWidgets::InspectorSection("ライト", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
@@ -30538,7 +31455,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<SunComponent>(entity) &&
-        ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("Sun", ImGuiTreeNodeFlags_DefaultOpen))
     {
         auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
         bool sunChanged = false;
@@ -30561,7 +31478,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                                 (ComponentManager::HasComponent<SpriteComponent>(entity) &&
                                  ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D);
 
-    if (ImGui::CollapsingHeader("コンポーネント"))
+    if (EditorWidgets::InspectorSection("コンポーネント"))
     {
         ImGui::Text("エンティティID: %u", entity);
         const char* statusText3;
@@ -30648,7 +31565,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<CameraComponent>(entity) &&
-        ImGui::CollapsingHeader("カメラ", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("カメラ", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
@@ -30849,7 +31766,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<TimelineComponent>(entity) &&
-        ImGui::CollapsingHeader("Timeline", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("Timeline", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
@@ -31357,7 +32274,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<PhysicsComponent>(entity) &&
-        ImGui::CollapsingHeader("物理設定", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("物理設定", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& physics = ComponentManager::GetComponentUnchecked<PhysicsComponent>(entity);
@@ -31541,7 +32458,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<LODComponent>(entity) &&
-        ImGui::CollapsingHeader("LOD", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("LOD", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
@@ -31725,7 +32642,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         }
     }
 
-    if (ComponentManager::HasComponent<SpriteComponent>(entity) && ImGui::CollapsingHeader("スプライト"))
+    if (ComponentManager::HasComponent<SpriteComponent>(entity) && EditorWidgets::InspectorSection("スプライト"))
     {
         auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
         ImGui::Checkbox("3D", &sprite.Is3D);
@@ -31740,8 +32657,12 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
 
 
 
+
 ===== FILE: source\editor\editormaterialassets.cpp =====
 #include "pch.h"
+#include "editorpreferences.h"
+#include "assetthumbnailmanager.h"
+#include "editorwidgets.h"
 #include "editorworkspace.h"
 #include "imguimanager.h"
 #include "materialmanager.h"
@@ -32312,7 +33233,7 @@ void ImGuiManager::AssignMaterialAsset(EntityID entity, size_t slot, AssetHandle
 
 void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
 {
-    if (!MaterialManager::IsRenderable(entity) || !ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!MaterialManager::IsRenderable(entity) || !EditorWidgets::InspectorSection("Materials", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
@@ -32322,13 +33243,60 @@ void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
     {
         ImGui::PushID(static_cast<int>(slot));
         const auto handle = MaterialManager::SlotHandle(component, slot);
-        ImGui::Text("Element %zu", slot);
-        if (ImGui::Button(AssetName(handle, "Legacy / Imported").c_str(), ImVec2(-40, 0)) && handle != 0)
-        {
-            OpenMaterialAsset(handle);
-        }
+        // #10 UE と同じく、サムネイル + 名前のスロット。
+        //  ・ドロップで差し替え / クリックでプロパティ / ダブルクリックでマテリアルグラフを開く
+        const float thumb = ImGui::GetFrameHeight() * 2.4f;
+        ImGui::TextDisabled("Element %zu", slot);
+        const ImVec2 slotStart = ImGui::GetCursorScreenPos();
+        const float slotWidth = (std::max)(thumb + 40.0f, ImGui::GetContentRegionAvail().x - 34.0f);
+        const bool clicked = ImGui::Selectable("##MaterialSlot", false, ImGuiSelectableFlags_AllowDoubleClick,
+                                               ImVec2(slotWidth, thumb));
         const auto slotMinimum = ImGui::GetItemRectMin();
         const auto slotMaximum = ImGui::GetItemRectMax();
+        const bool slotHovered = ImGui::IsItemHovered();
+        {
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(slotStart, ImVec2(slotStart.x + thumb, slotStart.y + thumb),
+                                ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+            bool drewThumbnail = false;
+            if (handle != 0)
+            {
+                const auto thumbnail = AssetThumbnailManager::Request(handle, ThumbnailPriority::Visible);
+                if (thumbnail.State == ThumbnailState::Ready && thumbnail.Image)
+                {
+                    draw->AddImage(static_cast<ImTextureID>(thumbnail.GetImGuiTextureID().ptr), slotStart,
+                                   ImVec2(slotStart.x + thumb, slotStart.y + thumb));
+                    drewThumbnail = true;
+                }
+            }
+            if (!drewThumbnail)
+            {
+                const char* mark = handle != 0 ? "…" : "－";
+                const ImVec2 size = ImGui::CalcTextSize(mark);
+                draw->AddText(ImVec2(slotStart.x + (thumb - size.x) * 0.5f, slotStart.y + (thumb - size.y) * 0.5f),
+                              ImGui::GetColorU32(ImGuiCol_TextDisabled), mark);
+            }
+            draw->AddRect(slotStart, ImVec2(slotStart.x + thumb, slotStart.y + thumb),
+                          ImGui::GetColorU32(slotHovered ? ImGuiCol_ButtonHovered : ImGuiCol_Border), 3.0f);
+            const float textX = slotStart.x + thumb + 8.0f;
+            const float lineHeight = ImGui::GetTextLineHeight();
+            draw->PushClipRect(ImVec2(textX, slotStart.y), slotMaximum, true);
+            draw->AddText(ImVec2(textX, slotStart.y + thumb * 0.5f - lineHeight), ImGui::GetColorU32(ImGuiCol_Text),
+                          AssetName(handle, "Legacy / Imported").c_str());
+            draw->AddText(ImVec2(textX, slotStart.y + thumb * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                          handle != 0 ? "クリック: プロパティ / ダブルクリック: グラフ" : "マテリアルをドロップして割り当て");
+            draw->PopClipRect();
+        }
+        if (clicked && handle != 0)
+        {
+            OpenMaterialAsset(handle);
+            // クリック = プロパティ、ダブルクリック = マテリアルグラフ
+            showMaterialGraph = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        }
+        if (handle != 0)
+        {
+            ImGui::SetItemTooltip("%s", MaterialManager::Registry().Resolve(handle).generic_string().c_str());
+        }
         MaterialValidation::CaptureDropTarget("Inspector", slotMinimum.x, slotMinimum.y, slotMaximum.x, slotMaximum.y);
         if (ImGui::BeginDragDropTarget())
         {
@@ -32340,10 +33308,12 @@ void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
             ImGui::EndDragDropTarget();
         }
         ImGui::SameLine();
-        if (ImGui::SmallButton("X"))
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (thumb - ImGui::GetFrameHeight()) * 0.5f);
+        if (ImGui::Button("X", ImVec2(24.0f, 0.0f)))
         {
             AssignMaterialAsset(entity, slot, 0);
         }
+        ImGui::SetItemTooltip("割り当てを外す（Legacy に戻す）");
         ImGui::PopID();
     }
 }
@@ -32480,9 +33450,11 @@ void ImGuiManager::DrawMaterialDropTarget()
     }
 }
 
+
 ===== FILE: source\editor\editorpreferences.cpp =====
 #include "pch.h"
 #include "editorpreferences.h"
+#include "editoricons.h"
 #include <imgui_internal.h>
 #include <filesystem>
 #include <fstream>
@@ -32591,6 +33563,23 @@ namespace EditorPreferences
                     p.DockEmpty = ImVec4(0.045f, 0.050f, 0.058f, 1.0f);
                     p.Rounding = 3.0f;
                     break;
+                case ThemePreset::Light:
+                    p.Menu = Rgb(222, 222, 222);
+                    p.Window = Rgb(240, 240, 240);
+                    p.Child = Rgb(232, 232, 232);
+                    p.Popup = Rgb(248, 248, 248, 0.99f);
+                    p.Frame = Rgb(255, 255, 255);
+                    p.FrameHover = Rgb(236, 242, 250);
+                    p.Button = Rgb(214, 214, 214);
+                    p.ButtonHover = Rgb(198, 206, 218);
+                    p.RowHover = Rgb(220, 228, 240);
+                    p.Border = Rgb(180, 180, 180);
+                    p.Text = Rgb(30, 30, 30);
+                    p.TextDim = Rgb(120, 120, 120);
+                    p.Accent = Rgb(0, 102, 204);
+                    p.DockEmpty = Rgb(200, 200, 200);
+                    p.Rounding = 3.0f;
+                    break;
                 case ThemePreset::Unreal:
                 default:
                     p.Menu = Rgb(21, 21, 21);
@@ -32645,13 +33634,25 @@ namespace EditorPreferences
             out << "font_size=" << s.FontSize << "\n";
             out << "toolbar=" << (s.ShowToolbar ? 1 : 0) << "\n";
             out << "statusbar=" << (s.ShowStatusBar ? 1 : 0) << "\n";
-            out << "area_headers=" << (s.ShowAreaHeaders ? 1 : 0) << "\n";
+            // #1 既定をオフにしたので旧キー（area_headers）は読まない
+            out << "area_headers_v2=" << (s.ShowAreaHeaders ? 1 : 0) << "\n";
             out << "toasts=" << (s.ShowToasts ? 1 : 0) << "\n";
             out << "toast_success=" << (s.ToastOnSuccess ? 1 : 0) << "\n";
             out << "nav_gizmo=" << (s.ShowNavigationGizmo ? 1 : 0) << "\n";
-            out << "viewport_stats=" << (s.ShowViewportStats ? 1 : 0) << "\n";
+            out << "viewport_stats_v2=" << (s.ShowViewportStats ? 1 : 0) << "\n";
             out << "outliner_type=" << (s.ShowOutlinerTypeColumn ? 1 : 0) << "\n";
             out << "undo_limit=" << s.UndoLimit << "\n";
+            out << "viewport_axis=" << (s.ShowViewportAxis ? 1 : 0) << "\n";
+            out << "viewport_speed=" << (s.ShowViewportSpeed ? 1 : 0) << "\n";
+            out << "viewport_view_mode=" << static_cast<int>(s.ViewportViewMode) << "\n";
+            out << "editor_camera_speed=" << s.EditorCameraSpeed << "\n";
+            out << "asset_tree=" << (s.AssetFolderTree ? 1 : 0) << "\n";
+            out << "asset_tree_width=" << s.AssetTreeWidth << "\n";
+            out << "asset_list_view=" << (s.AssetListView ? 1 : 0) << "\n";
+            out << "asset_type_filter=" << static_cast<int>(s.AssetTypeFilter) << "\n";
+            out << "asset_hide_companions=" << (s.AssetHideCompanions ? 1 : 0) << "\n";
+            out << "asset_favorites=" << s.AssetFavorites << "\n";
+            out << "asset_recent=" << s.AssetRecent << "\n";
             out << "snap_t=" << (s.Snap.Translate ? 1 : 0) << "\n";
             out << "snap_r=" << (s.Snap.Rotate ? 1 : 0) << "\n";
             out << "snap_s=" << (s.Snap.Scale ? 1 : 0) << "\n";
@@ -32688,6 +33689,16 @@ namespace EditorPreferences
             s.Rounding = std::clamp(s.Rounding, 0.0f, 8.0f);
             s.FontSize = std::clamp(s.FontSize, 12.0f, 24.0f);
             s.UndoLimit = std::clamp(s.UndoLimit, 5, 200);
+            if (static_cast<int>(s.ViewportViewMode) < 0 || s.ViewportViewMode >= ViewMode::Count)
+            {
+                s.ViewportViewMode = ViewMode::Lit;
+            }
+            if (static_cast<int>(s.AssetTypeFilter) < 0 || s.AssetTypeFilter >= AssetFilter::Count)
+            {
+                s.AssetTypeFilter = AssetFilter::All;
+            }
+            s.EditorCameraSpeed = std::clamp(s.EditorCameraSpeed, 0.03125f, 32.0f);
+            s.AssetTreeWidth = std::clamp(s.AssetTreeWidth, 100.0f, 600.0f);
             s.Snap.TranslateStep = std::clamp(s.Snap.TranslateStep, 0.001f, 1000.0f);
             s.Snap.RotateStep = std::clamp(s.Snap.RotateStep, 0.1f, 180.0f);
             s.Snap.ScaleStep = std::clamp(s.Snap.ScaleStep, 0.001f, 10.0f);
@@ -32738,6 +33749,8 @@ namespace EditorPreferences
                 return "Unity（Pro スキン）";
             case ThemePreset::Midnight:
                 return "Midnight（シアン）";
+            case ThemePreset::Light:
+                return "Light（ライト）";
             default:
                 return "?";
         }
@@ -32803,15 +33816,37 @@ namespace EditorPreferences
                     s.ShowToolbar = ParseBool(value);
                 else if (key == "statusbar")
                     s.ShowStatusBar = ParseBool(value);
-                else if (key == "area_headers")
+                else if (key == "area_headers_v2")
                     s.ShowAreaHeaders = ParseBool(value);
+                else if (key == "viewport_axis")
+                    s.ShowViewportAxis = ParseBool(value);
+                else if (key == "viewport_speed")
+                    s.ShowViewportSpeed = ParseBool(value);
+                else if (key == "viewport_view_mode")
+                    s.ViewportViewMode = static_cast<ViewMode>(atoi(value.c_str()));
+                else if (key == "editor_camera_speed")
+                    s.EditorCameraSpeed = ParseFloat(value, s.EditorCameraSpeed);
+                else if (key == "asset_tree")
+                    s.AssetFolderTree = ParseBool(value);
+                else if (key == "asset_tree_width")
+                    s.AssetTreeWidth = ParseFloat(value, s.AssetTreeWidth);
+                else if (key == "asset_list_view")
+                    s.AssetListView = ParseBool(value);
+                else if (key == "asset_type_filter")
+                    s.AssetTypeFilter = static_cast<AssetFilter>(atoi(value.c_str()));
+                else if (key == "asset_hide_companions")
+                    s.AssetHideCompanions = ParseBool(value);
+                else if (key == "asset_favorites")
+                    s.AssetFavorites = value;
+                else if (key == "asset_recent")
+                    s.AssetRecent = value;
                 else if (key == "toasts")
                     s.ShowToasts = ParseBool(value);
                 else if (key == "toast_success")
                     s.ToastOnSuccess = ParseBool(value);
                 else if (key == "nav_gizmo")
                     s.ShowNavigationGizmo = ParseBool(value);
-                else if (key == "viewport_stats")
+                else if (key == "viewport_stats_v2")
                     s.ShowViewportStats = ParseBool(value);
                 else if (key == "outliner_type")
                     s.ShowOutlinerTypeColumn = ParseBool(value);
@@ -32854,6 +33889,13 @@ namespace EditorPreferences
             ImFontConfig config;
             config.FontNo = faceIndex;
             config.PixelSnapH = true;
+#if IMGUI_VERSION_NUM >= 19200
+            // #13 記号は日本語フォントの字形を使わず、下で結合する Segoe UI Symbol に統一する
+            //  （日本語フォントにある ↻ ⊕ などと無い ⤢ ✥ などで見た目が混ざらないように）
+            static const ImWchar kExcludeSymbols[] = {0x2190, 0x21FF, 0x2300, 0x23FF, 0x25A0, 0x25FF,
+                                                      0x2600, 0x26FF, 0x2700, 0x27BF, 0x2900, 0x297F, 0};
+            config.GlyphExcludeRanges = kExcludeSymbols;
+#endif
             primary = io.Fonts->AddFontFromFileTTF(path, size, &config, io.Fonts->GetGlyphRangesJapanese());
             return primary != nullptr;
         };
@@ -32896,6 +33938,29 @@ namespace EditorPreferences
             symbols.MergeMode = true;
             symbols.PixelSnapH = true;
             io.Fonts->AddFontFromFileTTF(symbolPath, size, &symbols, kSymbolRanges);
+        }
+        // #13 アイコンフォント（Segoe Fluent Icons / Segoe MDL2 Assets）を私用領域に結合する
+        EditorIcons::g_IconFont = false;
+        if (primary)
+        {
+            static const ImWchar kIconRanges[] = {0xE700, 0xF8FF, 0};
+            for (const char* iconPath : EditorIcons::kIconFontPaths)
+            {
+                if (!std::filesystem::exists(iconPath, error))
+                {
+                    continue;
+                }
+                ImFontConfig icons;
+                icons.MergeMode = true;
+                icons.PixelSnapH = true;
+                icons.GlyphMinAdvanceX = size; // 等幅にしてボタン幅を揃える
+                icons.GlyphOffset = ImVec2(0.0f, size * 0.12f);
+                if (io.Fonts->AddFontFromFileTTF(iconPath, size * 0.9f, &icons, kIconRanges))
+                {
+                    EditorIcons::g_IconFont = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -32981,7 +34046,7 @@ namespace EditorPreferences
         c[ImGuiCol_TableBorderStrong] = p.Border;
         c[ImGuiCol_TableBorderLight] = Lerp(p.Border, p.Window, 0.5f);
         c[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
-        c[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.025f);
+        c[ImGuiCol_TableRowBgAlt] = IsLightTheme() ? ImVec4(0, 0, 0, 0.035f) : ImVec4(1, 1, 1, 0.025f);
         c[ImGuiCol_TextSelectedBg] = WithAlpha(accent, 0.40f);
         c[ImGuiCol_DragDropTarget] = accentHover;
         c[ImGuiCol_NavCursor] = accent;
@@ -33115,6 +34180,119 @@ namespace EditorPreferences
         return ImVec4(0.96f, 0.36f, 0.33f, 1.0f);
     }
 
+    bool IsLightTheme()
+    {
+        return g_Settings.Theme == ThemePreset::Light;
+    }
+
+    ImVec4 OverlayBg()
+    {
+        return IsLightTheme() ? ImVec4(0.96f, 0.96f, 0.96f, 0.82f) : ImVec4(0.08f, 0.08f, 0.08f, 0.72f);
+    }
+
+    ImVec4 OverlayText()
+    {
+        return IsLightTheme() ? ImVec4(0.10f, 0.10f, 0.10f, 1.0f) : ImVec4(0.92f, 0.92f, 0.92f, 1.0f);
+    }
+
+    ImVec4 Selection()
+    {
+        return Accent();
+    }
+
+    ImVec4 PrefabColor()
+    {
+        return IsLightTheme() ? ImVec4(0.10f, 0.40f, 0.85f, 1.0f) : ImVec4(0.45f, 0.72f, 1.0f, 1.0f);
+    }
+
+    ImVec4 Favorite()
+    {
+        return ImVec4(1.0f, 0.78f, 0.20f, 1.0f);
+    }
+
+    const char* ViewModeName(ViewMode mode)
+    {
+        switch (mode)
+        {
+            case ViewMode::Lit:
+                return "ライティングあり";
+            case ViewMode::Unlit:
+                return "ライティングなし（ベースカラー）";
+            case ViewMode::Normal:
+                return "ワールド法線";
+            case ViewMode::Depth:
+                return "深度";
+            case ViewMode::Material:
+                return "マテリアル（金属 / 粗さ / フレネル）";
+            case ViewMode::Emission:
+                return "発光";
+            case ViewMode::AO:
+                return "マテリアル AO";
+            case ViewMode::Velocity:
+                return "ベロシティ";
+            default:
+                return "?";
+        }
+    }
+
+    const char* AssetFilterName(AssetFilter filter)
+    {
+        switch (filter)
+        {
+            case AssetFilter::All:
+                return "すべて";
+            case AssetFilter::Folder:
+                return "フォルダ";
+            case AssetFilter::Material:
+                return "マテリアル";
+            case AssetFilter::Texture:
+                return "テクスチャ";
+            case AssetFilter::Mesh:
+                return "メッシュ";
+            case AssetFilter::Scene:
+                return "シーン";
+            case AssetFilter::Other:
+                return "その他";
+            default:
+                return "?";
+        }
+    }
+
+    std::vector<std::string> SplitList(const std::string& list)
+    {
+        std::vector<std::string> items;
+        size_t start = 0;
+        while (start <= list.size())
+        {
+            const size_t end = list.find('|', start);
+            const std::string item = list.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            if (!item.empty())
+            {
+                items.push_back(item);
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+        return items;
+    }
+
+    std::string JoinList(const std::vector<std::string>& items)
+    {
+        std::string joined;
+        for (const auto& item : items)
+        {
+            if (!joined.empty())
+            {
+                joined += '|';
+            }
+            joined += item;
+        }
+        return joined;
+    }
+
     ImU32 AxisColor(int axis, float alpha)
     {
         // Blender / UE と同じ X=赤, Y=緑, Z=青
@@ -33220,6 +34398,7 @@ namespace EditorPreferences
                 ImGui::Checkbox("メインツールバー", &s.ShowToolbar);
                 ImGui::Checkbox("ステータスバー", &s.ShowStatusBar);
                 ImGui::Checkbox("パネルヘッダー（エディタータイプ切替 / 最大化）", &s.ShowAreaHeaders);
+                ImGui::SetItemTooltip("オフでも、タブの右クリックでエディタータイプの切り替えと最大化ができます");
                 ImGui::Checkbox("通知トースト", &s.ShowToasts);
                 ImGui::BeginDisabled(!s.ShowToasts);
                 ImGui::Indent();
@@ -33230,6 +34409,9 @@ namespace EditorPreferences
                 ImGui::Checkbox("ビューポート: ナビゲーションギズモ", &s.ShowNavigationGizmo);
                 ImGui::Checkbox("ビューポート: 統計オーバーレイ", &s.ShowViewportStats);
                 ImGui::Checkbox("アウトライナー: 種類の列", &s.ShowOutlinerTypeColumn);
+                ImGui::Checkbox("ビューポート: 左下の XYZ 軸", &s.ShowViewportAxis);
+                ImGui::Checkbox("ビューポート: カメラ速度ボタン", &s.ShowViewportSpeed);
+                ImGui::Checkbox("コンテンツブラウザ: 付属ファイル（.graph.json など）を隠す", &s.AssetHideCompanions);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("編集"))
@@ -33278,6 +34460,7 @@ namespace EditorPreferences
     }
 } // namespace EditorPreferences
 
+
 ===== FILE: source\editor\editorpreferences.h =====
 #pragma once
 // ============================================================================
@@ -33288,6 +34471,7 @@ namespace EditorPreferences
 // ============================================================================
 #include <imgui.h>
 #include <string>
+#include <vector>
 
 namespace EditorPreferences
 {
@@ -33297,6 +34481,34 @@ namespace EditorPreferences
         Blender,
         Unity,
         Midnight,
+        Light, // #14 ライトテーマ
+        Count
+    };
+
+    // #2 ビューポートの表示モード（Lit 以外は G-Buffer をそのまま表示する）
+    enum class ViewMode : int
+    {
+        Lit = 0,
+        Unlit,    // ベースカラー
+        Normal,
+        Depth,
+        Material, // メタリック / ラフネス / フレネル
+        Emission,
+        AO,
+        Velocity,
+        Count
+    };
+
+    // #8 コンテンツブラウザの種類フィルター
+    enum class AssetFilter : int
+    {
+        All = 0,
+        Folder,
+        Material,
+        Texture,
+        Mesh,
+        Scene,
+        Other,
         Count
     };
 
@@ -33332,12 +34544,25 @@ namespace EditorPreferences
 
         bool ShowToolbar = true;
         bool ShowStatusBar = true;
-        bool ShowAreaHeaders = true;
+        bool ShowAreaHeaders = false; // #1 既定はオフ（タブの右クリックで切り替え / 最大化）
         bool ShowToasts = true;
         bool ToastOnSuccess = true;
         bool ShowNavigationGizmo = true;
-        bool ShowViewportStats = true;
+        bool ShowViewportStats = false; // #4 既定はオフ（FPS / GPU / 品質 / 解像度はステータスバーに表示）
         bool ShowOutlinerTypeColumn = true;
+        bool ShowViewportAxis = true;     // #3 左下の XYZ 軸
+        bool ShowViewportSpeed = true;    // #3 カメラ速度ボタン
+        ViewMode ViewportViewMode = ViewMode::Lit; // #2
+        float EditorCameraSpeed = 1.0f;   // #3 フライ速度の倍率（右ドラッグ + ホイールでも変更）
+
+        // ---- コンテンツブラウザ（#7〜#9）
+        bool AssetFolderTree = true;
+        float AssetTreeWidth = 200.0f;
+        bool AssetListView = false;
+        AssetFilter AssetTypeFilter = AssetFilter::All;
+        bool AssetHideCompanions = true; // .graph.json などの付属ファイルを隠す
+        std::string AssetFavorites;      // '|' 区切り（asset からの相対パス）
+        std::string AssetRecent;         // '|' 区切り、新しい順
 
         int UndoLimit = 30;
         SnapSettings Snap;
@@ -33345,6 +34570,11 @@ namespace EditorPreferences
 
     Settings& Get();
     const char* ThemeName(ThemePreset preset);
+    const char* ViewModeName(ViewMode mode);
+    const char* AssetFilterName(AssetFilter filter);
+    // '|' 区切りリストの操作（お気に入り / 最近使ったもの）
+    std::vector<std::string> SplitList(const std::string& list);
+    std::string JoinList(const std::vector<std::string>& items);
     const char* FontName(FontChoice font);
 
     // Init（バックエンド初期化前）に一度だけ呼ぶ
@@ -33370,10 +34600,18 @@ namespace EditorPreferences
     ImVec4 Warning();
     ImVec4 Error();
     ImU32 AxisColor(int axis, float alpha = 1.0f); // 0:X(赤) 1:Y(緑) 2:Z(青)
+    // #14 これまで各所に直書きしていた色をここに集約
+    bool IsLightTheme();
+    ImVec4 OverlayBg();      // ビューポート上に重ねる UI の背景（半透明）
+    ImVec4 OverlayText();
+    ImVec4 Selection();      // 選択中の強調色
+    ImVec4 PrefabColor();
+    ImVec4 Favorite();
 
     // 設定ウィンドウの中身（BeginEditorWindow の内側から呼ぶ）
     void DrawPreferencesContent();
 } // namespace EditorPreferences
+
 
 ===== FILE: source\editor\editorprocedural.cpp =====
 #include "pch.h"
@@ -33777,6 +35015,10 @@ void ImGuiManager::DrawRaytracingWindow()
 #include "primitivegeometry.h"
 #include "materialmanager.h"
 #include "gpuscene/gpuscenechanges.h"
+#include "gbufferpreview.h"
+#include "renderconfiguration.h"
+#include "editorvisibility.h"
+#include "editoricons.h"
 #include <fstream>
 #include <future>
 #include <thread>
@@ -33922,7 +35164,52 @@ void ImGuiManager::DrawSceneViewWindow()
     D3D12_GPU_DESCRIPTOR_HANDLE handle = RenderTargets::GetEditorSceneSrvHandle();
     // 修正：ImTextureData* へのキャストは ImGui 1.92 で管理テクスチャとして扱われ、GPU ハンドルを
     // CPU ポインタとして参照してしまう。ほかの箇所と同じく ImTextureID で渡す。
-    ImGui::Image(static_cast<ImTextureID>(handle.ptr), imageSize);
+    // #2 表示モード：Lit 以外は G-Buffer をそのまま表示する（ディファードのときだけ。ほかは Lit）
+    {
+        using EditorPreferences::ViewMode;
+        const ViewMode viewMode = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED
+                                      ? preferences.ViewportViewMode
+                                      : ViewMode::Lit;
+        GBufferType gbuffer = GBufferType::BASE_COLOR;
+        bool alpha = false;
+        switch (viewMode)
+        {
+            case ViewMode::Unlit:
+                gbuffer = GBufferType::BASE_COLOR;
+                break;
+            case ViewMode::Normal:
+                gbuffer = GBufferType::NORMAL;
+                break;
+            case ViewMode::Depth:
+                gbuffer = GBufferType::DEPTH;
+                break;
+            case ViewMode::Material:
+                gbuffer = GBufferType::MATERIAL;
+                break;
+            case ViewMode::Emission:
+                gbuffer = GBufferType::EMISSION_AO;
+                break;
+            case ViewMode::AO:
+                gbuffer = GBufferType::EMISSION_AO;
+                alpha = true;
+                break;
+            case ViewMode::Velocity:
+                gbuffer = GBufferType::VELOCITY;
+                break;
+            default:
+                break;
+        }
+        const auto gbufferHandle =
+            viewMode == ViewMode::Lit ? D3D12_GPU_DESCRIPTOR_HANDLE{} : RenderTargets::GetGBufferSrvHandle(gbuffer);
+        if (viewMode != ViewMode::Lit && gbufferHandle.ptr && GBufferPreview::Pipeline.Get() != nullptr)
+        {
+            GBufferPreview::Image(gbufferHandle, imageSize, alpha ? UINT(GBufferType::COUNT) : UINT(gbuffer));
+        }
+        else
+        {
+            ImGui::Image(static_cast<ImTextureID>(handle.ptr), imageSize);
+        }
+    }
     const bool thisHovered = ImGui::IsItemHovered();
     m_IsSceneViewHovered = thisHovered;
     // ドロップ先はどちらも Image（直前のアイテム）。後続の InvisibleButton より前に処理する
@@ -33962,14 +35249,49 @@ void ImGuiManager::DrawSceneViewWindow()
         drawList, ImVec2(cursor.x, cursor.y + toolbarHeight),
         ImVec2(imageSize.x, (std::max)(1.0f, imageSize.y - toolbarHeight)));
 
+    // #3 左下の XYZ 軸（UE と同じ。カメラの向きに合わせて回る）
+    if (preferences.ShowViewportAxis)
+    {
+        XMMATRIX view, projection;
+        Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+        const float scale = preferences.UiScale;
+        const float length = 18.0f * scale;
+        const ImVec2 origin(cursor.x + 14.0f * scale + length, cursor.y + imageSize.y - 14.0f * scale - length);
+        struct AxisLine
+        {
+            int Axis;
+            float X, Y, Depth;
+        };
+        AxisLine axes[3];
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const XMVECTOR direction = XMVector3TransformNormal(
+                XMVectorSet(axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f, 0.0f), view);
+            axes[axis] = {axis, XMVectorGetX(direction), -XMVectorGetY(direction), XMVectorGetZ(direction)};
+        }
+        // 奥の軸から描く
+        std::sort(std::begin(axes), std::end(axes), [](const AxisLine& a, const AxisLine& b) { return a.Depth > b.Depth; });
+        static const char* const kAxisLabels[] = {"X", "Y", "Z"};
+        for (const auto& axis : axes)
+        {
+            const ImVec2 tip(origin.x + axis.X * length, origin.y + axis.Y * length);
+            const ImU32 color = EditorPreferences::AxisColor(axis.Axis, axis.Depth > 0.0f ? 0.55f : 1.0f);
+            drawList->AddLine(origin, tip, color, 2.0f * scale);
+            const ImVec2 labelSize = ImGui::CalcTextSize(kAxisLabels[axis.Axis]);
+            drawList->AddText(ImVec2(tip.x + axis.X * 6.0f * scale - labelSize.x * 0.5f,
+                                     tip.y + axis.Y * 6.0f * scale - labelSize.y * 0.5f),
+                              color, kAxisLabels[axis.Axis]);
+        }
+    }
+
     // ---- UE 風：ビューの中に重ねるツールバー（変形ツール・座標系・スナップ・表示・追加）
     //  子ウィンドウにすると、ツールバーの上ではシーンの Image がホバーされず、
     //  クリックが選択 / カメラ操作 / ギズモに渡らない。背景は透過してシーンが透けて見える
     {
         const float pad = 6.0f * preferences.UiScale;
         ImGui::SetCursorScreenPos(ImVec2(cursor.x + pad, cursor.y + pad));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.08f, 0.08f, 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.08f, 0.72f));
+        ImGui::PushStyleColor(ImGuiCol_Button, EditorPreferences::OverlayBg());
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorPreferences::OverlayBg());
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * preferences.UiScale);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         if (ImGui::BeginChild("##ViewportOverlayToolbar", ImVec2((std::max)(1.0f, imageSize.x - pad * 2.0f), 0.0f),
@@ -34034,7 +35356,8 @@ void ImGuiManager::DrawTransformGizmo()
         return; // ハンドツール：ギズモを出さない（行列の取得・計算もしない）
     }
     if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity) ||
-        !ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity))
+        !ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity) ||
+        EditorVisibility::IsLocked(m_SelectedEntity)) // #5 ロック中はギズモを出さない
     {
         return;
     }
@@ -34394,7 +35717,26 @@ void ImGuiManager::DrawHierarchyWindow()
     }
 
     static ImGuiTextFilter entityFilter;
-    DrawSearchField("EntitySearch", "名前で検索...", entityFilter);
+    // #5 種類で絞り込み（UE のアウトライナーのフィルター）
+    static int typeFilter = 0;
+    static const char* const kOutlinerTypes[] = {"すべて", "StaticMesh", "Skeletal", "Mesh",    "Light",
+                                                 "Sun",    "Camera",     "Terrain",  "Timeline", "Empty"};
+    {
+        const float comboWidth = 110.0f * EditorPreferences::Get().UiScale;
+        ImGui::BeginChild("EntitySearchArea",
+                          ImVec2((std::max)(60.0f, ImGui::GetContentRegionAvail().x - comboWidth -
+                                                       ImGui::GetStyle().ItemSpacing.x),
+                                 ImGui::GetFrameHeight()),
+                          false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+        DrawSearchField("EntitySearch", "名前で検索...", entityFilter);
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(comboWidth);
+        ImGui::Combo("##OutlinerTypeFilter", &typeFilter, kOutlinerTypes, IM_ARRAYSIZE(kOutlinerTypes));
+        ImGui::SetItemTooltip("種類で絞り込み");
+    }
+    const bool typeFilterActive = typeFilter > 0;
+    const bool anyFilterActive = entityFilter.IsActive() || typeFilterActive;
     ImGui::Separator();
     int totalCount = 0;
     int visibleCount = 0;
@@ -34430,6 +35772,28 @@ void ImGuiManager::DrawHierarchyWindow()
     const float iconSlot = ImGui::CalcTextSize("◆").x + 6.0f * outlinerPreferences.UiScale;
     const float spaceWidth = (std::max)(ImGui::CalcTextSize(" ").x, 1.0f);
     const string iconPadding(static_cast<size_t>(ceilf(iconSlot / spaceWidth)), ' ');
+    // #5 行の右端：表示（目）/ ロック（鍵）
+    const float rowIconSize = ImGui::GetTextLineHeight();
+    const float rowIconsWidth = rowIconSize * 2.0f + 10.0f * outlinerPreferences.UiScale;
+    // 子孫も含めて切り替える（UE と同じ）
+    std::function<void(EntityID, bool, bool)> applyRowState = [&](EntityID target, bool visibility, bool value) {
+        if (visibility)
+        {
+            EditorVisibility::SetHidden(target, value);
+        }
+        else
+        {
+            EditorVisibility::SetLocked(target, value);
+        }
+        const auto found = children.find(target);
+        if (found != children.end())
+        {
+            for (EntityID child : found->second)
+            {
+                applyRowState(child, visibility, value);
+            }
+        }
+    };
     EntityID clicked = g_kINVALID_ENTITY;
     static EntityID pendingClick = g_kINVALID_ENTITY;
     static bool selectionDragged = false;
@@ -34446,26 +35810,37 @@ void ImGuiManager::DrawHierarchyWindow()
         {
             return;
         }
+        if (typeFilterActive && strcmp(ClassifyOutlinerEntity(entity).Type, kOutlinerTypes[typeFilter]) != 0)
+        {
+            return;
+        }
         visible.push_back(entity);
         ImGui::PushID(static_cast<int>(entity));
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
         if (selectedSet.contains(entity))
         {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
         const auto childList = children.find(entity);
         const bool hasChildren = childList != children.end() && !childList->second.empty();
-        if (!hasChildren || entityFilter.IsActive())
+        if (!hasChildren || anyFilterActive)
         {
             flags |= ImGuiTreeNodeFlags_Leaf;
         }
         const bool prefab = GetPrefabRoot(entity) != g_kINVALID_ENTITY;
-        if (prefab)
+        const bool hiddenRow = EditorVisibility::IsHiddenFlag(entity);
+        if (prefab || hiddenRow)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
+            ImVec4 color = prefab ? EditorPreferences::PrefabColor() : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+            if (hiddenRow)
+            {
+                color.w *= 0.45f; // 非表示の行は薄く
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
         }
         const bool open = ImGui::TreeNodeEx("Entity", flags, "%s%s", iconPadding.c_str(), displayName.c_str());
-        if (prefab)
+        if (prefab || hiddenRow)
         {
             ImGui::PopStyleColor();
         }
@@ -34482,7 +35857,7 @@ void ImGuiManager::DrawHierarchyWindow()
                 const float nameEnd = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() +
                                       ImGui::CalcTextSize(iconPadding.c_str()).x +
                                       ImGui::CalcTextSize(displayName.c_str()).x;
-                const float typeX = rowMax.x - typeWidth - 6.0f;
+                const float typeX = rowMax.x - typeWidth - 6.0f - rowIconsWidth;
                 if (typeX > nameEnd + 16.0f)
                 {
                     rowDraw->AddText(ImVec2(typeX, textY), ImGui::GetColorU32(ImGuiCol_TextDisabled), info.Type);
@@ -34537,13 +35912,58 @@ void ImGuiManager::DrawHierarchyWindow()
             }
             ImGui::EndPopup();
         }
+        // #5 表示 / ロックのトグル（行の右端に重ねる。ツリーノードは AllowOverlap）
+        {
+            const ImVec2 rowMin = ImGui::GetItemRectMin();
+            const ImVec2 rowMax = ImGui::GetItemRectMax();
+            const float y = rowMin.y + (rowMax.y - rowMin.y - rowIconSize) * 0.5f;
+            const ImVec2 restore = ImGui::GetCursorScreenPos();
+            const bool hidden = EditorVisibility::IsHiddenFlag(entity);
+            const bool locked = EditorVisibility::IsLocked(entity);
+            const bool rowHovered = ImGui::IsMouseHoveringRect(rowMin, rowMax);
+            ImDrawList* iconDraw = ImGui::GetWindowDrawList();
+            const auto toggle = [&](const char* id, float x, bool active, const char* activeIcon,
+                                    const char* inactiveIcon, const char* tooltip) {
+                ImGui::SetCursorScreenPos(ImVec2(x, y));
+                const bool pressed = ImGui::InvisibleButton(id, ImVec2(rowIconSize, rowIconSize));
+                const bool hovered = ImGui::IsItemHovered();
+                // 既定の状態（表示 / ロック解除）は行にマウスがあるときだけ薄く出す（UE と同じ）
+                const bool show = active || rowHovered || hovered;
+                if (show)
+                {
+                    const char* icon = active ? activeIcon : inactiveIcon;
+                    ImVec4 color = ImGui::GetStyleColorVec4(active ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+                    if (hovered)
+                    {
+                        color = EditorPreferences::Accent();
+                    }
+                    const ImVec2 size = ImGui::CalcTextSize(icon);
+                    iconDraw->AddText(ImVec2(x + (rowIconSize - size.x) * 0.5f, y), ImGui::GetColorU32(color), icon);
+                }
+                ImGui::SetItemTooltip("%s", tooltip);
+                return pressed;
+            };
+            const float lockX = rowMax.x - rowIconSize - 4.0f * outlinerPreferences.UiScale;
+            const float eyeX = lockX - rowIconSize - 2.0f * outlinerPreferences.UiScale;
+            if (toggle("##Visible", eyeX, hidden, EditorIcons::Hidden(), EditorIcons::Visible(),
+                       hidden ? "表示する（子も含む）" : "エディター上で非表示（子も含む）"))
+            {
+                applyRowState(entity, true, !hidden);
+            }
+            if (toggle("##Lock", lockX, locked, EditorIcons::Lock(), EditorIcons::Unlock(),
+                       locked ? "ロック解除" : "ロック（ビューポートで選択・移動できなくする）"))
+            {
+                applyRowState(entity, false, !locked);
+            }
+            ImGui::SetCursorScreenPos(restore);
+        }
         if (m_RenamingEntity == entity)
         {
             DrawRenameInput(entity);
         }
         if (open)
         {
-            if (!entityFilter.IsActive() && hasChildren)
+            if (!anyFilterActive && hasChildren)
             {
                 for (EntityID child : childList->second)
                 {
@@ -34554,7 +35974,7 @@ void ImGuiManager::DrawHierarchyWindow()
         }
         ImGui::PopID();
     };
-    if (entityFilter.IsActive())
+    if (anyFilterActive)
     {
         for (EntityID entity : all)
         {
@@ -35062,7 +36482,8 @@ void ImGuiManager::PickEntityFromMouse()
 
     for (EntityID entity : World::GetView<TransformComponent>())
     {
-        if (!IsEditableEntity(entity))
+        // #5 ロック中 / 非表示はビューポートのクリックで選ばない
+        if (!IsEditableEntity(entity) || EditorVisibility::IsLocked(entity) || EditorVisibility::IsHidden(entity))
         {
             continue;
         }
@@ -36054,6 +37475,7 @@ bool ImGuiManager::LoadScene(const filesystem::path& path)
         AddLog("シーンを開けません: %s", ToUtf8(path).c_str());
         return false;
     }
+    EditorVisibility::Clear(); // #5 表示 / ロックはシーンごと（エンティティ ID が別物になる）
     Json::Value root;
     Json::CharReaderBuilder reader;
     string parseError;
@@ -36816,7 +38238,7 @@ bool ImGuiManager::DrawPrefabInspector()
     if (root != g_kINVALID_ENTITY)
     {
         const string source = ComponentManager::GetComponentUnchecked<NameComponent>(root).PrefabAssetPath;
-        ImGui::TextColored(kPrefabColor, "プレハブ: %s", source.c_str());
+        ImGui::TextColored(EditorPreferences::PrefabColor(), "プレハブ: %s", source.c_str());
         ImGui::TextWrapped("適用すると、同じプレハブの全インスタンスを更新します。各インスタンスの配置は保持します。");
         if (ImGui::Button("プレハブに適用"))
         {
@@ -39504,6 +40926,15 @@ void ImGuiManager::LoadProjectSettings()
 #include "graphicsdevice.h"
 #include "gpumemorybudget.h"
 #include "performancegovernor.h"
+#include "renderconfiguration.h"
+#include "renderersettings.h"
+#include "editoricons.h"
+#include "editorvisibility.h"
+#include "backgroundtasks.h"
+#include "assetthumbnailmanager.h"
+#include <unordered_map>
+#include <fstream>
+#include <filesystem>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
 #include <algorithm>
@@ -39538,6 +40969,7 @@ namespace
         std::string Category;
         std::string Label;
         std::string Shortcut;
+        std::string DefaultShortcut; // #16 既定のショートカット（ユーザー割り当て前）
         std::string SearchKey; // 小文字化した検索対象
         std::function<void()> Run;
         bool Enabled = true;
@@ -39561,6 +40993,78 @@ namespace
 
     // ------------------------------------------------------------------ その他の状態
     bool g_ShowShortcuts = false;
+
+    // ------------------------------------------------------------------ #16 キー割り当て
+    //  キー：「カテゴリ/コマンド名」、値：「Ctrl+Shift+K」の形の文字列。Save/editor_keymap.cfg に保存
+    //  既定のショートカット（コードに書かれたもの）はそのまま有効。ユーザー割り当ては追加で効く
+    std::unordered_map<std::string, std::string> g_UserKeys;
+    bool g_KeymapLoaded = false;
+    std::string g_CapturingCommand; // 割り当て待ちのコマンド（空 = 待っていない）
+    constexpr const char* kKeymapPath = "Save/editor_keymap.cfg";
+
+    void LoadKeymapOnce()
+    {
+        if (g_KeymapLoaded)
+        {
+            return;
+        }
+        g_KeymapLoaded = true;
+        std::ifstream input(kKeymapPath);
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const auto separator = line.rfind('=');
+            if (separator == std::string::npos || separator == 0 || separator + 1 >= line.size())
+            {
+                continue;
+            }
+            g_UserKeys[line.substr(0, separator)] = line.substr(separator + 1);
+        }
+    }
+
+    void SaveKeymap()
+    {
+        std::error_code error;
+        std::filesystem::create_directories("Save", error);
+        std::ofstream output(kKeymapPath, std::ios::trunc);
+        for (const auto& [command, chord] : g_UserKeys)
+        {
+            output << command << "=" << chord << "\n";
+        }
+    }
+
+    bool IsModifierKey(ImGuiKey key)
+    {
+        return key == ImGuiKey_LeftCtrl || key == ImGuiKey_RightCtrl || key == ImGuiKey_LeftShift ||
+               key == ImGuiKey_RightShift || key == ImGuiKey_LeftAlt || key == ImGuiKey_RightAlt ||
+               key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper || key == ImGuiKey_ReservedForModCtrl ||
+               key == ImGuiKey_ReservedForModShift || key == ImGuiKey_ReservedForModAlt ||
+               key == ImGuiKey_ReservedForModSuper;
+    }
+
+    // このフレームに押されたキーの組み合わせ（修飾キーだけ / マウスは除く）。無ければ空
+    std::string PressedChord()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
+        {
+            const auto named = static_cast<ImGuiKey>(key);
+            if (IsModifierKey(named) || (named >= ImGuiKey_MouseLeft && named <= ImGuiKey_MouseWheelY) ||
+                !ImGui::IsKeyPressed(named, false))
+            {
+                continue;
+            }
+            std::string chord;
+            if (io.KeyCtrl)
+                chord += "Ctrl+";
+            if (io.KeyShift)
+                chord += "Shift+";
+            if (io.KeyAlt)
+                chord += "Alt+";
+            return chord + ImGui::GetKeyName(named);
+        }
+        return {};
+    }
     bool g_OpenViewportAddMenu = false;
 
     struct PieState
@@ -39933,25 +41437,33 @@ void EditorShell::DrawAddMenuItems()
     }
 }
 
+static void DrawViewDirectionItems()
+{
+    if (ImGui::MenuItem("正面", "Num 1"))
+        EditorShell::SetViewDirection(0.0f, 0.0f, 1.0f);
+    if (ImGui::MenuItem("背面", "Ctrl+Num 1"))
+        EditorShell::SetViewDirection(0.0f, 0.0f, -1.0f);
+    if (ImGui::MenuItem("右", "Num 3"))
+        EditorShell::SetViewDirection(-1.0f, 0.0f, 0.0f);
+    if (ImGui::MenuItem("左", "Ctrl+Num 3"))
+        EditorShell::SetViewDirection(1.0f, 0.0f, 0.0f);
+    if (ImGui::MenuItem("上", "Num 7"))
+        EditorShell::SetViewDirection(0.0f, -1.0f, 0.0f);
+    if (ImGui::MenuItem("下", "Ctrl+Num 7"))
+        EditorShell::SetViewDirection(0.0f, 1.0f, 0.0f);
+}
+
 void EditorShell::DrawViewMenuItems()
 {
     auto& prefs = EditorPreferences::Get();
     ImGui::MenuItem("ライト可視化", nullptr, &ImGuiManager::m_ShowLightDebug);
     ImGui::MenuItem("ナビゲーションギズモ", nullptr, &prefs.ShowNavigationGizmo);
+    ImGui::MenuItem("XYZ 軸（左下）", nullptr, &prefs.ShowViewportAxis);
+    ImGui::MenuItem("カメラ速度ボタン", nullptr, &prefs.ShowViewportSpeed);
     ImGui::MenuItem("統計オーバーレイ", nullptr, &prefs.ShowViewportStats);
+    ImGui::SetItemTooltip("FPS / GPU 時間 / 品質 / 解像度はステータスバーにも表示しています");
     ImGui::Separator();
-    if (ImGui::MenuItem("正面", "Num 1"))
-        SetViewDirection(0.0f, 0.0f, 1.0f);
-    if (ImGui::MenuItem("背面", "Ctrl+Num 1"))
-        SetViewDirection(0.0f, 0.0f, -1.0f);
-    if (ImGui::MenuItem("右", "Num 3"))
-        SetViewDirection(-1.0f, 0.0f, 0.0f);
-    if (ImGui::MenuItem("左", "Ctrl+Num 3"))
-        SetViewDirection(1.0f, 0.0f, 0.0f);
-    if (ImGui::MenuItem("上", "Num 7"))
-        SetViewDirection(0.0f, -1.0f, 0.0f);
-    if (ImGui::MenuItem("下", "Ctrl+Num 7"))
-        SetViewDirection(0.0f, 1.0f, 0.0f);
+    DrawViewDirectionItems();
     ImGui::Separator();
     if (ImGui::MenuItem("選択にフォーカス", "F / Num ."))
     {
@@ -39979,6 +41491,189 @@ void EditorShell::HandleGlobalShortcuts()
     {
         EditorWorkspaceManager::Get().Registry().ShowEditorType("preferences");
     }
+    RunUserShortcuts();
+}
+
+const char* EditorShell::Shortcut(const char* category, const char* label, const char* fallback)
+{
+    LoadKeymapOnce();
+    if (!g_UserKeys.empty())
+    {
+        const auto found = g_UserKeys.find(std::string(category) + "/" + label);
+        if (found != g_UserKeys.end())
+        {
+            return found->second.c_str();
+        }
+    }
+    return fallback ? fallback : "";
+}
+
+void EditorShell::LoadKeymap()
+{
+    g_KeymapLoaded = false;
+    g_UserKeys.clear();
+    LoadKeymapOnce();
+}
+
+void EditorShell::RunUserShortcuts()
+{
+    LoadKeymapOnce();
+    if (g_UserKeys.empty() || !g_CapturingCommand.empty() || g_Palette.Open)
+    {
+        return;
+    }
+    const std::string chord = PressedChord();
+    if (chord.empty())
+    {
+        return;
+    }
+    std::string target;
+    for (const auto& [command, keys] : g_UserKeys)
+    {
+        if (keys == chord)
+        {
+            target = command;
+            break;
+        }
+    }
+    if (target.empty())
+    {
+        return;
+    }
+    std::vector<PaletteCommand> commands;
+    BuildCommandList(&commands);
+    for (const auto& command : commands)
+    {
+        if (command.Enabled && command.Category + "/" + command.Label == target && command.Run)
+        {
+            command.Run();
+            break;
+        }
+    }
+}
+
+// #16 F1 の一覧の「割り当て」タブ：コマンドごとにショートカットを設定する
+void EditorShell::DrawKeymapEditor()
+{
+    LoadKeymapOnce();
+    static std::vector<PaletteCommand> commands;
+    static double nextRefresh = 0.0;
+    if (ImGui::GetTime() >= nextRefresh)
+    {
+        commands.clear();
+        BuildCommandList(&commands);
+        nextRefresh = ImGui::GetTime() + 1.0;
+    }
+    static ImGuiTextFilter filter;
+    filter.Draw("検索##KeymapFilter", 260.0f * Scale());
+    ImGui::SameLine();
+    ImGui::TextDisabled("「設定」を押してからキーを押す（Esc でキャンセル / Backspace で解除）");
+
+    // 割り当て待ち：次に押されたキーを記録する
+    if (!g_CapturingCommand.empty())
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            g_CapturingCommand.clear();
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false))
+        {
+            g_UserKeys.erase(g_CapturingCommand);
+            g_CapturingCommand.clear();
+            SaveKeymap();
+        }
+        else
+        {
+            const std::string chord = PressedChord();
+            if (!chord.empty())
+            {
+                // 同じキーの割り当ては 1 つだけ（後から設定した方を残す）
+                for (auto it = g_UserKeys.begin(); it != g_UserKeys.end();)
+                {
+                    it = it->second == chord ? g_UserKeys.erase(it) : std::next(it);
+                }
+                g_UserKeys[g_CapturingCommand] = chord;
+                g_CapturingCommand.clear();
+                SaveKeymap();
+            }
+        }
+    }
+
+    // 既定のショートカットとの重複を調べる
+    std::unordered_map<std::string, int> chordUse;
+    for (const auto& command : commands)
+    {
+        if (!command.DefaultShortcut.empty())
+        {
+            ++chordUse[command.DefaultShortcut];
+        }
+    }
+    for (const auto& [command, chord] : g_UserKeys)
+    {
+        ++chordUse[chord];
+    }
+
+    const float height = 360.0f * Scale();
+    if (ImGui::BeginTable("##Keymap", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0.0f, height)))
+    {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("コマンド", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn("既定", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("割り当て", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 110.0f * Scale());
+        ImGui::TableHeadersRow();
+        for (const auto& command : commands)
+        {
+            const std::string key = command.Category + "/" + command.Label;
+            if (filter.IsActive() && !filter.PassFilter(key.c_str()))
+            {
+                continue;
+            }
+            ImGui::PushID(key.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", command.Category.c_str());
+            ImGui::SameLine();
+            ImGui::TextUnformatted(command.Label.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", command.DefaultShortcut.empty() ? "-" : command.DefaultShortcut.c_str());
+            ImGui::TableNextColumn();
+            const auto user = g_UserKeys.find(key);
+            if (g_CapturingCommand == key)
+            {
+                ImGui::TextColored(EditorPreferences::Accent(), "キーを押してください...");
+            }
+            else if (user != g_UserKeys.end())
+            {
+                const bool conflict = chordUse[user->second] > 1;
+                ImGui::TextColored(conflict ? EditorPreferences::Warning() : EditorPreferences::Accent(), "%s",
+                                   user->second.c_str());
+                if (conflict)
+                {
+                    ImGui::SetItemTooltip("既定のショートカットと重なっています（両方が実行されます）");
+                }
+            }
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("設定"))
+            {
+                g_CapturingCommand = key;
+            }
+            if (user != g_UserKeys.end())
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("解除"))
+                {
+                    g_UserKeys.erase(key);
+                    SaveKeymap();
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
 }
 
 void EditorShell::ToggleShortcutHelp()
@@ -39996,16 +41691,30 @@ void EditorShell::OpenCommandPalette()
     palette.Selected = 0;
     palette.Commands.clear();
 
+    BuildCommandList(&palette.Commands);
+}
+
+// 型（PaletteCommand）は無名名前空間にあるので、ヘッダーには void* で宣言している
+void EditorShell::BuildCommandList(void* output)
+{
+    auto& out = *static_cast<std::vector<PaletteCommand>*>(output);
+    LoadKeymapOnce();
     auto add = [&](const char* category, std::string label, const char* shortcut, std::function<void()> run,
                    bool enabled = true) {
         PaletteCommand command;
         command.Category = category;
         command.Label = std::move(label);
         command.Shortcut = shortcut ? shortcut : "";
+        command.DefaultShortcut = command.Shortcut;
+        // #16 ユーザー割り当てがあればそれを表示する
+        if (const auto user = g_UserKeys.find(command.Category + "/" + command.Label); user != g_UserKeys.end())
+        {
+            command.Shortcut = user->second;
+        }
         command.SearchKey = ToLowerAscii((command.Category + " " + command.Label + " " + command.Shortcut).c_str());
         command.Run = std::move(run);
         command.Enabled = enabled;
-        palette.Commands.push_back(std::move(command));
+        out.push_back(std::move(command));
     };
 
     const bool hasSelection =
@@ -40043,6 +41752,16 @@ void EditorShell::OpenCommandPalette()
     add("再生", ProjectManager::IsPlaying() ? "停止" : "再生", "Ctrl+P", [] { ProjectManager::TogglePlay(); });
     add("再生", ProjectManager::IsPaused() ? "再開" : "一時停止", "Ctrl+Shift+P", [] { ProjectManager::TogglePause(); },
         ProjectManager::IsPlaying());
+    add("再生", "ここから再生", "", [] { ProjectManager::PlayFromEditorView(); }, !ProjectManager::IsPlaying());
+    add("再生", "選択中のカメラで再生", "", [] { ProjectManager::PlayWithCamera(ImGuiManager::m_SelectedEntity); },
+        !ProjectManager::IsPlaying() && hasSelection &&
+            ComponentManager::HasComponent<CameraComponent>(ImGuiManager::m_SelectedEntity));
+    add("表示", "表示モード: ライティングあり", "", [] {
+        EditorPreferences::Get().ViewportViewMode = EditorPreferences::ViewMode::Lit;
+    });
+    add("表示", "表示モード: ライティングなし", "", [] {
+        EditorPreferences::Get().ViewportViewMode = EditorPreferences::ViewMode::Unlit;
+    });
 
     add("作成", "空のオブジェクト", "", [] { ImGuiManager::SelectEntity(ImGuiManager::CreateEmptyEntity()); });
     for (const auto& primitive : kPrimitives)
@@ -40404,18 +42123,31 @@ namespace
                     ImGui::EndTable();
                 }
             };
-            if (ImGui::BeginTable("##ShortcutColumns", 2, ImGuiTableFlags_SizingStretchSame))
+            if (ImGui::BeginTabBar("##ShortcutTabs"))
             {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::SeparatorText("全般");
-                table("##General", general, IM_ARRAYSIZE(general));
-                ImGui::TableNextColumn();
-                ImGui::SeparatorText("3D ビューポート");
-                table("##Viewport", viewport3d, IM_ARRAYSIZE(viewport3d));
-                ImGui::EndTable();
+                if (ImGui::BeginTabItem("一覧"))
+                {
+                    if (ImGui::BeginTable("##ShortcutColumns", 2, ImGuiTableFlags_SizingStretchSame))
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::SeparatorText("全般");
+                        table("##General", general, IM_ARRAYSIZE(general));
+                        ImGui::TableNextColumn();
+                        ImGui::SeparatorText("3D ビューポート");
+                        table("##Viewport", viewport3d, IM_ARRAYSIZE(viewport3d));
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("割り当て"))
+                {
+                    EditorShell::DrawKeymapEditor();
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
             }
-            if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && g_CapturingCommand.empty())
             {
                 g_ShowShortcuts = false;
             }
@@ -40585,29 +42317,29 @@ void EditorShell::DrawToolbar()
     {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * scale, 4.0f * scale));
         // ---- 左：保存 / 履歴 / 追加
-        if (ImGui::Button("保存"))
+        if (ImGui::Button(EditorIcons::Label(EditorIcons::Save(), "保存").c_str()))
         {
             SaveSceneAndReferences(false);
         }
-        ImGui::SetItemTooltip("シーンを保存 (Ctrl+S)");
+        ImGui::SetItemTooltip("シーンを保存 (%s)", Shortcut("ファイル", "シーンを保存", "Ctrl+S"));
         ImGui::SameLine();
         ImGui::BeginDisabled(ImGuiManager::m_UndoStack.empty() && !ImGuiManager::m_HasPendingUndo);
-        if (ImGui::Button("↶"))
+        if (ImGui::Button((std::string(EditorIcons::Undo()) + "##ToolbarUndo").c_str()))
         {
             ImGuiManager::Undo();
         }
-        ImGui::SetItemTooltip("元に戻す (Ctrl+Z)");
+        ImGui::SetItemTooltip("元に戻す (%s)", Shortcut("編集", "元に戻す", "Ctrl+Z"));
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(ImGuiManager::m_RedoStack.empty());
-        if (ImGui::Button("↷"))
+        if (ImGui::Button((std::string(EditorIcons::Redo()) + "##ToolbarRedo").c_str()))
         {
             ImGuiManager::Redo();
         }
-        ImGui::SetItemTooltip("やり直し (Ctrl+Y)");
+        ImGui::SetItemTooltip("やり直し (%s)", Shortcut("編集", "やり直し", "Ctrl+Y"));
         ImGui::EndDisabled();
         VerticalSeparator();
-        if (ImGui::Button("✚ 追加 ▾"))
+        if (ImGui::Button((EditorIcons::Label(EditorIcons::Add(), "追加") + " ▾##ToolbarAdd").c_str()))
         {
             ImGui::OpenPopup("##ToolbarAddMenu");
         }
@@ -40618,7 +42350,7 @@ void EditorShell::DrawToolbar()
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("⌕ コマンド"))
+        if (ImGui::Button(EditorIcons::Label(EditorIcons::Search(), "コマンド").c_str()))
         {
             OpenCommandPalette();
         }
@@ -40628,7 +42360,8 @@ void EditorShell::DrawToolbar()
         const bool playing = ProjectManager::IsPlaying();
         const bool paused = ProjectManager::IsPaused();
         const float buttonWidth = ImGui::GetFrameHeight() * 1.6f;
-        const float playGroupWidth = buttonWidth * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        const float optionsWidth = ImGui::GetFrameHeight() * 0.9f;
+        const float playGroupWidth = buttonWidth * 3.0f + optionsWidth + ImGui::GetStyle().ItemSpacing.x * 3.0f;
         const float centerX = (ImGui::GetWindowWidth() - playGroupWidth) * 0.5f;
         ImGui::SameLine();
         if (ImGui::GetCursorPosX() < centerX)
@@ -40638,7 +42371,8 @@ void EditorShell::DrawToolbar()
         {
             const ImVec4 green(0.20f, 0.62f, 0.32f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, playing && !paused ? ImVec4(1, 1, 1, 1) : green);
-            if (ToggleButton("▶##ToolbarPlay", playing && !paused, playing ? "再開" : "再生 (Ctrl+P)",
+            const std::string playLabel = std::string(EditorIcons::Play()) + "##ToolbarPlay";
+            if (ToggleButton(playLabel.c_str(), playing && !paused, playing ? "再開" : "再生 (Ctrl+P)",
                              ImVec2(buttonWidth, 0.0f)))
             {
                 if (!playing)
@@ -40651,15 +42385,51 @@ void EditorShell::DrawToolbar()
                 }
             }
             ImGui::PopStyleColor();
+            // #12 再生オプション（UE の「︙」と同じ）
+            ImGui::SameLine(0.0f, 1.0f);
+            ImGui::BeginDisabled(playing);
+            if (ImGui::Button((std::string(EditorIcons::ChevronDown()) + "##PlayOptions").c_str(),
+                              ImVec2(optionsWidth, 0.0f)))
+            {
+                ImGui::OpenPopup("##PlayOptionsPopup");
+            }
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("再生オプション");
+            if (ImGui::BeginPopup("##PlayOptionsPopup"))
+            {
+                if (ImGui::MenuItem("再生（ゲームカメラ）", Shortcut("再生", "再生", "Ctrl+P")))
+                {
+                    ProjectManager::Play();
+                }
+                if (ImGui::MenuItem("ここから再生", Shortcut("再生", "ここから再生", "")))
+                {
+                    ProjectManager::PlayFromEditorView();
+                }
+                ImGui::SetItemTooltip("今のビューポートの視点にゲームカメラを置いて再生します（停止で元に戻ります）");
+                const EntityID selected = ImGuiManager::m_SelectedEntity;
+                const bool selectedCamera = selected != g_kINVALID_ENTITY && Registry::IsAlive(selected) &&
+                                            ComponentManager::HasComponent<CameraComponent>(selected) &&
+                                            selected != Camera::GetEditorCameraEntity();
+                if (ImGui::MenuItem("選択中のカメラで再生", Shortcut("再生", "選択中のカメラで再生", ""), false,
+                                    selectedCamera))
+                {
+                    ProjectManager::PlayWithCamera(selected);
+                }
+                if (!selectedCamera)
+                {
+                    ImGui::SetItemTooltip("アウトライナーでカメラを選ぶと使えます");
+                }
+                ImGui::EndPopup();
+            }
             ImGui::SameLine();
             ImGui::BeginDisabled(!playing);
-            if (ToggleButton("❚❚##ToolbarPause", paused, "一時停止 (Ctrl+Shift+P)", ImVec2(buttonWidth, 0.0f)))
+            if (ToggleButton((std::string(EditorIcons::Pause()) + "##ToolbarPause").c_str(), paused, "一時停止 (Ctrl+Shift+P)", ImVec2(buttonWidth, 0.0f)))
             {
                 ProjectManager::TogglePause();
             }
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, playing ? EditorPreferences::Error() : ImGui::GetStyleColorVec4(ImGuiCol_Text));
-            if (ImGui::Button("■##ToolbarStop", ImVec2(buttonWidth, 0.0f)))
+            if (ImGui::Button((std::string(EditorIcons::Stop()) + "##ToolbarStop").c_str(), ImVec2(buttonWidth, 0.0f)))
             {
                 ProjectManager::Stop();
             }
@@ -40669,9 +42439,11 @@ void EditorShell::DrawToolbar()
         }
 
         // ---- 右：表示切替 / 設定
-        const char* lightLabel = "☀ ライト";
-        const char* prefsLabel = "⚙";
-        const float rightWidth = ImGui::CalcTextSize(lightLabel).x + ImGui::CalcTextSize(prefsLabel).x +
+        const std::string lightText = EditorIcons::Label(EditorIcons::Sun(), "ライト");
+        const std::string prefsText = std::string(EditorIcons::Settings()) + "##ToolbarPrefs";
+        const char* lightLabel = lightText.c_str();
+        const char* prefsLabel = prefsText.c_str();
+        const float rightWidth = ImGui::CalcTextSize(lightLabel).x + ImGui::CalcTextSize(prefsLabel, nullptr, true).x +
                                  ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetStyle().ItemSpacing.x;
         const float rightX = ImGui::GetWindowWidth() - rightWidth - 8.0f * scale;
         ImGui::SameLine();
@@ -40747,7 +42519,7 @@ void EditorShell::DrawStatusBar()
         ImGui::TextColored(dim, "%s", hint);
 
         // ---- 右：統計
-        char stats[256];
+        char stats[384];
         int length = 0;
         const size_t selected = ImGuiManager::m_SelectedEntities.size();
         length += snprintf(stats + length, sizeof(stats) - length, "選択 %zu", selected);
@@ -40759,16 +42531,38 @@ void EditorShell::DrawStatusBar()
         }
         if (length < static_cast<int>(sizeof(stats)))
         {
-            length += snprintf(stats + length, sizeof(stats) - length, "   GPU %.2f ms   %ux%u",
-                               PerformanceGovernor::GetSmoothedGpuMs(), GraphicsDevice::GetSceneWidth(),
-                               GraphicsDevice::GetSceneHeight());
+            // #4 ビューポートの統計オーバーレイと同じ内容（品質も含む）をここにまとめる
+            length += snprintf(stats + length, sizeof(stats) - length, "   GPU %.2f / %.2f ms   品質 %s   %ux%u",
+                               PerformanceGovernor::GetSmoothedGpuMs(), PerformanceGovernor::GetBudgetMs(),
+                               PerformanceGovernor::GetTierName(PerformanceGovernor::GetTier()),
+                               GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
         }
         const float fps = World::GetFrameRate();
         char fpsText[32];
         snprintf(fpsText, sizeof(fpsText), "%.0f FPS", fps);
+        // #11 裏で動いている処理（シェーダーのコンパイル / ベイク / サムネイル生成など）
+        BackgroundTasks::SetPolled("サムネイルの生成", AssetThumbnailManager::HasPendingVisibleAssets() ? 1 : 0);
+        const auto tasks = BackgroundTasks::Snapshot();
+        std::string taskText;
+        if (!tasks.empty())
+        {
+            static const char* const kSpinner[] = {"◐", "◓", "◑", "◒"};
+            const int frame = static_cast<int>(ImGui::GetTime() * 8.0) & 3;
+            int total = 0;
+            for (const auto& task : tasks)
+            {
+                total += task.Count;
+            }
+            taskText = std::string(kSpinner[frame]) + " " + tasks.front().Name;
+            if (tasks.size() > 1 || total > 1)
+            {
+                taskText += " ほか " + std::to_string(total - 1) + " 件";
+            }
+        }
+        const float taskWidth = taskText.empty() ? 0.0f : ImGui::CalcTextSize(taskText.c_str()).x + 16.0f * scale;
         const float statsWidth = ImGui::CalcTextSize(stats).x;
         const float fpsWidth = ImGui::CalcTextSize(fpsText).x;
-        const float rightStart = ImGui::GetWindowWidth() - statsWidth - fpsWidth - 24.0f * scale;
+        const float rightStart = ImGui::GetWindowWidth() - statsWidth - fpsWidth - taskWidth - 24.0f * scale;
 
         // ---- 中央：最新ログ（クリックでコンソール）
         std::string lastLog;
@@ -40816,6 +42610,21 @@ void EditorShell::DrawStatusBar()
         {
             ImGui::SetCursorPosX(rightStart);
         }
+        if (!taskText.empty())
+        {
+            ImGui::TextColored(EditorPreferences::Accent(), "%s", taskText.c_str());
+            if (ImGui::IsItemHovered() && ImGui::BeginTooltip())
+            {
+                ImGui::TextUnformatted("実行中の処理");
+                ImGui::Separator();
+                for (const auto& task : tasks)
+                {
+                    ImGui::Text("%s  ×%d", task.Name.c_str(), task.Count);
+                }
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine(0.0f, 16.0f * scale);
+        }
         ImGui::TextColored(dim, "%s", stats);
         ImGui::SameLine(0.0f, 12.0f * scale);
         const int target = World::GetTargetFrameRate();
@@ -40834,6 +42643,88 @@ void EditorShell::DrawViewportHeader()
     const float scale = Scale();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * scale, 3.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3.0f * scale, 4.0f * scale));
+
+    // ---- #2 左端：投影（パースペクティブ / 正投影）と表示モード（UE の「パースペクティブ」「ライティングあり」）
+    {
+        const EntityID editorCamera = Camera::GetEditorCameraEntity();
+        CameraComponent* camera = ComponentManager::HasComponent<CameraComponent>(editorCamera)
+                                      ? &ComponentManager::GetComponentUnchecked<CameraComponent>(editorCamera)
+                                      : nullptr;
+        const bool ortho = camera && camera->IsOrthographic;
+        if (ImGui::Button(ortho ? "正投影 ▾##Projection" : "パースペクティブ ▾##Projection"))
+        {
+            ImGui::OpenPopup("##ViewportProjection");
+        }
+        ImGui::SetItemTooltip("投影の切り替え");
+        if (ImGui::BeginPopup("##ViewportProjection"))
+        {
+            if (ImGui::MenuItem("パースペクティブ", nullptr, !ortho, camera != nullptr) && camera)
+            {
+                camera->IsOrthographic = false;
+            }
+            if (ImGui::MenuItem("正投影", nullptr, ortho, camera != nullptr) && camera)
+            {
+                camera->IsOrthographic = true;
+                // 今の注視距離で見える範囲に合わせる（切り替えで大きさがほぼ変わらない）
+                camera->OrthographicHeight =
+                    (std::max)(0.1f, 2.0f * EditorSceneNavigation::PivotDistance() * tanf(camera->Fov * 0.5f));
+            }
+            if (camera && camera->IsOrthographic)
+            {
+                ImGui::SetNextItemWidth(160.0f * scale);
+                ImGui::DragFloat("表示の高さ", &camera->OrthographicHeight, 0.05f, 0.1f, 10000.0f, "%.2f m",
+                                 ImGuiSliderFlags_Logarithmic);
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("視点");
+            DrawViewDirectionItems();
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        using EditorPreferences::ViewMode;
+        const bool deferred = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED;
+        std::string viewLabel = std::string(EditorPreferences::ViewModeName(prefs.ViewportViewMode));
+        if (const auto bracket = viewLabel.find("（"); bracket != std::string::npos)
+        {
+            viewLabel.resize(bracket); // ボタンには短い名前だけ
+        }
+        viewLabel += " ▾##ViewMode";
+        if (ImGui::Button(viewLabel.c_str()))
+        {
+            ImGui::OpenPopup("##ViewportViewMode");
+        }
+        ImGui::SetItemTooltip("表示モード（G-Buffer の確認）");
+        if (ImGui::BeginPopup("##ViewportViewMode"))
+        {
+            for (int i = 0; i < static_cast<int>(ViewMode::Count); ++i)
+            {
+                const auto mode = static_cast<ViewMode>(i);
+                if (ImGui::MenuItem(EditorPreferences::ViewModeName(mode), nullptr,
+                                    prefs.ViewportViewMode == mode, i == 0 || deferred))
+                {
+                    prefs.ViewportViewMode = mode;
+                }
+            }
+            if (!deferred)
+            {
+                ImGui::Separator();
+                ImGui::TextDisabled("G-Buffer の表示はディファード描画のときだけ使えます");
+            }
+            ImGui::Separator();
+            int lumenView = RendererSettings::GetLumenDebugView();
+            ImGui::TextDisabled("GI（Lumen）");
+            const char* lumenViews[] = {"ライティング", "プローブの範囲", "サーフェスキャッシュの範囲"};
+            for (int i = 0; i < 3; ++i)
+            {
+                if (ImGui::MenuItem(lumenViews[i], nullptr, lumenView == i))
+                {
+                    RendererSettings::SetLumenDebugView(i);
+                }
+            }
+            ImGui::EndPopup();
+        }
+        VerticalSeparator();
+    }
 
     // ---- 変形ツール（UE のビューポートツールバーと同じ並び）
     struct Tool
@@ -40888,6 +42779,38 @@ void EditorShell::DrawViewportHeader()
     const float startX = ImGui::GetCursorPosX() + (std::max)(0.0f, ImGui::GetContentRegionAvail().x - rightGroupWidth);
     ImGui::SetCursorPosX(startX);
     ImGui::BeginGroup();
+    // #3 カメラ速度（右ドラッグ中のホイールでも変更）
+    if (prefs.ShowViewportSpeed)
+    {
+        char speedLabel[48];
+        snprintf(speedLabel, sizeof(speedLabel), "%s %.2g##CameraSpeed", EditorIcons::Camera(), prefs.EditorCameraSpeed);
+        if (ImGui::Button(speedLabel))
+        {
+            ImGui::OpenPopup("##CameraSpeedPopup");
+        }
+        ImGui::SetItemTooltip("カメラの移動速度\n右ドラッグ中のマウスホイールでも変更");
+        if (ImGui::BeginPopup("##CameraSpeedPopup"))
+        {
+            ImGui::SetNextItemWidth(180.0f * scale);
+            ImGui::SliderFloat("速度", &prefs.EditorCameraSpeed, 0.03125f, 32.0f, "×%.3g", ImGuiSliderFlags_Logarithmic);
+            static const float presets[] = {0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
+            for (int i = 0; i < IM_ARRAYSIZE(presets); ++i)
+            {
+                char item[16];
+                snprintf(item, sizeof(item), "×%g", presets[i]);
+                if (i > 0)
+                {
+                    ImGui::SameLine();
+                }
+                if (ImGui::SmallButton(item))
+                {
+                    prefs.EditorCameraSpeed = presets[i];
+                }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+    }
     SnapControl("SnapT", "⊞", prefs.Snap.Translate, prefs.Snap.TranslateStep, kTranslateSteps,
                 IM_ARRAYSIZE(kTranslateSteps), "%.2f", "移動スナップ（Ctrl で反転）");
     ImGui::SameLine();
@@ -41536,6 +43459,10 @@ class EditorShell
     static void DrawViewMenuItems();
     static void OpenCommandPalette();
     static void ToggleShortcutHelp();
+    // #16 コマンドのショートカット表示（ユーザー割り当てがあればそれ、無ければ既定）
+    static const char* Shortcut(const char* category, const char* label, const char* fallback);
+    static void LoadKeymap();
+    static void DrawKeymapEditor(); // F1 の「割り当て」タブ
 
     // ---- ビューポート
     static void DrawViewportHeader();
@@ -41552,10 +43479,16 @@ class EditorShell
 
   private:
     static void SaveSceneAndReferences(bool saveAs);
+    // コマンド一覧（コマンド検索 / キー割り当て / ユーザーショートカットの実行で共通）
+    static void BuildCommandList(void* output);
+    static void RunUserShortcuts();
 };
+
 
 ===== FILE: source\editor\editorwidgets.cpp =====
 #include "pch.h"
+#include "editorpreferences.h"
+#include "editoricons.h"
 #include "spatialupscaler.h"
 #include "graphicsdevice.h"
 #include "transformmath.h"
@@ -41730,7 +43663,118 @@ namespace EditorWidgets
         return TransformMath::World(transform);
     }
 
-    bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue, float maxValue)
+    bool ResetButton(const char* id, bool modified, const char* tooltip)
+    {
+        ImGui::PushID(id);
+        ImGui::BeginDisabled(!modified);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        const bool pressed = ImGui::Button(EditorIcons::Undo(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        if (modified)
+        {
+            ImGui::SetItemTooltip("%s", tooltip);
+        }
+        ImGui::PopID();
+        return pressed;
+    }
+
+    namespace
+    {
+        InspectorCategory CategoryOf(const char* label)
+        {
+            static const struct
+            {
+                const char* Label;
+                InspectorCategory Category;
+            } kMap[] = {
+                {"トランスフォーム", InspectorCategory::Transform}, {"AABB", InspectorCategory::Transform},
+                {"マテリアル", InspectorCategory::Material},         {"Materials", InspectorCategory::Material},
+                {"ライト", InspectorCategory::Rendering},            {"Sun", InspectorCategory::Rendering},
+                {"カメラ", InspectorCategory::Rendering},            {"LOD", InspectorCategory::Rendering},
+                {"スプライト", InspectorCategory::Rendering},        {"物理設定", InspectorCategory::Physics},
+            };
+            for (const auto& entry : kMap)
+            {
+                if (strcmp(entry.Label, label) == 0)
+                {
+                    return entry.Category;
+                }
+            }
+            return InspectorCategory::Other;
+        }
+
+        // マテリアルの中のセクション（親の「マテリアル」が表示されていれば常に表示）
+        bool IsNestedSection(const char* label)
+        {
+            static const char* const kNested[] = {"シェーディングパラメータ", "ディファード Toon / PBR", "影", "ライティング",
+                                                  "肌"};
+            for (const char* nested : kNested)
+            {
+                if (strcmp(nested, label) == 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    } // namespace
+
+    void DrawInspectorFilterBar()
+    {
+        static const char* const kNames[] = {"すべて", "トランスフォーム", "マテリアル", "レンダリング", "物理", "その他"};
+        DrawSearchField("InspectorSearch", "プロパティのセクションを検索...", g_InspectorFilter);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+        for (int i = 0; i < static_cast<int>(InspectorCategory::Count); ++i)
+        {
+            if (i > 0)
+            {
+                ImGui::SameLine(0.0f, 2.0f);
+                if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(kNames[i]).x + 12.0f)
+                {
+                    ImGui::NewLine();
+                }
+            }
+            const bool active = static_cast<int>(g_InspectorCategory) == i;
+            if (active)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, EditorPreferences::Accent());
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            }
+            if (ImGui::Button(kNames[i]))
+            {
+                g_InspectorCategory = static_cast<InspectorCategory>(i);
+            }
+            if (active)
+            {
+                ImGui::PopStyleColor(2);
+            }
+        }
+        ImGui::PopStyleVar();
+    }
+
+    bool InspectorSection(const char* label, ImGuiTreeNodeFlags flags)
+    {
+        if (g_InspectorFiltering && !IsNestedSection(label))
+        {
+            if (g_InspectorCategory != InspectorCategory::All && CategoryOf(label) != g_InspectorCategory)
+            {
+                return false;
+            }
+            if (g_InspectorFilter.IsActive())
+            {
+                if (!g_InspectorFilter.PassFilter(label))
+                {
+                    return false;
+                }
+                ImGui::SetNextItemOpen(true); // 検索で見つかったセクションは開く
+            }
+        }
+        return ImGui::CollapsingHeader(label, flags);
+    }
+
+    bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue, float maxValue,
+                        const float* defaults)
     {
         bool changed = false;
         ImGui::PushID(label);
@@ -41740,7 +43784,7 @@ namespace EditorWidgets
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.025f, 0.027f, 0.030f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.050f, 0.055f, 0.064f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.070f, 0.082f, 0.100f, 1.00f));
-        if (ImGui::BeginTable("AxisFloat3", 4, ImGuiTableFlags_SizingStretchProp))
+        if (ImGui::BeginTable("AxisFloat3", defaults ? 5 : 4, ImGuiTableFlags_SizingStretchProp))
         {
             const char* axisIds[3] = {"##R", "##G", "##B"};
             const ImU32 axisColors[3] = {ImGui::GetColorU32(ImVec4(0.86f, 0.18f, 0.14f, 1.00f)),
@@ -41751,6 +43795,10 @@ namespace EditorWidgets
             ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("G", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("B", ImGuiTableColumnFlags_WidthStretch);
+            if (defaults)
+            {
+                ImGui::TableSetupColumn("Reset", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+            }
             ImGui::TableNextRow();
 
             ImGui::TableSetColumnIndex(0);
@@ -41786,6 +43834,19 @@ namespace EditorWidgets
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 changed |= ImGui::DragFloat(axisIds[i], &values[i], speed, minValue, maxValue, "%.3f");
             }
+            if (defaults)
+            {
+                ImGui::TableNextColumn();
+                const bool modified = fabsf(values[0] - defaults[0]) > 1e-5f || fabsf(values[1] - defaults[1]) > 1e-5f ||
+                                      fabsf(values[2] - defaults[2]) > 1e-5f;
+                if (ResetButton("##Reset", modified))
+                {
+                    values[0] = defaults[0];
+                    values[1] = defaults[1];
+                    values[2] = defaults[2];
+                    changed = true;
+                }
+            }
             ImGui::EndTable();
         }
         ImGui::PopStyleColor(3);
@@ -41794,10 +43855,11 @@ namespace EditorWidgets
         return changed;
     }
 
-    bool DrawAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue)
+    bool DrawAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue,
+                        const float* defaults)
     {
         float values[3] = {value.x, value.y, value.z};
-        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue))
+        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue, defaults))
         {
             return false;
         }
@@ -41961,10 +44023,11 @@ namespace EditorWidgets
         return XMFLOAT3(0.0f, 0.0f, 0.0f);
     }
 
-    bool DrawScaleAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue)
+    bool DrawScaleAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue,
+                             const float* defaults)
     {
         float values[3] = {value.x, value.y, value.z};
-        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue))
+        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue, defaults))
         {
             return false;
         }
@@ -42148,6 +44211,7 @@ namespace EditorWidgets
 
 } // 名前空間 EditorWidgets の終わり。
 
+
 ===== FILE: source\editor\editorwidgets.h =====
 #pragma once
 #include "imguimanager.h"
@@ -42155,19 +44219,44 @@ namespace EditorWidgets
 
 namespace EditorWidgets
 {
-    inline const ImVec4 kPrefabColor{0.48f, 0.78f, 1.0f, 1.0f};
+    inline const ImVec4 kPrefabColor{0.48f, 0.78f, 1.0f, 1.0f}; // 旧名。EditorPreferences::PrefabColor() を使う
+
+    // ---- #6 インスペクターの検索とカテゴリ
+    enum class InspectorCategory : int
+    {
+        All = 0,
+        Transform,
+        Material,
+        Rendering,
+        Physics,
+        Other,
+        Count
+    };
+    inline InspectorCategory g_InspectorCategory = InspectorCategory::All;
+    inline ImGuiTextFilter g_InspectorFilter;
+    inline bool g_InspectorFiltering = false; // DrawInspectorWindow の間だけ true（ほかの窓では絞り込まない）
+    // インスペクター上部の検索欄とカテゴリのタブ
+    void DrawInspectorFilterBar();
+    // CollapsingHeader の代わり。カテゴリ / 検索に合わないセクションは描かずに false を返す
+    bool InspectorSection(const char* label, ImGuiTreeNodeFlags flags = 0);
+    // 既定値に戻すボタン（値が既定と違うときだけ有効）。押されたら true
+    bool ResetButton(const char* id, bool modified, const char* tooltip = "既定値に戻す");
     inline constexpr float kRadToDeg = 180.0f / XM_PI;
     inline constexpr float kDegToRad = XM_PI / 180.0f;
     void DrawSearchField(const char* id, const char* hint, ImGuiTextFilter& filter);
     void DrawUpscaleControls();
     XMMATRIX BuildWorldMatrix(const TransformComponent& transform);
-    bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue = 0.0f, float maxValue = 0.0f);
-    bool DrawAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue = 0.0f, float maxValue = 0.0f);
+    // defaults を渡すと、行の右端に「既定値に戻す」ボタンを付ける（#6）
+    bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue = 0.0f, float maxValue = 0.0f,
+                        const float* defaults = nullptr);
+    bool DrawAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue = 0.0f, float maxValue = 0.0f,
+                        const float* defaults = nullptr);
     bool DrawMaterialPartParams(const char* label, MaterialPartParams& params);
     XMFLOAT3 ClampScale(const float* scale, bool swapScaleYZ);
     bool ShouldConvertModelByPath(const filesystem::path& path);
     XMFLOAT3 GetDefaultModelRotationByPath(const filesystem::path& path, bool isConvert);
-    bool DrawScaleAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue);
+    bool DrawScaleAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue,
+                             const float* defaults = nullptr);
     void DrawFpsMeter();
     ImGuizmo::OPERATION GetGizmoOperationFromIndex(int operation);
     const char* GetGizmoOperationLabel(int operation);
@@ -42176,6 +44265,7 @@ namespace EditorWidgets
     void ApplyLightEntityToRuntime(EntityID entity);
     void RefreshLightEntityName(EntityID entity, LightType type);
 } // 名前空間 EditorWidgets の終わり。
+
 
 ===== FILE: source\editor\editorworkspace.cpp =====
 #include "pch.h"
@@ -42361,6 +44451,38 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     const auto label = registry.AreaTitle(*area);
     // Area owns visibility. Changing editor type does not close its source editor's other areas.
     const bool expanded = ImGui::Begin(label.c_str(), area->Visible, flags);
+    // #1 UE と同じく、タブ（ドッキング時）/ タイトルバーの右クリックでエディタータイプの切り替えと最大化。
+    //  Begin 直後の「最後のアイテム」はドッキング中ならタブ、浮いていればタイトルバー
+    if (ImGui::BeginPopupContextItem("##AreaTabMenu"))
+    {
+        const auto selectedType = registry.m_AreaTypes.find(area->Id);
+        const auto& currentType = selectedType == registry.m_AreaTypes.end() ? area->Id : selectedType->second;
+        ImGui::TextDisabled("エディタータイプ");
+        for (const auto& type : registry.m_Windows)
+        {
+            if (!type.Draw)
+            {
+                continue;
+            }
+            if (ImGui::MenuItem(type.Label.c_str(), nullptr, type.Id == currentType))
+            {
+                registry.m_PendingTypes[area->Id] = type.Id;
+            }
+        }
+        ImGui::Separator();
+        const bool maximizedNow = workspaces.IsMaximized(area->Id);
+        if (ImGui::MenuItem(maximizedNow ? "元の配置に戻す" : "この領域を最大化", "Ctrl+Space"))
+        {
+            workspaces.RequestMaximize(area->Id);
+        }
+        ImGui::MenuItem("パネルヘッダーを表示", nullptr, &EditorPreferences::Get().ShowAreaHeaders);
+        ImGui::Separator();
+        if (ImGui::MenuItem("閉じる"))
+        {
+            *area->Visible = false;
+        }
+        ImGui::EndPopup();
+    }
     if (!*area->Visible && workspaces.IsMaximized(area->Id))
     {
         workspaces.RequestMaximize(area->Id);
@@ -42396,7 +44518,7 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     }
     if (!EditorPreferences::Get().ShowAreaHeaders && !workspaces.IsMaximized(area->Id))
     {
-        // ヘッダー非表示（設定）時は最大化している領域以外ではヘッダー行を省略する。Ctrl+Space は有効
+        // ヘッダー非表示（既定）：タブの右クリックで切り替え / 最大化。Ctrl+Space も有効
         return true;
     }
     // Blender のエリアヘッダーのように、1 行・小さめのフレームで表示する
@@ -42721,6 +44843,26 @@ void EditorWorkspaceManager::BeginFrame()
                 }
                 break;
             }
+            case Action::SaveLayout: {
+                // CaptureActive 済み（BeginFrame の先頭）なので、アクティブの現在の配置がそのまま入っている
+                auto& workspace = m_Workspaces[target];
+                workspace.SavedLayout = workspace.Layout;
+                workspace.SavedVisibleWindows = workspace.VisibleWindows;
+                workspace.SavedAreaTypes = workspace.AreaTypes;
+                m_ForceSave = true;
+                break;
+            }
+            case Action::RestoreSaved: {
+                auto& workspace = m_Workspaces[target];
+                if (!workspace.SavedLayout.empty())
+                {
+                    workspace.Layout = workspace.SavedLayout;
+                    workspace.VisibleWindows = workspace.SavedVisibleWindows;
+                    workspace.AreaTypes = workspace.SavedAreaTypes;
+                    apply = target == m_Active;
+                }
+                break;
+            }
             case Action::Reset: {
                 const auto preset = MakeWorkspace(m_Workspaces[target].Name, m_Workspaces[target].Preset);
                 m_Workspaces[target].VisibleWindows = preset.VisibleWindows;
@@ -42814,7 +44956,8 @@ void EditorWorkspaceManager::DrawTabs(float reserveRight)
                 ImVec2(start.x, start.y + ImGui::GetFrameHeight() - 2.0f * uiScale),
                 ImVec2(start.x + width, start.y + ImGui::GetFrameHeight()), ImGui::GetColorU32(accent));
         }
-        ImGui::SetItemTooltip("Workspace: %s\n右クリック: 名前変更 / 複製 / 移動 / 削除", workspace.Name.c_str());
+        ImGui::SetItemTooltip("Workspace: %s\n右クリック: 名前変更 / 複製 / 移動 / レイアウトの保存・復元 / 削除",
+                              workspace.Name.c_str());
         if (ImGui::BeginPopupContextItem("WorkspaceMenu"))
         {
             if (ImGui::IsWindowAppearing())
@@ -42843,6 +44986,16 @@ void EditorWorkspaceManager::DrawTabs(float reserveRight)
                 Queue(Action::MoveRight, workspace.Id);
             }
             ImGui::Separator();
+            // #15 レイアウトの保存 / 復元（Workspace ごと）
+            if (ImGui::MenuItem("現在のレイアウトを保存", nullptr, false, i == m_Active))
+            {
+                Queue(Action::SaveLayout, workspace.Id);
+            }
+            ImGui::SetItemTooltip("パネルの配置・表示・エディタータイプを、この Workspace の保存レイアウトとして記録します");
+            if (ImGui::MenuItem("保存したレイアウトに戻す", nullptr, false, !workspace.SavedLayout.empty()))
+            {
+                Queue(Action::RestoreSaved, workspace.Id);
+            }
             if (ImGui::MenuItem("初期レイアウトに戻す"))
             {
                 Queue(Action::Reset, workspace.Id);
@@ -43037,6 +45190,28 @@ bool EditorWorkspaceManager::Load()
         workspace.Name = value["name"].asString();
         workspace.Preset = value["preset"].asString();
         workspace.Layout = value["layout"].asString();
+        if (value["saved"].isObject())
+        {
+            const auto& saved = value["saved"];
+            workspace.SavedLayout = saved.get("layout", "").asString();
+            for (const auto& visible : saved["visible"])
+            {
+                if (visible.isString())
+                {
+                    workspace.SavedVisibleWindows.push_back(visible.asString());
+                }
+            }
+            if (saved["types"].isObject())
+            {
+                for (const auto& area : saved["types"].getMemberNames())
+                {
+                    if (saved["types"][area].isString())
+                    {
+                        workspace.SavedAreaTypes[area] = saved["types"][area].asString();
+                    }
+                }
+            }
+        }
         if (value["types"].isObject())
         {
             for (const auto& area : value["types"].getMemberNames())
@@ -43105,6 +45280,22 @@ void EditorWorkspaceManager::Save()
         {
             value["visible"].append(id);
         }
+        if (!workspace.SavedLayout.empty())
+        {
+            Json::Value saved(Json::objectValue);
+            saved["layout"] = workspace.SavedLayout;
+            saved["visible"] = Json::Value(Json::arrayValue);
+            for (const auto& id : workspace.SavedVisibleWindows)
+            {
+                saved["visible"].append(id);
+            }
+            saved["types"] = Json::Value(Json::objectValue);
+            for (const auto& [area, type] : workspace.SavedAreaTypes)
+            {
+                saved["types"][area] = type;
+            }
+            value["saved"] = std::move(saved);
+        }
         document["workspaces"].append(std::move(value));
     }
     Json::StreamWriterBuilder writer;
@@ -43168,6 +45359,7 @@ void EditorWorkspaceManager::Shutdown()
     m_MaximizedLayout.clear();
     m_LastSaved.clear();
 }
+
 
 
 ===== FILE: source\editor\editorworkspace.h =====
@@ -43287,6 +45479,10 @@ class EditorWorkspaceManager
         std::string Layout;
         std::vector<std::string> VisibleWindows;
         std::unordered_map<std::string, std::string> AreaTypes;
+        // #15 ユーザーが保存したレイアウト（「保存したレイアウトに戻す」で復元。空 = 未保存）
+        std::string SavedLayout;
+        std::vector<std::string> SavedVisibleWindows;
+        std::unordered_map<std::string, std::string> SavedAreaTypes;
     };
     enum class Action
     {
@@ -43298,7 +45494,9 @@ class EditorWorkspaceManager
         MoveLeft,
         MoveRight,
         Reset,
-        Maximize
+        Maximize,
+        SaveLayout,
+        RestoreSaved
     };
     void CaptureActive();
     void ApplyActive();
@@ -43329,6 +45527,7 @@ class EditorWorkspaceManager
     ImVec2 m_AreaWorkSize{};
     char m_Rename[128]{};
 };
+
 
 
 ===== FILE: source\editor\editorworkspaces.cpp =====
@@ -43650,6 +45849,7 @@ VertexOutput main(VertexInput input)
 #include <ImGuizmo.h>
 #include "rendertargets.h"
 #include "input.h"
+#include "editorvisibility.h"
 #include "frameconstants.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
@@ -43985,6 +46185,22 @@ void ImGuiManager::Update()
     if (ViewportInputGate::g_RightLookActive)
     {
         ImGui::SetMouseCursor(ImGuiMouseCursor_None); // フライ中はカーソルを隠す（UE と同じ）
+        // #3 右ドラッグ中のホイールでカメラ速度を変える（UE と同じ）
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f)
+        {
+            auto& speed = EditorPreferences::Get().EditorCameraSpeed;
+            speed = std::clamp(speed * powf(1.25f, wheel), 0.03125f, 32.0f);
+        }
+    }
+    ViewportInputGate::g_EditorCameraSpeedScale = EditorPreferences::Get().EditorCameraSpeed;
+    // #5 アウトライナーの非表示はエディター上だけ（再生中はすべて描く）
+    EditorVisibility::SetEnabled(!ProjectManager::IsPlaying());
+    // 削除されたエンティティの表示 / ロック状態を捨てる（ID の再利用で別物に引き継がないように）
+    if (!EditorVisibility::g_Hidden.empty() || !EditorVisibility::g_Locked.empty())
+    {
+        std::erase_if(EditorVisibility::g_Hidden, [](uint32_t entity) { return !Registry::IsAlive(entity); });
+        std::erase_if(EditorVisibility::g_Locked, [](uint32_t entity) { return !Registry::IsAlive(entity); });
     }
     UpdateSceneNavigation();
     // 右クリックの視点移動中はカーソルをビューポート内にとどめる（UE と同じ）
@@ -44070,7 +46286,7 @@ void ImGuiManager::DrawEditorMainMenu()
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("終了", "Alt+F4"))
+        if (ImGui::MenuItem("終了", EditorShell::Shortcut("ファイル", "終了", "Alt+F4")))
         {
             RequestQuit();
         }
@@ -44078,25 +46294,25 @@ void ImGuiManager::DrawEditorMainMenu()
     }
     if (ImGui::BeginMenu("編集"))
     {
-        if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, !m_UndoStack.empty() || m_HasPendingUndo))
+        if (ImGui::MenuItem("元に戻す", EditorShell::Shortcut("編集", "元に戻す", "Ctrl+Z"), false, !m_UndoStack.empty() || m_HasPendingUndo))
         {
             Undo();
         }
-        if (ImGui::MenuItem("やり直し", "Ctrl+Y", false, !m_RedoStack.empty()))
+        if (ImGui::MenuItem("やり直し", EditorShell::Shortcut("編集", "やり直し", "Ctrl+Y"), false, !m_RedoStack.empty()))
         {
             Redo();
         }
         ImGui::Separator();
         const bool hasSelection = m_SelectedEntity != g_kINVALID_ENTITY && Registry::IsAlive(m_SelectedEntity);
-        if (ImGui::MenuItem("複製", "Ctrl+D", false, hasSelection))
+        if (ImGui::MenuItem("複製", EditorShell::Shortcut("編集", "複製", "Ctrl+D"), false, hasSelection))
         {
             DuplicateSelectedEntity();
         }
-        if (ImGui::MenuItem("削除", "Delete", false, hasSelection))
+        if (ImGui::MenuItem("削除", EditorShell::Shortcut("編集", "削除", "Delete"), false, hasSelection))
         {
             DeleteSelectedEntity();
         }
-        if (ImGui::MenuItem("選択解除", nullptr, false, hasSelection))
+        if (ImGui::MenuItem("選択解除", EditorShell::Shortcut("編集", "選択解除", ""), false, hasSelection))
         {
             SelectEntity(g_kINVALID_ENTITY);
         }
@@ -44105,7 +46321,7 @@ void ImGuiManager::DrawEditorMainMenu()
         {
             EditorWorkspaceManager::Get().Registry().ShowEditorType("history");
         }
-        if (ImGui::MenuItem("エディター設定", "Ctrl+,"))
+        if (ImGui::MenuItem("エディター設定", EditorShell::Shortcut("編集", "エディター設定", "Ctrl+,")))
         {
             EditorWorkspaceManager::Get().Registry().ShowEditorType("preferences");
         }
@@ -44148,7 +46364,7 @@ void ImGuiManager::DrawEditorMainMenu()
     }
     if (ImGui::BeginMenu("ヘルプ"))
     {
-        if (ImGui::MenuItem("ショートカット一覧", "F1"))
+        if (ImGui::MenuItem("ショートカット一覧 / キー割り当て", EditorShell::Shortcut("表示", "ショートカット一覧", "F1")))
         {
             EditorShell::ToggleShortcutHelp();
         }
@@ -44903,6 +47119,7 @@ class ImGuiManager
 
 ===== FILE: source\editor\materialgraphbake.cpp =====
 #include "pch.h"
+#include "backgroundtasks.h"
 #include "materialgraphbake.h"
 #include "materialgraphtextures.h"
 #include "proceduralio.h"
@@ -45938,7 +48155,10 @@ namespace MaterialGraphLive
             }
             const float rate = std::clamp(entry.Data->Graph.Settings.LiveRate, 1.0f, 120.0f);
             entry.NextTime = time + 1.0 / rate;
-            entry.Job = std::async(std::launch::async, Evaluate, entry.Data, entry.Textures, static_cast<float>(time));
+            entry.Job = std::async(std::launch::async, [data = entry.Data, textures = entry.Textures, time] {
+                BackgroundTasks::Scope task("ライブプレビューの評価");
+                return Evaluate(data, textures, static_cast<float>(time));
+            });
         }
     }
 
@@ -45970,6 +48190,7 @@ namespace MaterialGraphLive
         return found != g_Entries.end() ? found->second.LastSeconds : 0.0;
     }
 } // namespace MaterialGraphLive
+
 
 
 ===== FILE: source\editor\materialgraphbake.h =====
@@ -46095,6 +48316,7 @@ namespace MaterialGraphLive
 
 ===== FILE: source\editor\materialgrapheditor.cpp =====
 #include "pch.h"
+#include "backgroundtasks.h"
 #include <cstdarg>
 #include <imgui_internal.h>
 #include <limits>
@@ -47791,6 +50013,7 @@ namespace
                         document.NodeStatus = "作成中...";
                         request.Gpu = SubmitNodeBake(request);
                         document.NodeJob = std::async(std::launch::async, [request = std::move(request)] {
+                            BackgroundTasks::Scope task("テクスチャの作成");
                             return MaterialGraphBake::RunNode(request);
                         });
                     }
@@ -47908,6 +50131,7 @@ namespace
                         document.NodeStatus = "変換中...";
                         request.Gpu = SubmitNodeBake(request);
                         document.NodeJob = std::async(std::launch::async, [request = std::move(request)] {
+                            BackgroundTasks::Scope task("テクスチャの作成");
                             return MaterialGraphBake::RunNode(request);
                         });
                     }
@@ -49864,6 +52088,7 @@ namespace
         document.BakeStatus = "ベイク中: " + SlotList(request.Mask) + "...";
         request.Gpu = SubmitBake(request); // GPU で評価（できないグラフは CPU）
         document.BakeJob = std::async(std::launch::async, [request = std::move(request)] {
+            BackgroundTasks::Scope task("マテリアルのベイク");
             return MaterialGraphBake::Run(request);
         });
     }
@@ -50098,6 +52323,7 @@ void MaterialGraphEditor::Draw(AssetHandle material)
         {
             document.CompilingRevision = document.Graph.Revision;
             document.ShaderJob = std::async(std::launch::async, [program = document.Program] {
+                BackgroundTasks::Scope task("シェーダーのコンパイル");
                 return MaterialGraphShaderCompiler::Compile(program);
             });
             document.Status = "シェーダーをコンパイル中...";
@@ -50394,6 +52620,7 @@ void MaterialGraphEditor::Shutdown()
     focusedMaterial = 0;
     nextRecoverySave = 0;
 }
+
 
 
 
@@ -56390,8 +58617,66 @@ void ProjectManager::Stop()
         return;
     }
     RestoreRuntimeState();
+    if (s_RestoreMainCameraPending)
+    {
+        // PlayWithCamera で切り替えたメインゲームカメラを戻す（InputComponent の有効状態も戻る）
+        s_RestoreMainCameraPending = false;
+        if (s_RestoreMainCamera != g_kINVALID_ENTITY && Registry::IsAlive(s_RestoreMainCamera))
+        {
+            Camera::SetMainGameCamera(s_RestoreMainCamera);
+        }
+        s_RestoreMainCamera = g_kINVALID_ENTITY;
+    }
     Camera::NotifyCut();
     s_State = ProjectPlayState::Edit;
+}
+
+void ProjectManager::PlayFromEditorView()
+{
+    if (s_State != ProjectPlayState::Edit)
+    {
+        return;
+    }
+    const EntityID editorCamera = Camera::GetEditorCameraEntity();
+    const bool hasEditorView = ComponentManager::HasComponent<TransformComponent>(editorCamera);
+    const TransformComponent editorTransform =
+        hasEditorView ? ComponentManager::GetComponentUnchecked<TransformComponent>(editorCamera) : TransformComponent{};
+    Play(); // ここでカメラの状態を記録するので、下で動かしても停止で元に戻る
+    const EntityID gameCamera = Camera::GetGameCameraEntity();
+    if (!hasEditorView || gameCamera == g_kINVALID_ENTITY || gameCamera == editorCamera ||
+        !ComponentManager::HasComponent<TransformComponent>(gameCamera) ||
+        !ComponentManager::HasComponent<CameraComponent>(gameCamera))
+    {
+        return; // ゲームカメラが無い：通常の再生
+    }
+    auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(gameCamera);
+    auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(gameCamera);
+    if (camera.Animation.IsActive)
+    {
+        return; // カメラアニメーションで動くカメラは、その位置を優先する
+    }
+    transform.Position = editorTransform.Position;
+    transform.Rotation = editorTransform.Rotation;
+    transform.IsDirty = true;
+    const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(transform.Rotation.x, transform.Rotation.y, 0.0f);
+    const XMVECTOR forward = XMVector3TransformNormal(XMVectorSet(0, 0, 1, 0), rotation);
+    XMStoreFloat3(&camera.Target, XMVectorAdd(XMLoadFloat3(&transform.Position), forward));
+    Camera::NotifyCut();
+}
+
+void ProjectManager::PlayWithCamera(EntityID cameraEntity)
+{
+    if (s_State != ProjectPlayState::Edit || !Registry::IsAlive(cameraEntity) ||
+        !ComponentManager::HasComponent<CameraComponent>(cameraEntity) ||
+        cameraEntity == Camera::GetEditorCameraEntity())
+    {
+        return;
+    }
+    s_RestoreMainCamera = Camera::GetGameCameraEntity();
+    s_RestoreMainCameraPending = true;
+    Play(); // CameraComponent（IsGameCamera / IsMainGameCamera）はここで記録され、停止で戻る
+    Camera::SetMainGameCamera(cameraEntity);
+    Camera::NotifyCut();
 }
 
 void ProjectManager::TogglePlay()
@@ -56418,6 +58703,7 @@ void ProjectManager::TogglePause()
         s_State = ProjectPlayState::Playing;
     }
 }
+
 
 ===== FILE: source\editor\projectmanager.h =====
 #pragma once
@@ -56463,6 +58749,8 @@ class ProjectManager final
     inline static uint64_t s_PlaySession = 0;
     inline static DayNightCycle::Settings s_EditorDayNight{};
     inline static vector<LocalHeightFogVolume> s_EditorFog{};
+    inline static EntityID s_RestoreMainCamera = g_kINVALID_ENTITY; // PlayWithCamera の前のメインゲームカメラ
+    inline static bool s_RestoreMainCameraPending = false;
 
     static void CaptureRuntimeState();
     static void RestoreRuntimeState();
@@ -56475,6 +58763,10 @@ class ProjectManager final
     static void Stop();
     static void TogglePlay();
     static void TogglePause();
+    // #12 ここから再生：今のビューポート（エディターカメラ）の位置と向きにゲームカメラを置いて再生
+    static void PlayFromEditorView();
+    // #12 選択中のカメラで再生：停止すると元のメインゲームカメラに戻す
+    static void PlayWithCamera(EntityID camera);
 
     static ProjectPlayState GetPlayState()
     {
@@ -56501,6 +58793,7 @@ class ProjectManager final
         return s_PlaySession;
     }
 };
+
 
 ===== FILE: source\editor\sequencerbackend.h =====
 #pragma once
@@ -97472,6 +99765,7 @@ class GpuObjectCulling final
 
 ===== FILE: source\rendering\gpuscene\gpuscene.cpp =====
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "cpuculling.h"
 #include "gpuscene.h"
@@ -97779,7 +100073,8 @@ namespace
     void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
     {
         auto& scene = Scene();
-        if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity))
+        if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity) ||
+            EditorVisibility::IsHidden(entity)) // #5 アウトライナーで非表示
         {
             RemoveEntity(entity);
             return;
@@ -98532,6 +100827,7 @@ void GpuScene::DrawDebug()
         ImGui::TreePop();
     }
 }
+
 
 
 ===== FILE: source\rendering\gpuscene\gpuscene.h =====
@@ -129278,6 +131574,7 @@ class Raytracing
 #include "vertexdeformation.h"
 #include "texturemanager.h"
 #include "materialgraphshader.h"
+#include "editorvisibility.h"
 
 namespace
 {
@@ -129439,6 +131736,10 @@ namespace
 
     bool IsOpaqueCaster(EntityID entity)
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            return false; // #5 アウトライナーで非表示（影 / GI / 反射からも外す）
+        }
         if (ComponentManager::HasComponent<MeshComponent>(entity) &&
             ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
         {
@@ -145559,6 +147860,10 @@ void CameraSystem::Update()
                 {
                     speed *= 4.0f;
                 }
+                if (ViewportInputGate::g_EditorDrivesInput)
+                {
+                    speed *= ViewportInputGate::g_EditorCameraSpeedScale; // #3 カメラ速度
+                }
                 const XMVECTOR delta = XMVectorScale(direction, speed * World::GetDeltaTime() * 60.0f);
                 XMVECTOR position = XMVectorAdd(XMLoadFloat3(&transform.Position), delta);
                 XMStoreFloat3(&transform.Position, position);
@@ -145631,6 +147936,7 @@ void CameraSystem::Update()
     }
     previousActiveCamera = activeCamera;
 }
+
 
 ===== FILE: source\systems\camerasystem.h =====
 #pragma once
@@ -146595,6 +148901,7 @@ class InputSystem : public SystemBase
 
 ===== FILE: source\systems\instancingsystem.cpp =====
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "rendering/scenedepth.h"
 #include "materialmanager.h"
@@ -147343,6 +149650,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     // アニメーションモデル。
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
             !LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity))
         {
@@ -147382,6 +149693,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     // 静的モデル。
     for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
             !LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity))
         {
@@ -147421,6 +149736,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     // インデックスを使わない描画（スプライト・メッシュ）。
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
         if (CanInstance(entity) && ShouldCastShadow(entity) && sprite.Is3D &&
             LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity) &&
@@ -147433,6 +149752,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     }
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
             ComponentManager::HasComponent<StaticModelComponent>(entity))
         {
@@ -147653,6 +149976,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // スプライト。
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity))
         {
             continue;
@@ -147732,6 +150059,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // メッシュ。
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!ctx.transparentPass && GPUDrivenRenderer::HandlesEntity(entity))
         {
             continue;
@@ -147816,6 +150147,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // アニメーションモデル。
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity))
         {
             continue;
@@ -147935,6 +150270,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
                                     : World::GetView<StaticModelComponent, TransformComponent>();
     for (EntityID entity : staticEntities)
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity))
         {
             continue;
@@ -148511,6 +150850,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 }
 
 
+
 ===== FILE: source\systems\instancingsystem.h =====
 #pragma once
 
@@ -149033,6 +151373,7 @@ namespace Mekakure
 
 ===== FILE: source\systems\modelsystem.cpp =====
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "envflags.h"
 #include "transmittanceshadows.h"
@@ -149558,11 +151899,19 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
     };
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
         collect(entity, component.ModelId >= 0 ? ModelManager::GetAnimModel(component.ModelId) : nullptr);
     }
     for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
         collect(entity, component.ModelId >= 0 ? ModelManager::GetStaticModel(component.ModelId) : nullptr);
     }
@@ -149878,6 +152227,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID i : World::GetView<AnimationModelComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
             if (animComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
                 !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
@@ -149956,6 +152309,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID i : World::GetView<StaticModelComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
             if (staticComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
                 !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
@@ -150040,6 +152397,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID entity : World::GetView<AnimationModelComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
             if (MaterialSystem::IsTransparent(entity))
             {
@@ -150081,6 +152442,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID entity : World::GetView<StaticModelComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             if (MeshShaderRenderer::IsActive() && GPUDrivenRenderer::HandlesEntity(entity))
             {
                 continue;
@@ -150149,6 +152514,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         auto animEntities = World::GetView<AnimationModelComponent>();
         for (EntityID i : animEntities)
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
             if (animComp.ModelId < 0)
             {
@@ -150520,6 +152889,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         m_StaticDrawCalls.reserve(staticEntities.size());
         for (EntityID i : staticEntities)
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             const bool gpuBaseDrawn = !drawTransparent && GPUDrivenRenderer::HandlesEntity(i);
             if (gpuBaseDrawn && !ShouldDrawToonOutline(i))
             {
@@ -150840,6 +153213,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
     }
 
 }
+
 
 
 
@@ -152524,6 +154898,7 @@ class ProceduralSystem final : public SystemBase
 
 ===== FILE: source\systems\rendersystem.cpp =====
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
@@ -152737,6 +155112,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
         for (EntityID i : World::GetView<SpriteComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
             if (!sprite.Is3D || sprite.VertexBufferView.BufferLocation == 0 ||
                 !Registry::HasComponent(i, ComponentType::TRANSFORM) || !ShouldCastShadow(i, transmission) ||
@@ -152754,6 +155133,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
         for (EntityID i : World::GetView<MeshComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             if (Registry::HasComponent(i, ComponentType::STATIC_MODEL) ||
                 Registry::HasComponent(i, ComponentType::ANIMATION_MODEL))
             {
@@ -152845,6 +155228,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
         for (EntityID entity : World::GetView<SpriteComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
             if (sprite.Is3D)
             {
@@ -152853,6 +155240,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         }
         for (EntityID entity : World::GetView<MeshComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             if (Registry::HasComponent(entity, ComponentType::STATIC_MODEL) ||
                 Registry::HasComponent(entity, ComponentType::ANIMATION_MODEL))
             {
@@ -152922,6 +155313,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
     for (EntityID i : spriteEntities)
     {
+        if (EditorVisibility::IsHidden(i))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
         if ((renderPass == RenderPass::TransparentScene && !sprite.Is3D) ||
             (renderPass == RenderPass::OverlayScene && sprite.Is3D))
@@ -153140,6 +155535,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
     for (EntityID i : World::GetView<MeshComponent>())
     {
+        if (EditorVisibility::IsHidden(i))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!drawTransparent && drawDeferredOpaque && GPUDrivenRenderer::HandlesEntity(i))
         {
             continue;
@@ -153426,6 +155825,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
     }
     s_MeshShaderDraws = 0;
 }
+
 
 
 

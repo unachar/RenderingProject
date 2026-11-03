@@ -126,6 +126,10 @@ void CameraSystem::Update()
                 {
                     speed *= 4.0f;
                 }
+                if (ViewportInputGate::g_EditorDrivesInput)
+                {
+                    speed *= ViewportInputGate::g_EditorCameraSpeedScale; // #3 カメラ速度
+                }
                 const XMVECTOR delta = XMVectorScale(direction, speed * World::GetDeltaTime() * 60.0f);
                 XMVECTOR position = XMVectorAdd(XMLoadFloat3(&transform.Position), delta);
                 XMStoreFloat3(&transform.Position, position);
@@ -198,3 +202,4 @@ void CameraSystem::Update()
     }
     previousActiveCamera = activeCamera;
 }
+

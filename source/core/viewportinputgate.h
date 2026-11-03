@@ -12,6 +12,8 @@ namespace ViewportInputGate
 {
     inline bool g_EditorDrivesInput = false; // エディターが毎フレーム状態を更新しているか
     inline bool g_RightLookActive = false;   // ビューポートで右ボタンを押し始め、まだ離していない
+    // #3 エディターカメラのフライ速度の倍率（ビューポートのカメラ速度ボタン / 右ドラッグ + ホイール）
+    inline float g_EditorCameraSpeedScale = 1.0f;
 
     inline bool CameraLookActive()
     {
@@ -32,3 +34,4 @@ namespace ViewportInputGate
         }
     }
 } // namespace ViewportInputGate
+

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorpreferences.h"
 #include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
@@ -483,6 +484,7 @@ void ImGuiManager::DrawInspectorWindow()
     }
     if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
     {
+        EditorWidgets::g_InspectorFiltering = false;
         ImGui::SeparatorText("オブジェクト未選択");
         ImGui::TextWrapped(
             "ヒエラルキーまたはシーンビューでオブジェクトを選択すると、ここでプロパティを編集できます。");
@@ -511,7 +513,7 @@ void ImGuiManager::DrawInspectorWindow()
     {
         if (GetPrefabRoot(m_SelectedEntity) != g_kINVALID_ENTITY)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorPreferences::PrefabColor());
         }
         ImGui::TextWrapped("%s", GetEntityDisplayName(m_SelectedEntity));
         if (GetPrefabRoot(m_SelectedEntity) != g_kINVALID_ENTITY)
@@ -520,6 +522,16 @@ void ImGuiManager::DrawInspectorWindow()
         }
         ImGui::TextDisabled("Entity #%u", m_SelectedEntity);
     }
+    // #6 検索欄とカテゴリのタブ（このウィンドウの中だけ絞り込む。End の直前で戻す）
+    EditorWidgets::DrawInspectorFilterBar();
+    EditorWidgets::g_InspectorFiltering = true;
+    struct FilteringScope // どの return でも絞り込みを戻す
+    {
+        ~FilteringScope()
+        {
+            EditorWidgets::g_InspectorFiltering = false;
+        }
+    } filteringScope;
     ImGui::Separator();
 
     if (ImGui::BeginPopupContextWindow("InspectorEntityContext", ImGuiPopupFlags_MouseButtonRight))
@@ -560,20 +572,22 @@ void ImGuiManager::DrawInspectorWindow()
         return;
     }
     if (ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity) &&
-        ImGui::CollapsingHeader("トランスフォーム", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("トランスフォーム", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const auto before = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
         auto transform = before;
         ImGui::TextDisabled("ワールド座標 / 最後に選択したオブジェクトが基準");
         float rotationDeg[3] = {transform.Rotation.x * kRadToDeg, transform.Rotation.y * kRadToDeg,
                                 transform.Rotation.z * kRadToDeg};
-        bool changed = DrawAxisFloat3("位置", transform.Position, 0.01f);
-        if (DrawAxisFloat3("回転", rotationDeg, 0.1f))
+        static const float kZero[3] = {0.0f, 0.0f, 0.0f};
+        static const float kOne[3] = {1.0f, 1.0f, 1.0f};
+        bool changed = DrawAxisFloat3("位置", transform.Position, 0.01f, 0.0f, 0.0f, kZero);
+        if (DrawAxisFloat3("回転", rotationDeg, 0.1f, 0.0f, 0.0f, kZero))
         {
             transform.Rotation = {rotationDeg[0] * kDegToRad, rotationDeg[1] * kDegToRad, rotationDeg[2] * kDegToRad};
             changed = true;
         }
-        changed |= DrawScaleAxisFloat3("スケール", transform.Scale, 0.01f, 0.001f, 100.0f);
+        changed |= DrawScaleAxisFloat3("スケール", transform.Scale, 0.01f, 0.001f, 100.0f, kOne);
         if (changed)
         {
             ApplySelectionTransform(before, transform);
@@ -586,7 +600,7 @@ void ImGuiManager::DrawInspectorWindow()
     }
 
     if (ComponentManager::HasComponent<AABBComponent>(m_SelectedEntity) &&
-        ImGui::CollapsingHeader("AABB", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("AABB", ImGuiTreeNodeFlags_DefaultOpen))
     {
         auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(m_SelectedEntity);
         EntitySnapshot before = CaptureEntity(m_SelectedEntity);
@@ -607,7 +621,10 @@ void ImGuiManager::DrawInspectorWindow()
     DrawMaterialAssetSlots(m_SelectedEntity);
     DrawComponentInspector(m_SelectedEntity);
 
-    ImGui::TextUnformatted("右クリック: カメラ / 左クリック: 選択");
+    if (EditorWidgets::g_InspectorFilter.IsActive() || EditorWidgets::g_InspectorCategory != EditorWidgets::InspectorCategory::All)
+    {
+        ImGui::TextDisabled("絞り込み中：一部のセクションを隠しています");
+    }
     ImGui::End();
 }
 
@@ -849,7 +866,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
         return;
     }
 
-    if (!ImGui::CollapsingHeader("マテリアル", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!EditorWidgets::InspectorSection("マテリアル", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
@@ -1128,7 +1145,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 
     if (!isManualMode && IsModelMaterialEntity(entity))
     {
-        if (ImGui::CollapsingHeader("シェーディングパラメータ", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("シェーディングパラメータ", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool partChanged = false;
             for (int i = 0; i < IM_ARRAYSIZE(shaderClassValues); ++i)
@@ -1148,7 +1165,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 
     if (isManualMode && IsModelMaterialEntity(entity))
     {
-        if (ImGui::CollapsingHeader("ディファード Toon / PBR", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("ディファード Toon / PBR", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool toonChanged = false;
             toonChanged |= ImGui::SliderFloat("法線ブレンド", &material.NormalBlend, 0.0f, 1.0f);
@@ -1162,7 +1179,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
             }
         }
 
-        if (ImGui::CollapsingHeader("影", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("影", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool shadowChanged = false;
             shadowChanged |= ImGui::SliderFloat("影しきい値", &material.ShadowThreshold, 0.0f, 1.0f);
@@ -1178,7 +1195,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
             }
         }
 
-        if (ImGui::CollapsingHeader("ライティング", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("ライティング", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool lightingChanged = false;
             lightingChanged |= ImGui::SliderFloat("リム強度", &material.RimStrength, 0.0f, 2.0f);
@@ -1196,7 +1213,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
             }
         }
 
-        if (ImGui::CollapsingHeader("肌", ImGuiTreeNodeFlags_DefaultOpen))
+        if (EditorWidgets::InspectorSection("肌", ImGuiTreeNodeFlags_DefaultOpen))
         {
             bool skinChanged = false;
             skinChanged |= ImGui::SliderFloat("肌散乱強度", &material.SkinScatterStrength, 0.0f, 3.0f);
@@ -1766,7 +1783,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
         return;
     }
 
-    if (!ImGui::CollapsingHeader("ライト", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!EditorWidgets::InspectorSection("ライト", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
@@ -1964,7 +1981,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<SunComponent>(entity) &&
-        ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("Sun", ImGuiTreeNodeFlags_DefaultOpen))
     {
         auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
         bool sunChanged = false;
@@ -1987,7 +2004,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                                 (ComponentManager::HasComponent<SpriteComponent>(entity) &&
                                  ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D);
 
-    if (ImGui::CollapsingHeader("コンポーネント"))
+    if (EditorWidgets::InspectorSection("コンポーネント"))
     {
         ImGui::Text("エンティティID: %u", entity);
         const char* statusText3;
@@ -2074,7 +2091,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<CameraComponent>(entity) &&
-        ImGui::CollapsingHeader("カメラ", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("カメラ", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
@@ -2275,7 +2292,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<TimelineComponent>(entity) &&
-        ImGui::CollapsingHeader("Timeline", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("Timeline", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
@@ -2783,7 +2800,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<PhysicsComponent>(entity) &&
-        ImGui::CollapsingHeader("物理設定", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("物理設定", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& physics = ComponentManager::GetComponentUnchecked<PhysicsComponent>(entity);
@@ -2967,7 +2984,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
     }
 
     if (ComponentManager::HasComponent<LODComponent>(entity) &&
-        ImGui::CollapsingHeader("LOD", ImGuiTreeNodeFlags_DefaultOpen))
+        EditorWidgets::InspectorSection("LOD", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const EntitySnapshot before = CaptureEntity(entity);
         auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
@@ -3151,7 +3168,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         }
     }
 
-    if (ComponentManager::HasComponent<SpriteComponent>(entity) && ImGui::CollapsingHeader("スプライト"))
+    if (ComponentManager::HasComponent<SpriteComponent>(entity) && EditorWidgets::InspectorSection("スプライト"))
     {
         auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
         ImGui::Checkbox("3D", &sprite.Is3D);
@@ -3161,6 +3178,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
     }
 }
+
 
 
 

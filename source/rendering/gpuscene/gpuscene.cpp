@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "cpuculling.h"
 #include "gpuscene.h"
@@ -306,7 +307,8 @@ namespace
     void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
     {
         auto& scene = Scene();
-        if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity))
+        if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity) ||
+            EditorVisibility::IsHidden(entity)) // #5 アウトライナーで非表示
         {
             RemoveEntity(entity);
             return;
@@ -1059,4 +1061,5 @@ void GpuScene::DrawDebug()
         ImGui::TreePop();
     }
 }
+
 

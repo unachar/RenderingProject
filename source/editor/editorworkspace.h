@@ -114,6 +114,10 @@ class EditorWorkspaceManager
         std::string Layout;
         std::vector<std::string> VisibleWindows;
         std::unordered_map<std::string, std::string> AreaTypes;
+        // #15 ユーザーが保存したレイアウト（「保存したレイアウトに戻す」で復元。空 = 未保存）
+        std::string SavedLayout;
+        std::vector<std::string> SavedVisibleWindows;
+        std::unordered_map<std::string, std::string> SavedAreaTypes;
     };
     enum class Action
     {
@@ -125,7 +129,9 @@ class EditorWorkspaceManager
         MoveLeft,
         MoveRight,
         Reset,
-        Maximize
+        Maximize,
+        SaveLayout,
+        RestoreSaved
     };
     void CaptureActive();
     void ApplyActive();
@@ -156,4 +162,5 @@ class EditorWorkspaceManager
     ImVec2 m_AreaWorkSize{};
     char m_Rename[128]{};
 };
+
 

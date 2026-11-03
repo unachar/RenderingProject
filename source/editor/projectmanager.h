@@ -41,6 +41,8 @@ class ProjectManager final
     inline static uint64_t s_PlaySession = 0;
     inline static DayNightCycle::Settings s_EditorDayNight{};
     inline static vector<LocalHeightFogVolume> s_EditorFog{};
+    inline static EntityID s_RestoreMainCamera = g_kINVALID_ENTITY; // PlayWithCamera の前のメインゲームカメラ
+    inline static bool s_RestoreMainCameraPending = false;
 
     static void CaptureRuntimeState();
     static void RestoreRuntimeState();
@@ -53,6 +55,10 @@ class ProjectManager final
     static void Stop();
     static void TogglePlay();
     static void TogglePause();
+    // #12 ここから再生：今のビューポート（エディターカメラ）の位置と向きにゲームカメラを置いて再生
+    static void PlayFromEditorView();
+    // #12 選択中のカメラで再生：停止すると元のメインゲームカメラに戻す
+    static void PlayWithCamera(EntityID camera);
 
     static ProjectPlayState GetPlayState()
     {
@@ -79,3 +85,4 @@ class ProjectManager final
         return s_PlaySession;
     }
 };
+

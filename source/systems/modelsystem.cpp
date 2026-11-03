@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "envflags.h"
 #include "transmittanceshadows.h"
@@ -524,11 +525,19 @@ void Mekakure::Render(ID3D12GraphicsCommandList* commandList, D3D12_CPU_DESCRIPT
     };
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
         collect(entity, component.ModelId >= 0 ? ModelManager::GetAnimModel(component.ModelId) : nullptr);
     }
     for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
         collect(entity, component.ModelId >= 0 ? ModelManager::GetStaticModel(component.ModelId) : nullptr);
     }
@@ -844,6 +853,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID i : World::GetView<AnimationModelComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
             if (animComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
                 !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
@@ -922,6 +935,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID i : World::GetView<StaticModelComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
             if (staticComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
                 !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
@@ -1006,6 +1023,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID entity : World::GetView<AnimationModelComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
             if (MaterialSystem::IsTransparent(entity))
             {
@@ -1047,6 +1068,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
         for (EntityID entity : World::GetView<StaticModelComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             if (MeshShaderRenderer::IsActive() && GPUDrivenRenderer::HandlesEntity(entity))
             {
                 continue;
@@ -1115,6 +1140,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         auto animEntities = World::GetView<AnimationModelComponent>();
         for (EntityID i : animEntities)
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
             if (animComp.ModelId < 0)
             {
@@ -1486,6 +1515,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         m_StaticDrawCalls.reserve(staticEntities.size());
         for (EntityID i : staticEntities)
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             const bool gpuBaseDrawn = !drawTransparent && GPUDrivenRenderer::HandlesEntity(i);
             if (gpuBaseDrawn && !ShouldDrawToonOutline(i))
             {
@@ -1806,5 +1839,6 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
     }
 
 }
+
 
 

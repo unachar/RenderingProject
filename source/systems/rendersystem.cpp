@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
@@ -212,6 +213,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
         for (EntityID i : World::GetView<SpriteComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
             if (!sprite.Is3D || sprite.VertexBufferView.BufferLocation == 0 ||
                 !Registry::HasComponent(i, ComponentType::TRANSFORM) || !ShouldCastShadow(i, transmission) ||
@@ -229,6 +234,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
         for (EntityID i : World::GetView<MeshComponent>())
         {
+            if (EditorVisibility::IsHidden(i))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             if (Registry::HasComponent(i, ComponentType::STATIC_MODEL) ||
                 Registry::HasComponent(i, ComponentType::ANIMATION_MODEL))
             {
@@ -320,6 +329,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
         for (EntityID entity : World::GetView<SpriteComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
             if (sprite.Is3D)
             {
@@ -328,6 +341,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         }
         for (EntityID entity : World::GetView<MeshComponent>())
         {
+            if (EditorVisibility::IsHidden(entity))
+            {
+                continue; // #5 アウトライナーで非表示
+            }
             if (Registry::HasComponent(entity, ComponentType::STATIC_MODEL) ||
                 Registry::HasComponent(entity, ComponentType::ANIMATION_MODEL))
             {
@@ -397,6 +414,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
     for (EntityID i : spriteEntities)
     {
+        if (EditorVisibility::IsHidden(i))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
         if ((renderPass == RenderPass::TransparentScene && !sprite.Is3D) ||
             (renderPass == RenderPass::OverlayScene && sprite.Is3D))
@@ -615,6 +636,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
     for (EntityID i : World::GetView<MeshComponent>())
     {
+        if (EditorVisibility::IsHidden(i))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!drawTransparent && drawDeferredOpaque && GPUDrivenRenderer::HandlesEntity(i))
         {
             continue;
@@ -901,5 +926,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
     }
     s_MeshShaderDraws = 0;
 }
+
 
 

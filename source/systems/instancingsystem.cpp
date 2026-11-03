@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "rendering/scenedepth.h"
 #include "materialmanager.h"
@@ -747,6 +748,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     // アニメーションモデル。
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
             !LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity))
         {
@@ -786,6 +791,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     // 静的モデル。
     for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
             !LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity))
         {
@@ -825,6 +834,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     // インデックスを使わない描画（スプライト・メッシュ）。
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
         if (CanInstance(entity) && ShouldCastShadow(entity) && sprite.Is3D &&
             LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity) &&
@@ -837,6 +850,10 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
     }
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
             ComponentManager::HasComponent<StaticModelComponent>(entity))
         {
@@ -1057,6 +1074,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // スプライト。
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity))
         {
             continue;
@@ -1136,6 +1157,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // メッシュ。
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!ctx.transparentPass && GPUDrivenRenderer::HandlesEntity(entity))
         {
             continue;
@@ -1220,6 +1245,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // アニメーションモデル。
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity))
         {
             continue;
@@ -1339,6 +1368,10 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
                                     : World::GetView<StaticModelComponent, TransformComponent>();
     for (EntityID entity : staticEntities)
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            continue; // #5 アウトライナーで非表示
+        }
         if (!CanInstance(entity))
         {
             continue;
@@ -1913,4 +1946,5 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         ImpostorRenderer::Flush(ctx.commandList, ctx.frameIndex);
     }
 }
+
 

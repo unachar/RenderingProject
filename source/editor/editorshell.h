@@ -45,6 +45,10 @@ class EditorShell
     static void DrawViewMenuItems();
     static void OpenCommandPalette();
     static void ToggleShortcutHelp();
+    // #16 コマンドのショートカット表示（ユーザー割り当てがあればそれ、無ければ既定）
+    static const char* Shortcut(const char* category, const char* label, const char* fallback);
+    static void LoadKeymap();
+    static void DrawKeymapEditor(); // F1 の「割り当て」タブ
 
     // ---- ビューポート
     static void DrawViewportHeader();
@@ -61,4 +65,8 @@ class EditorShell
 
   private:
     static void SaveSceneAndReferences(bool saveAs);
+    // コマンド一覧（コマンド検索 / キー割り当て / ユーザーショートカットの実行で共通）
+    static void BuildCommandList(void* output);
+    static void RunUserShortcuts();
 };
+

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "editorpreferences.h"
+#include "editoricons.h"
 #include <imgui_internal.h>
 #include <filesystem>
 #include <fstream>
@@ -108,6 +109,23 @@ namespace EditorPreferences
                     p.DockEmpty = ImVec4(0.045f, 0.050f, 0.058f, 1.0f);
                     p.Rounding = 3.0f;
                     break;
+                case ThemePreset::Light:
+                    p.Menu = Rgb(222, 222, 222);
+                    p.Window = Rgb(240, 240, 240);
+                    p.Child = Rgb(232, 232, 232);
+                    p.Popup = Rgb(248, 248, 248, 0.99f);
+                    p.Frame = Rgb(255, 255, 255);
+                    p.FrameHover = Rgb(236, 242, 250);
+                    p.Button = Rgb(214, 214, 214);
+                    p.ButtonHover = Rgb(198, 206, 218);
+                    p.RowHover = Rgb(220, 228, 240);
+                    p.Border = Rgb(180, 180, 180);
+                    p.Text = Rgb(30, 30, 30);
+                    p.TextDim = Rgb(120, 120, 120);
+                    p.Accent = Rgb(0, 102, 204);
+                    p.DockEmpty = Rgb(200, 200, 200);
+                    p.Rounding = 3.0f;
+                    break;
                 case ThemePreset::Unreal:
                 default:
                     p.Menu = Rgb(21, 21, 21);
@@ -162,13 +180,25 @@ namespace EditorPreferences
             out << "font_size=" << s.FontSize << "\n";
             out << "toolbar=" << (s.ShowToolbar ? 1 : 0) << "\n";
             out << "statusbar=" << (s.ShowStatusBar ? 1 : 0) << "\n";
-            out << "area_headers=" << (s.ShowAreaHeaders ? 1 : 0) << "\n";
+            // #1 既定をオフにしたので旧キー（area_headers）は読まない
+            out << "area_headers_v2=" << (s.ShowAreaHeaders ? 1 : 0) << "\n";
             out << "toasts=" << (s.ShowToasts ? 1 : 0) << "\n";
             out << "toast_success=" << (s.ToastOnSuccess ? 1 : 0) << "\n";
             out << "nav_gizmo=" << (s.ShowNavigationGizmo ? 1 : 0) << "\n";
-            out << "viewport_stats=" << (s.ShowViewportStats ? 1 : 0) << "\n";
+            out << "viewport_stats_v2=" << (s.ShowViewportStats ? 1 : 0) << "\n";
             out << "outliner_type=" << (s.ShowOutlinerTypeColumn ? 1 : 0) << "\n";
             out << "undo_limit=" << s.UndoLimit << "\n";
+            out << "viewport_axis=" << (s.ShowViewportAxis ? 1 : 0) << "\n";
+            out << "viewport_speed=" << (s.ShowViewportSpeed ? 1 : 0) << "\n";
+            out << "viewport_view_mode=" << static_cast<int>(s.ViewportViewMode) << "\n";
+            out << "editor_camera_speed=" << s.EditorCameraSpeed << "\n";
+            out << "asset_tree=" << (s.AssetFolderTree ? 1 : 0) << "\n";
+            out << "asset_tree_width=" << s.AssetTreeWidth << "\n";
+            out << "asset_list_view=" << (s.AssetListView ? 1 : 0) << "\n";
+            out << "asset_type_filter=" << static_cast<int>(s.AssetTypeFilter) << "\n";
+            out << "asset_hide_companions=" << (s.AssetHideCompanions ? 1 : 0) << "\n";
+            out << "asset_favorites=" << s.AssetFavorites << "\n";
+            out << "asset_recent=" << s.AssetRecent << "\n";
             out << "snap_t=" << (s.Snap.Translate ? 1 : 0) << "\n";
             out << "snap_r=" << (s.Snap.Rotate ? 1 : 0) << "\n";
             out << "snap_s=" << (s.Snap.Scale ? 1 : 0) << "\n";
@@ -205,6 +235,16 @@ namespace EditorPreferences
             s.Rounding = std::clamp(s.Rounding, 0.0f, 8.0f);
             s.FontSize = std::clamp(s.FontSize, 12.0f, 24.0f);
             s.UndoLimit = std::clamp(s.UndoLimit, 5, 200);
+            if (static_cast<int>(s.ViewportViewMode) < 0 || s.ViewportViewMode >= ViewMode::Count)
+            {
+                s.ViewportViewMode = ViewMode::Lit;
+            }
+            if (static_cast<int>(s.AssetTypeFilter) < 0 || s.AssetTypeFilter >= AssetFilter::Count)
+            {
+                s.AssetTypeFilter = AssetFilter::All;
+            }
+            s.EditorCameraSpeed = std::clamp(s.EditorCameraSpeed, 0.03125f, 32.0f);
+            s.AssetTreeWidth = std::clamp(s.AssetTreeWidth, 100.0f, 600.0f);
             s.Snap.TranslateStep = std::clamp(s.Snap.TranslateStep, 0.001f, 1000.0f);
             s.Snap.RotateStep = std::clamp(s.Snap.RotateStep, 0.1f, 180.0f);
             s.Snap.ScaleStep = std::clamp(s.Snap.ScaleStep, 0.001f, 10.0f);
@@ -255,6 +295,8 @@ namespace EditorPreferences
                 return "Unity（Pro スキン）";
             case ThemePreset::Midnight:
                 return "Midnight（シアン）";
+            case ThemePreset::Light:
+                return "Light（ライト）";
             default:
                 return "?";
         }
@@ -320,15 +362,37 @@ namespace EditorPreferences
                     s.ShowToolbar = ParseBool(value);
                 else if (key == "statusbar")
                     s.ShowStatusBar = ParseBool(value);
-                else if (key == "area_headers")
+                else if (key == "area_headers_v2")
                     s.ShowAreaHeaders = ParseBool(value);
+                else if (key == "viewport_axis")
+                    s.ShowViewportAxis = ParseBool(value);
+                else if (key == "viewport_speed")
+                    s.ShowViewportSpeed = ParseBool(value);
+                else if (key == "viewport_view_mode")
+                    s.ViewportViewMode = static_cast<ViewMode>(atoi(value.c_str()));
+                else if (key == "editor_camera_speed")
+                    s.EditorCameraSpeed = ParseFloat(value, s.EditorCameraSpeed);
+                else if (key == "asset_tree")
+                    s.AssetFolderTree = ParseBool(value);
+                else if (key == "asset_tree_width")
+                    s.AssetTreeWidth = ParseFloat(value, s.AssetTreeWidth);
+                else if (key == "asset_list_view")
+                    s.AssetListView = ParseBool(value);
+                else if (key == "asset_type_filter")
+                    s.AssetTypeFilter = static_cast<AssetFilter>(atoi(value.c_str()));
+                else if (key == "asset_hide_companions")
+                    s.AssetHideCompanions = ParseBool(value);
+                else if (key == "asset_favorites")
+                    s.AssetFavorites = value;
+                else if (key == "asset_recent")
+                    s.AssetRecent = value;
                 else if (key == "toasts")
                     s.ShowToasts = ParseBool(value);
                 else if (key == "toast_success")
                     s.ToastOnSuccess = ParseBool(value);
                 else if (key == "nav_gizmo")
                     s.ShowNavigationGizmo = ParseBool(value);
-                else if (key == "viewport_stats")
+                else if (key == "viewport_stats_v2")
                     s.ShowViewportStats = ParseBool(value);
                 else if (key == "outliner_type")
                     s.ShowOutlinerTypeColumn = ParseBool(value);
@@ -371,6 +435,13 @@ namespace EditorPreferences
             ImFontConfig config;
             config.FontNo = faceIndex;
             config.PixelSnapH = true;
+#if IMGUI_VERSION_NUM >= 19200
+            // #13 記号は日本語フォントの字形を使わず、下で結合する Segoe UI Symbol に統一する
+            //  （日本語フォントにある ↻ ⊕ などと無い ⤢ ✥ などで見た目が混ざらないように）
+            static const ImWchar kExcludeSymbols[] = {0x2190, 0x21FF, 0x2300, 0x23FF, 0x25A0, 0x25FF,
+                                                      0x2600, 0x26FF, 0x2700, 0x27BF, 0x2900, 0x297F, 0};
+            config.GlyphExcludeRanges = kExcludeSymbols;
+#endif
             primary = io.Fonts->AddFontFromFileTTF(path, size, &config, io.Fonts->GetGlyphRangesJapanese());
             return primary != nullptr;
         };
@@ -413,6 +484,29 @@ namespace EditorPreferences
             symbols.MergeMode = true;
             symbols.PixelSnapH = true;
             io.Fonts->AddFontFromFileTTF(symbolPath, size, &symbols, kSymbolRanges);
+        }
+        // #13 アイコンフォント（Segoe Fluent Icons / Segoe MDL2 Assets）を私用領域に結合する
+        EditorIcons::g_IconFont = false;
+        if (primary)
+        {
+            static const ImWchar kIconRanges[] = {0xE700, 0xF8FF, 0};
+            for (const char* iconPath : EditorIcons::kIconFontPaths)
+            {
+                if (!std::filesystem::exists(iconPath, error))
+                {
+                    continue;
+                }
+                ImFontConfig icons;
+                icons.MergeMode = true;
+                icons.PixelSnapH = true;
+                icons.GlyphMinAdvanceX = size; // 等幅にしてボタン幅を揃える
+                icons.GlyphOffset = ImVec2(0.0f, size * 0.12f);
+                if (io.Fonts->AddFontFromFileTTF(iconPath, size * 0.9f, &icons, kIconRanges))
+                {
+                    EditorIcons::g_IconFont = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -498,7 +592,7 @@ namespace EditorPreferences
         c[ImGuiCol_TableBorderStrong] = p.Border;
         c[ImGuiCol_TableBorderLight] = Lerp(p.Border, p.Window, 0.5f);
         c[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
-        c[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.025f);
+        c[ImGuiCol_TableRowBgAlt] = IsLightTheme() ? ImVec4(0, 0, 0, 0.035f) : ImVec4(1, 1, 1, 0.025f);
         c[ImGuiCol_TextSelectedBg] = WithAlpha(accent, 0.40f);
         c[ImGuiCol_DragDropTarget] = accentHover;
         c[ImGuiCol_NavCursor] = accent;
@@ -632,6 +726,119 @@ namespace EditorPreferences
         return ImVec4(0.96f, 0.36f, 0.33f, 1.0f);
     }
 
+    bool IsLightTheme()
+    {
+        return g_Settings.Theme == ThemePreset::Light;
+    }
+
+    ImVec4 OverlayBg()
+    {
+        return IsLightTheme() ? ImVec4(0.96f, 0.96f, 0.96f, 0.82f) : ImVec4(0.08f, 0.08f, 0.08f, 0.72f);
+    }
+
+    ImVec4 OverlayText()
+    {
+        return IsLightTheme() ? ImVec4(0.10f, 0.10f, 0.10f, 1.0f) : ImVec4(0.92f, 0.92f, 0.92f, 1.0f);
+    }
+
+    ImVec4 Selection()
+    {
+        return Accent();
+    }
+
+    ImVec4 PrefabColor()
+    {
+        return IsLightTheme() ? ImVec4(0.10f, 0.40f, 0.85f, 1.0f) : ImVec4(0.45f, 0.72f, 1.0f, 1.0f);
+    }
+
+    ImVec4 Favorite()
+    {
+        return ImVec4(1.0f, 0.78f, 0.20f, 1.0f);
+    }
+
+    const char* ViewModeName(ViewMode mode)
+    {
+        switch (mode)
+        {
+            case ViewMode::Lit:
+                return "ライティングあり";
+            case ViewMode::Unlit:
+                return "ライティングなし（ベースカラー）";
+            case ViewMode::Normal:
+                return "ワールド法線";
+            case ViewMode::Depth:
+                return "深度";
+            case ViewMode::Material:
+                return "マテリアル（金属 / 粗さ / フレネル）";
+            case ViewMode::Emission:
+                return "発光";
+            case ViewMode::AO:
+                return "マテリアル AO";
+            case ViewMode::Velocity:
+                return "ベロシティ";
+            default:
+                return "?";
+        }
+    }
+
+    const char* AssetFilterName(AssetFilter filter)
+    {
+        switch (filter)
+        {
+            case AssetFilter::All:
+                return "すべて";
+            case AssetFilter::Folder:
+                return "フォルダ";
+            case AssetFilter::Material:
+                return "マテリアル";
+            case AssetFilter::Texture:
+                return "テクスチャ";
+            case AssetFilter::Mesh:
+                return "メッシュ";
+            case AssetFilter::Scene:
+                return "シーン";
+            case AssetFilter::Other:
+                return "その他";
+            default:
+                return "?";
+        }
+    }
+
+    std::vector<std::string> SplitList(const std::string& list)
+    {
+        std::vector<std::string> items;
+        size_t start = 0;
+        while (start <= list.size())
+        {
+            const size_t end = list.find('|', start);
+            const std::string item = list.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            if (!item.empty())
+            {
+                items.push_back(item);
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+        return items;
+    }
+
+    std::string JoinList(const std::vector<std::string>& items)
+    {
+        std::string joined;
+        for (const auto& item : items)
+        {
+            if (!joined.empty())
+            {
+                joined += '|';
+            }
+            joined += item;
+        }
+        return joined;
+    }
+
     ImU32 AxisColor(int axis, float alpha)
     {
         // Blender / UE と同じ X=赤, Y=緑, Z=青
@@ -737,6 +944,7 @@ namespace EditorPreferences
                 ImGui::Checkbox("メインツールバー", &s.ShowToolbar);
                 ImGui::Checkbox("ステータスバー", &s.ShowStatusBar);
                 ImGui::Checkbox("パネルヘッダー（エディタータイプ切替 / 最大化）", &s.ShowAreaHeaders);
+                ImGui::SetItemTooltip("オフでも、タブの右クリックでエディタータイプの切り替えと最大化ができます");
                 ImGui::Checkbox("通知トースト", &s.ShowToasts);
                 ImGui::BeginDisabled(!s.ShowToasts);
                 ImGui::Indent();
@@ -747,6 +955,9 @@ namespace EditorPreferences
                 ImGui::Checkbox("ビューポート: ナビゲーションギズモ", &s.ShowNavigationGizmo);
                 ImGui::Checkbox("ビューポート: 統計オーバーレイ", &s.ShowViewportStats);
                 ImGui::Checkbox("アウトライナー: 種類の列", &s.ShowOutlinerTypeColumn);
+                ImGui::Checkbox("ビューポート: 左下の XYZ 軸", &s.ShowViewportAxis);
+                ImGui::Checkbox("ビューポート: カメラ速度ボタン", &s.ShowViewportSpeed);
+                ImGui::Checkbox("コンテンツブラウザ: 付属ファイル（.graph.json など）を隠す", &s.AssetHideCompanions);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("編集"))
@@ -794,3 +1005,4 @@ namespace EditorPreferences
         }
     }
 } // namespace EditorPreferences
+

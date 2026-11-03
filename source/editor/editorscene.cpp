@@ -30,6 +30,10 @@
 #include "primitivegeometry.h"
 #include "materialmanager.h"
 #include "gpuscene/gpuscenechanges.h"
+#include "gbufferpreview.h"
+#include "renderconfiguration.h"
+#include "editorvisibility.h"
+#include "editoricons.h"
 #include <fstream>
 #include <future>
 #include <thread>
@@ -175,7 +179,52 @@ void ImGuiManager::DrawSceneViewWindow()
     D3D12_GPU_DESCRIPTOR_HANDLE handle = RenderTargets::GetEditorSceneSrvHandle();
     // 修正：ImTextureData* へのキャストは ImGui 1.92 で管理テクスチャとして扱われ、GPU ハンドルを
     // CPU ポインタとして参照してしまう。ほかの箇所と同じく ImTextureID で渡す。
-    ImGui::Image(static_cast<ImTextureID>(handle.ptr), imageSize);
+    // #2 表示モード：Lit 以外は G-Buffer をそのまま表示する（ディファードのときだけ。ほかは Lit）
+    {
+        using EditorPreferences::ViewMode;
+        const ViewMode viewMode = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED
+                                      ? preferences.ViewportViewMode
+                                      : ViewMode::Lit;
+        GBufferType gbuffer = GBufferType::BASE_COLOR;
+        bool alpha = false;
+        switch (viewMode)
+        {
+            case ViewMode::Unlit:
+                gbuffer = GBufferType::BASE_COLOR;
+                break;
+            case ViewMode::Normal:
+                gbuffer = GBufferType::NORMAL;
+                break;
+            case ViewMode::Depth:
+                gbuffer = GBufferType::DEPTH;
+                break;
+            case ViewMode::Material:
+                gbuffer = GBufferType::MATERIAL;
+                break;
+            case ViewMode::Emission:
+                gbuffer = GBufferType::EMISSION_AO;
+                break;
+            case ViewMode::AO:
+                gbuffer = GBufferType::EMISSION_AO;
+                alpha = true;
+                break;
+            case ViewMode::Velocity:
+                gbuffer = GBufferType::VELOCITY;
+                break;
+            default:
+                break;
+        }
+        const auto gbufferHandle =
+            viewMode == ViewMode::Lit ? D3D12_GPU_DESCRIPTOR_HANDLE{} : RenderTargets::GetGBufferSrvHandle(gbuffer);
+        if (viewMode != ViewMode::Lit && gbufferHandle.ptr && GBufferPreview::Pipeline.Get() != nullptr)
+        {
+            GBufferPreview::Image(gbufferHandle, imageSize, alpha ? UINT(GBufferType::COUNT) : UINT(gbuffer));
+        }
+        else
+        {
+            ImGui::Image(static_cast<ImTextureID>(handle.ptr), imageSize);
+        }
+    }
     const bool thisHovered = ImGui::IsItemHovered();
     m_IsSceneViewHovered = thisHovered;
     // ドロップ先はどちらも Image（直前のアイテム）。後続の InvisibleButton より前に処理する
@@ -215,14 +264,49 @@ void ImGuiManager::DrawSceneViewWindow()
         drawList, ImVec2(cursor.x, cursor.y + toolbarHeight),
         ImVec2(imageSize.x, (std::max)(1.0f, imageSize.y - toolbarHeight)));
 
+    // #3 左下の XYZ 軸（UE と同じ。カメラの向きに合わせて回る）
+    if (preferences.ShowViewportAxis)
+    {
+        XMMATRIX view, projection;
+        Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+        const float scale = preferences.UiScale;
+        const float length = 18.0f * scale;
+        const ImVec2 origin(cursor.x + 14.0f * scale + length, cursor.y + imageSize.y - 14.0f * scale - length);
+        struct AxisLine
+        {
+            int Axis;
+            float X, Y, Depth;
+        };
+        AxisLine axes[3];
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const XMVECTOR direction = XMVector3TransformNormal(
+                XMVectorSet(axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f, 0.0f), view);
+            axes[axis] = {axis, XMVectorGetX(direction), -XMVectorGetY(direction), XMVectorGetZ(direction)};
+        }
+        // 奥の軸から描く
+        std::sort(std::begin(axes), std::end(axes), [](const AxisLine& a, const AxisLine& b) { return a.Depth > b.Depth; });
+        static const char* const kAxisLabels[] = {"X", "Y", "Z"};
+        for (const auto& axis : axes)
+        {
+            const ImVec2 tip(origin.x + axis.X * length, origin.y + axis.Y * length);
+            const ImU32 color = EditorPreferences::AxisColor(axis.Axis, axis.Depth > 0.0f ? 0.55f : 1.0f);
+            drawList->AddLine(origin, tip, color, 2.0f * scale);
+            const ImVec2 labelSize = ImGui::CalcTextSize(kAxisLabels[axis.Axis]);
+            drawList->AddText(ImVec2(tip.x + axis.X * 6.0f * scale - labelSize.x * 0.5f,
+                                     tip.y + axis.Y * 6.0f * scale - labelSize.y * 0.5f),
+                              color, kAxisLabels[axis.Axis]);
+        }
+    }
+
     // ---- UE 風：ビューの中に重ねるツールバー（変形ツール・座標系・スナップ・表示・追加）
     //  子ウィンドウにすると、ツールバーの上ではシーンの Image がホバーされず、
     //  クリックが選択 / カメラ操作 / ギズモに渡らない。背景は透過してシーンが透けて見える
     {
         const float pad = 6.0f * preferences.UiScale;
         ImGui::SetCursorScreenPos(ImVec2(cursor.x + pad, cursor.y + pad));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.08f, 0.08f, 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.08f, 0.08f, 0.72f));
+        ImGui::PushStyleColor(ImGuiCol_Button, EditorPreferences::OverlayBg());
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorPreferences::OverlayBg());
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * preferences.UiScale);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         if (ImGui::BeginChild("##ViewportOverlayToolbar", ImVec2((std::max)(1.0f, imageSize.x - pad * 2.0f), 0.0f),
@@ -287,7 +371,8 @@ void ImGuiManager::DrawTransformGizmo()
         return; // ハンドツール：ギズモを出さない（行列の取得・計算もしない）
     }
     if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity) ||
-        !ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity))
+        !ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity) ||
+        EditorVisibility::IsLocked(m_SelectedEntity)) // #5 ロック中はギズモを出さない
     {
         return;
     }
@@ -647,7 +732,26 @@ void ImGuiManager::DrawHierarchyWindow()
     }
 
     static ImGuiTextFilter entityFilter;
-    DrawSearchField("EntitySearch", "名前で検索...", entityFilter);
+    // #5 種類で絞り込み（UE のアウトライナーのフィルター）
+    static int typeFilter = 0;
+    static const char* const kOutlinerTypes[] = {"すべて", "StaticMesh", "Skeletal", "Mesh",    "Light",
+                                                 "Sun",    "Camera",     "Terrain",  "Timeline", "Empty"};
+    {
+        const float comboWidth = 110.0f * EditorPreferences::Get().UiScale;
+        ImGui::BeginChild("EntitySearchArea",
+                          ImVec2((std::max)(60.0f, ImGui::GetContentRegionAvail().x - comboWidth -
+                                                       ImGui::GetStyle().ItemSpacing.x),
+                                 ImGui::GetFrameHeight()),
+                          false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+        DrawSearchField("EntitySearch", "名前で検索...", entityFilter);
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(comboWidth);
+        ImGui::Combo("##OutlinerTypeFilter", &typeFilter, kOutlinerTypes, IM_ARRAYSIZE(kOutlinerTypes));
+        ImGui::SetItemTooltip("種類で絞り込み");
+    }
+    const bool typeFilterActive = typeFilter > 0;
+    const bool anyFilterActive = entityFilter.IsActive() || typeFilterActive;
     ImGui::Separator();
     int totalCount = 0;
     int visibleCount = 0;
@@ -683,6 +787,28 @@ void ImGuiManager::DrawHierarchyWindow()
     const float iconSlot = ImGui::CalcTextSize("◆").x + 6.0f * outlinerPreferences.UiScale;
     const float spaceWidth = (std::max)(ImGui::CalcTextSize(" ").x, 1.0f);
     const string iconPadding(static_cast<size_t>(ceilf(iconSlot / spaceWidth)), ' ');
+    // #5 行の右端：表示（目）/ ロック（鍵）
+    const float rowIconSize = ImGui::GetTextLineHeight();
+    const float rowIconsWidth = rowIconSize * 2.0f + 10.0f * outlinerPreferences.UiScale;
+    // 子孫も含めて切り替える（UE と同じ）
+    std::function<void(EntityID, bool, bool)> applyRowState = [&](EntityID target, bool visibility, bool value) {
+        if (visibility)
+        {
+            EditorVisibility::SetHidden(target, value);
+        }
+        else
+        {
+            EditorVisibility::SetLocked(target, value);
+        }
+        const auto found = children.find(target);
+        if (found != children.end())
+        {
+            for (EntityID child : found->second)
+            {
+                applyRowState(child, visibility, value);
+            }
+        }
+    };
     EntityID clicked = g_kINVALID_ENTITY;
     static EntityID pendingClick = g_kINVALID_ENTITY;
     static bool selectionDragged = false;
@@ -699,26 +825,37 @@ void ImGuiManager::DrawHierarchyWindow()
         {
             return;
         }
+        if (typeFilterActive && strcmp(ClassifyOutlinerEntity(entity).Type, kOutlinerTypes[typeFilter]) != 0)
+        {
+            return;
+        }
         visible.push_back(entity);
         ImGui::PushID(static_cast<int>(entity));
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
         if (selectedSet.contains(entity))
         {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
         const auto childList = children.find(entity);
         const bool hasChildren = childList != children.end() && !childList->second.empty();
-        if (!hasChildren || entityFilter.IsActive())
+        if (!hasChildren || anyFilterActive)
         {
             flags |= ImGuiTreeNodeFlags_Leaf;
         }
         const bool prefab = GetPrefabRoot(entity) != g_kINVALID_ENTITY;
-        if (prefab)
+        const bool hiddenRow = EditorVisibility::IsHiddenFlag(entity);
+        if (prefab || hiddenRow)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
+            ImVec4 color = prefab ? EditorPreferences::PrefabColor() : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+            if (hiddenRow)
+            {
+                color.w *= 0.45f; // 非表示の行は薄く
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
         }
         const bool open = ImGui::TreeNodeEx("Entity", flags, "%s%s", iconPadding.c_str(), displayName.c_str());
-        if (prefab)
+        if (prefab || hiddenRow)
         {
             ImGui::PopStyleColor();
         }
@@ -735,7 +872,7 @@ void ImGuiManager::DrawHierarchyWindow()
                 const float nameEnd = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() +
                                       ImGui::CalcTextSize(iconPadding.c_str()).x +
                                       ImGui::CalcTextSize(displayName.c_str()).x;
-                const float typeX = rowMax.x - typeWidth - 6.0f;
+                const float typeX = rowMax.x - typeWidth - 6.0f - rowIconsWidth;
                 if (typeX > nameEnd + 16.0f)
                 {
                     rowDraw->AddText(ImVec2(typeX, textY), ImGui::GetColorU32(ImGuiCol_TextDisabled), info.Type);
@@ -790,13 +927,58 @@ void ImGuiManager::DrawHierarchyWindow()
             }
             ImGui::EndPopup();
         }
+        // #5 表示 / ロックのトグル（行の右端に重ねる。ツリーノードは AllowOverlap）
+        {
+            const ImVec2 rowMin = ImGui::GetItemRectMin();
+            const ImVec2 rowMax = ImGui::GetItemRectMax();
+            const float y = rowMin.y + (rowMax.y - rowMin.y - rowIconSize) * 0.5f;
+            const ImVec2 restore = ImGui::GetCursorScreenPos();
+            const bool hidden = EditorVisibility::IsHiddenFlag(entity);
+            const bool locked = EditorVisibility::IsLocked(entity);
+            const bool rowHovered = ImGui::IsMouseHoveringRect(rowMin, rowMax);
+            ImDrawList* iconDraw = ImGui::GetWindowDrawList();
+            const auto toggle = [&](const char* id, float x, bool active, const char* activeIcon,
+                                    const char* inactiveIcon, const char* tooltip) {
+                ImGui::SetCursorScreenPos(ImVec2(x, y));
+                const bool pressed = ImGui::InvisibleButton(id, ImVec2(rowIconSize, rowIconSize));
+                const bool hovered = ImGui::IsItemHovered();
+                // 既定の状態（表示 / ロック解除）は行にマウスがあるときだけ薄く出す（UE と同じ）
+                const bool show = active || rowHovered || hovered;
+                if (show)
+                {
+                    const char* icon = active ? activeIcon : inactiveIcon;
+                    ImVec4 color = ImGui::GetStyleColorVec4(active ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+                    if (hovered)
+                    {
+                        color = EditorPreferences::Accent();
+                    }
+                    const ImVec2 size = ImGui::CalcTextSize(icon);
+                    iconDraw->AddText(ImVec2(x + (rowIconSize - size.x) * 0.5f, y), ImGui::GetColorU32(color), icon);
+                }
+                ImGui::SetItemTooltip("%s", tooltip);
+                return pressed;
+            };
+            const float lockX = rowMax.x - rowIconSize - 4.0f * outlinerPreferences.UiScale;
+            const float eyeX = lockX - rowIconSize - 2.0f * outlinerPreferences.UiScale;
+            if (toggle("##Visible", eyeX, hidden, EditorIcons::Hidden(), EditorIcons::Visible(),
+                       hidden ? "表示する（子も含む）" : "エディター上で非表示（子も含む）"))
+            {
+                applyRowState(entity, true, !hidden);
+            }
+            if (toggle("##Lock", lockX, locked, EditorIcons::Lock(), EditorIcons::Unlock(),
+                       locked ? "ロック解除" : "ロック（ビューポートで選択・移動できなくする）"))
+            {
+                applyRowState(entity, false, !locked);
+            }
+            ImGui::SetCursorScreenPos(restore);
+        }
         if (m_RenamingEntity == entity)
         {
             DrawRenameInput(entity);
         }
         if (open)
         {
-            if (!entityFilter.IsActive() && hasChildren)
+            if (!anyFilterActive && hasChildren)
             {
                 for (EntityID child : childList->second)
                 {
@@ -807,7 +989,7 @@ void ImGuiManager::DrawHierarchyWindow()
         }
         ImGui::PopID();
     };
-    if (entityFilter.IsActive())
+    if (anyFilterActive)
     {
         for (EntityID entity : all)
         {
@@ -1315,7 +1497,8 @@ void ImGuiManager::PickEntityFromMouse()
 
     for (EntityID entity : World::GetView<TransformComponent>())
     {
-        if (!IsEditableEntity(entity))
+        // #5 ロック中 / 非表示はビューポートのクリックで選ばない
+        if (!IsEditableEntity(entity) || EditorVisibility::IsLocked(entity) || EditorVisibility::IsHidden(entity))
         {
             continue;
         }
@@ -2307,6 +2490,7 @@ bool ImGuiManager::LoadScene(const filesystem::path& path)
         AddLog("シーンを開けません: %s", ToUtf8(path).c_str());
         return false;
     }
+    EditorVisibility::Clear(); // #5 表示 / ロックはシーンごと（エンティティ ID が別物になる）
     Json::Value root;
     Json::CharReaderBuilder reader;
     string parseError;
@@ -3069,7 +3253,7 @@ bool ImGuiManager::DrawPrefabInspector()
     if (root != g_kINVALID_ENTITY)
     {
         const string source = ComponentManager::GetComponentUnchecked<NameComponent>(root).PrefabAssetPath;
-        ImGui::TextColored(kPrefabColor, "プレハブ: %s", source.c_str());
+        ImGui::TextColored(EditorPreferences::PrefabColor(), "プレハブ: %s", source.c_str());
         ImGui::TextWrapped("適用すると、同じプレハブの全インスタンスを更新します。各インスタンスの配置は保持します。");
         if (ImGui::Button("プレハブに適用"))
         {

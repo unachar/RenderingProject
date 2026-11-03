@@ -181,6 +181,38 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     const auto label = registry.AreaTitle(*area);
     // Area owns visibility. Changing editor type does not close its source editor's other areas.
     const bool expanded = ImGui::Begin(label.c_str(), area->Visible, flags);
+    // #1 UE と同じく、タブ（ドッキング時）/ タイトルバーの右クリックでエディタータイプの切り替えと最大化。
+    //  Begin 直後の「最後のアイテム」はドッキング中ならタブ、浮いていればタイトルバー
+    if (ImGui::BeginPopupContextItem("##AreaTabMenu"))
+    {
+        const auto selectedType = registry.m_AreaTypes.find(area->Id);
+        const auto& currentType = selectedType == registry.m_AreaTypes.end() ? area->Id : selectedType->second;
+        ImGui::TextDisabled("エディタータイプ");
+        for (const auto& type : registry.m_Windows)
+        {
+            if (!type.Draw)
+            {
+                continue;
+            }
+            if (ImGui::MenuItem(type.Label.c_str(), nullptr, type.Id == currentType))
+            {
+                registry.m_PendingTypes[area->Id] = type.Id;
+            }
+        }
+        ImGui::Separator();
+        const bool maximizedNow = workspaces.IsMaximized(area->Id);
+        if (ImGui::MenuItem(maximizedNow ? "元の配置に戻す" : "この領域を最大化", "Ctrl+Space"))
+        {
+            workspaces.RequestMaximize(area->Id);
+        }
+        ImGui::MenuItem("パネルヘッダーを表示", nullptr, &EditorPreferences::Get().ShowAreaHeaders);
+        ImGui::Separator();
+        if (ImGui::MenuItem("閉じる"))
+        {
+            *area->Visible = false;
+        }
+        ImGui::EndPopup();
+    }
     if (!*area->Visible && workspaces.IsMaximized(area->Id))
     {
         workspaces.RequestMaximize(area->Id);
@@ -216,7 +248,7 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     }
     if (!EditorPreferences::Get().ShowAreaHeaders && !workspaces.IsMaximized(area->Id))
     {
-        // ヘッダー非表示（設定）時は最大化している領域以外ではヘッダー行を省略する。Ctrl+Space は有効
+        // ヘッダー非表示（既定）：タブの右クリックで切り替え / 最大化。Ctrl+Space も有効
         return true;
     }
     // Blender のエリアヘッダーのように、1 行・小さめのフレームで表示する
@@ -541,6 +573,26 @@ void EditorWorkspaceManager::BeginFrame()
                 }
                 break;
             }
+            case Action::SaveLayout: {
+                // CaptureActive 済み（BeginFrame の先頭）なので、アクティブの現在の配置がそのまま入っている
+                auto& workspace = m_Workspaces[target];
+                workspace.SavedLayout = workspace.Layout;
+                workspace.SavedVisibleWindows = workspace.VisibleWindows;
+                workspace.SavedAreaTypes = workspace.AreaTypes;
+                m_ForceSave = true;
+                break;
+            }
+            case Action::RestoreSaved: {
+                auto& workspace = m_Workspaces[target];
+                if (!workspace.SavedLayout.empty())
+                {
+                    workspace.Layout = workspace.SavedLayout;
+                    workspace.VisibleWindows = workspace.SavedVisibleWindows;
+                    workspace.AreaTypes = workspace.SavedAreaTypes;
+                    apply = target == m_Active;
+                }
+                break;
+            }
             case Action::Reset: {
                 const auto preset = MakeWorkspace(m_Workspaces[target].Name, m_Workspaces[target].Preset);
                 m_Workspaces[target].VisibleWindows = preset.VisibleWindows;
@@ -634,7 +686,8 @@ void EditorWorkspaceManager::DrawTabs(float reserveRight)
                 ImVec2(start.x, start.y + ImGui::GetFrameHeight() - 2.0f * uiScale),
                 ImVec2(start.x + width, start.y + ImGui::GetFrameHeight()), ImGui::GetColorU32(accent));
         }
-        ImGui::SetItemTooltip("Workspace: %s\n右クリック: 名前変更 / 複製 / 移動 / 削除", workspace.Name.c_str());
+        ImGui::SetItemTooltip("Workspace: %s\n右クリック: 名前変更 / 複製 / 移動 / レイアウトの保存・復元 / 削除",
+                              workspace.Name.c_str());
         if (ImGui::BeginPopupContextItem("WorkspaceMenu"))
         {
             if (ImGui::IsWindowAppearing())
@@ -663,6 +716,16 @@ void EditorWorkspaceManager::DrawTabs(float reserveRight)
                 Queue(Action::MoveRight, workspace.Id);
             }
             ImGui::Separator();
+            // #15 レイアウトの保存 / 復元（Workspace ごと）
+            if (ImGui::MenuItem("現在のレイアウトを保存", nullptr, false, i == m_Active))
+            {
+                Queue(Action::SaveLayout, workspace.Id);
+            }
+            ImGui::SetItemTooltip("パネルの配置・表示・エディタータイプを、この Workspace の保存レイアウトとして記録します");
+            if (ImGui::MenuItem("保存したレイアウトに戻す", nullptr, false, !workspace.SavedLayout.empty()))
+            {
+                Queue(Action::RestoreSaved, workspace.Id);
+            }
             if (ImGui::MenuItem("初期レイアウトに戻す"))
             {
                 Queue(Action::Reset, workspace.Id);
@@ -857,6 +920,28 @@ bool EditorWorkspaceManager::Load()
         workspace.Name = value["name"].asString();
         workspace.Preset = value["preset"].asString();
         workspace.Layout = value["layout"].asString();
+        if (value["saved"].isObject())
+        {
+            const auto& saved = value["saved"];
+            workspace.SavedLayout = saved.get("layout", "").asString();
+            for (const auto& visible : saved["visible"])
+            {
+                if (visible.isString())
+                {
+                    workspace.SavedVisibleWindows.push_back(visible.asString());
+                }
+            }
+            if (saved["types"].isObject())
+            {
+                for (const auto& area : saved["types"].getMemberNames())
+                {
+                    if (saved["types"][area].isString())
+                    {
+                        workspace.SavedAreaTypes[area] = saved["types"][area].asString();
+                    }
+                }
+            }
+        }
         if (value["types"].isObject())
         {
             for (const auto& area : value["types"].getMemberNames())
@@ -925,6 +1010,22 @@ void EditorWorkspaceManager::Save()
         {
             value["visible"].append(id);
         }
+        if (!workspace.SavedLayout.empty())
+        {
+            Json::Value saved(Json::objectValue);
+            saved["layout"] = workspace.SavedLayout;
+            saved["visible"] = Json::Value(Json::arrayValue);
+            for (const auto& id : workspace.SavedVisibleWindows)
+            {
+                saved["visible"].append(id);
+            }
+            saved["types"] = Json::Value(Json::objectValue);
+            for (const auto& [area, type] : workspace.SavedAreaTypes)
+            {
+                saved["types"][area] = type;
+            }
+            value["saved"] = std::move(saved);
+        }
         document["workspaces"].append(std::move(value));
     }
     Json::StreamWriterBuilder writer;
@@ -988,4 +1089,5 @@ void EditorWorkspaceManager::Shutdown()
     m_MaximizedLayout.clear();
     m_LastSaved.clear();
 }
+
 

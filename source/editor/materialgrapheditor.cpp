@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "backgroundtasks.h"
 #include <cstdarg>
 #include <imgui_internal.h>
 #include <limits>
@@ -1695,6 +1696,7 @@ namespace
                         document.NodeStatus = "作成中...";
                         request.Gpu = SubmitNodeBake(request);
                         document.NodeJob = std::async(std::launch::async, [request = std::move(request)] {
+                            BackgroundTasks::Scope task("テクスチャの作成");
                             return MaterialGraphBake::RunNode(request);
                         });
                     }
@@ -1812,6 +1814,7 @@ namespace
                         document.NodeStatus = "変換中...";
                         request.Gpu = SubmitNodeBake(request);
                         document.NodeJob = std::async(std::launch::async, [request = std::move(request)] {
+                            BackgroundTasks::Scope task("テクスチャの作成");
                             return MaterialGraphBake::RunNode(request);
                         });
                     }
@@ -3768,6 +3771,7 @@ namespace
         document.BakeStatus = "ベイク中: " + SlotList(request.Mask) + "...";
         request.Gpu = SubmitBake(request); // GPU で評価（できないグラフは CPU）
         document.BakeJob = std::async(std::launch::async, [request = std::move(request)] {
+            BackgroundTasks::Scope task("マテリアルのベイク");
             return MaterialGraphBake::Run(request);
         });
     }
@@ -4002,6 +4006,7 @@ void MaterialGraphEditor::Draw(AssetHandle material)
         {
             document.CompilingRevision = document.Graph.Revision;
             document.ShaderJob = std::async(std::launch::async, [program = document.Program] {
+                BackgroundTasks::Scope task("シェーダーのコンパイル");
                 return MaterialGraphShaderCompiler::Compile(program);
             });
             document.Status = "シェーダーをコンパイル中...";
@@ -4298,6 +4303,7 @@ void MaterialGraphEditor::Shutdown()
     focusedMaterial = 0;
     nextRecoverySave = 0;
 }
+
 
 
 

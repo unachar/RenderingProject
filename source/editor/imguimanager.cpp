@@ -39,6 +39,7 @@
 #include <ImGuizmo.h>
 #include "rendertargets.h"
 #include "input.h"
+#include "editorvisibility.h"
 #include "frameconstants.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
@@ -374,6 +375,22 @@ void ImGuiManager::Update()
     if (ViewportInputGate::g_RightLookActive)
     {
         ImGui::SetMouseCursor(ImGuiMouseCursor_None); // フライ中はカーソルを隠す（UE と同じ）
+        // #3 右ドラッグ中のホイールでカメラ速度を変える（UE と同じ）
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f)
+        {
+            auto& speed = EditorPreferences::Get().EditorCameraSpeed;
+            speed = std::clamp(speed * powf(1.25f, wheel), 0.03125f, 32.0f);
+        }
+    }
+    ViewportInputGate::g_EditorCameraSpeedScale = EditorPreferences::Get().EditorCameraSpeed;
+    // #5 アウトライナーの非表示はエディター上だけ（再生中はすべて描く）
+    EditorVisibility::SetEnabled(!ProjectManager::IsPlaying());
+    // 削除されたエンティティの表示 / ロック状態を捨てる（ID の再利用で別物に引き継がないように）
+    if (!EditorVisibility::g_Hidden.empty() || !EditorVisibility::g_Locked.empty())
+    {
+        std::erase_if(EditorVisibility::g_Hidden, [](uint32_t entity) { return !Registry::IsAlive(entity); });
+        std::erase_if(EditorVisibility::g_Locked, [](uint32_t entity) { return !Registry::IsAlive(entity); });
     }
     UpdateSceneNavigation();
     // 右クリックの視点移動中はカーソルをビューポート内にとどめる（UE と同じ）
@@ -459,7 +476,7 @@ void ImGuiManager::DrawEditorMainMenu()
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("終了", "Alt+F4"))
+        if (ImGui::MenuItem("終了", EditorShell::Shortcut("ファイル", "終了", "Alt+F4")))
         {
             RequestQuit();
         }
@@ -467,25 +484,25 @@ void ImGuiManager::DrawEditorMainMenu()
     }
     if (ImGui::BeginMenu("編集"))
     {
-        if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, !m_UndoStack.empty() || m_HasPendingUndo))
+        if (ImGui::MenuItem("元に戻す", EditorShell::Shortcut("編集", "元に戻す", "Ctrl+Z"), false, !m_UndoStack.empty() || m_HasPendingUndo))
         {
             Undo();
         }
-        if (ImGui::MenuItem("やり直し", "Ctrl+Y", false, !m_RedoStack.empty()))
+        if (ImGui::MenuItem("やり直し", EditorShell::Shortcut("編集", "やり直し", "Ctrl+Y"), false, !m_RedoStack.empty()))
         {
             Redo();
         }
         ImGui::Separator();
         const bool hasSelection = m_SelectedEntity != g_kINVALID_ENTITY && Registry::IsAlive(m_SelectedEntity);
-        if (ImGui::MenuItem("複製", "Ctrl+D", false, hasSelection))
+        if (ImGui::MenuItem("複製", EditorShell::Shortcut("編集", "複製", "Ctrl+D"), false, hasSelection))
         {
             DuplicateSelectedEntity();
         }
-        if (ImGui::MenuItem("削除", "Delete", false, hasSelection))
+        if (ImGui::MenuItem("削除", EditorShell::Shortcut("編集", "削除", "Delete"), false, hasSelection))
         {
             DeleteSelectedEntity();
         }
-        if (ImGui::MenuItem("選択解除", nullptr, false, hasSelection))
+        if (ImGui::MenuItem("選択解除", EditorShell::Shortcut("編集", "選択解除", ""), false, hasSelection))
         {
             SelectEntity(g_kINVALID_ENTITY);
         }
@@ -494,7 +511,7 @@ void ImGuiManager::DrawEditorMainMenu()
         {
             EditorWorkspaceManager::Get().Registry().ShowEditorType("history");
         }
-        if (ImGui::MenuItem("エディター設定", "Ctrl+,"))
+        if (ImGui::MenuItem("エディター設定", EditorShell::Shortcut("編集", "エディター設定", "Ctrl+,")))
         {
             EditorWorkspaceManager::Get().Registry().ShowEditorType("preferences");
         }
@@ -537,7 +554,7 @@ void ImGuiManager::DrawEditorMainMenu()
     }
     if (ImGui::BeginMenu("ヘルプ"))
     {
-        if (ImGui::MenuItem("ショートカット一覧", "F1"))
+        if (ImGui::MenuItem("ショートカット一覧 / キー割り当て", EditorShell::Shortcut("表示", "ショートカット一覧", "F1")))
         {
             EditorShell::ToggleShortcutHelp();
         }

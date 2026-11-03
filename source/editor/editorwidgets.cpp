@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "editorpreferences.h"
+#include "editoricons.h"
 #include "spatialupscaler.h"
 #include "graphicsdevice.h"
 #include "transformmath.h"
@@ -173,7 +175,118 @@ namespace EditorWidgets
         return TransformMath::World(transform);
     }
 
-    bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue, float maxValue)
+    bool ResetButton(const char* id, bool modified, const char* tooltip)
+    {
+        ImGui::PushID(id);
+        ImGui::BeginDisabled(!modified);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        const bool pressed = ImGui::Button(EditorIcons::Undo(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        if (modified)
+        {
+            ImGui::SetItemTooltip("%s", tooltip);
+        }
+        ImGui::PopID();
+        return pressed;
+    }
+
+    namespace
+    {
+        InspectorCategory CategoryOf(const char* label)
+        {
+            static const struct
+            {
+                const char* Label;
+                InspectorCategory Category;
+            } kMap[] = {
+                {"トランスフォーム", InspectorCategory::Transform}, {"AABB", InspectorCategory::Transform},
+                {"マテリアル", InspectorCategory::Material},         {"Materials", InspectorCategory::Material},
+                {"ライト", InspectorCategory::Rendering},            {"Sun", InspectorCategory::Rendering},
+                {"カメラ", InspectorCategory::Rendering},            {"LOD", InspectorCategory::Rendering},
+                {"スプライト", InspectorCategory::Rendering},        {"物理設定", InspectorCategory::Physics},
+            };
+            for (const auto& entry : kMap)
+            {
+                if (strcmp(entry.Label, label) == 0)
+                {
+                    return entry.Category;
+                }
+            }
+            return InspectorCategory::Other;
+        }
+
+        // マテリアルの中のセクション（親の「マテリアル」が表示されていれば常に表示）
+        bool IsNestedSection(const char* label)
+        {
+            static const char* const kNested[] = {"シェーディングパラメータ", "ディファード Toon / PBR", "影", "ライティング",
+                                                  "肌"};
+            for (const char* nested : kNested)
+            {
+                if (strcmp(nested, label) == 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    } // namespace
+
+    void DrawInspectorFilterBar()
+    {
+        static const char* const kNames[] = {"すべて", "トランスフォーム", "マテリアル", "レンダリング", "物理", "その他"};
+        DrawSearchField("InspectorSearch", "プロパティのセクションを検索...", g_InspectorFilter);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+        for (int i = 0; i < static_cast<int>(InspectorCategory::Count); ++i)
+        {
+            if (i > 0)
+            {
+                ImGui::SameLine(0.0f, 2.0f);
+                if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(kNames[i]).x + 12.0f)
+                {
+                    ImGui::NewLine();
+                }
+            }
+            const bool active = static_cast<int>(g_InspectorCategory) == i;
+            if (active)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, EditorPreferences::Accent());
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            }
+            if (ImGui::Button(kNames[i]))
+            {
+                g_InspectorCategory = static_cast<InspectorCategory>(i);
+            }
+            if (active)
+            {
+                ImGui::PopStyleColor(2);
+            }
+        }
+        ImGui::PopStyleVar();
+    }
+
+    bool InspectorSection(const char* label, ImGuiTreeNodeFlags flags)
+    {
+        if (g_InspectorFiltering && !IsNestedSection(label))
+        {
+            if (g_InspectorCategory != InspectorCategory::All && CategoryOf(label) != g_InspectorCategory)
+            {
+                return false;
+            }
+            if (g_InspectorFilter.IsActive())
+            {
+                if (!g_InspectorFilter.PassFilter(label))
+                {
+                    return false;
+                }
+                ImGui::SetNextItemOpen(true); // 検索で見つかったセクションは開く
+            }
+        }
+        return ImGui::CollapsingHeader(label, flags);
+    }
+
+    bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue, float maxValue,
+                        const float* defaults)
     {
         bool changed = false;
         ImGui::PushID(label);
@@ -183,7 +296,7 @@ namespace EditorWidgets
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.025f, 0.027f, 0.030f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.050f, 0.055f, 0.064f, 1.00f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.070f, 0.082f, 0.100f, 1.00f));
-        if (ImGui::BeginTable("AxisFloat3", 4, ImGuiTableFlags_SizingStretchProp))
+        if (ImGui::BeginTable("AxisFloat3", defaults ? 5 : 4, ImGuiTableFlags_SizingStretchProp))
         {
             const char* axisIds[3] = {"##R", "##G", "##B"};
             const ImU32 axisColors[3] = {ImGui::GetColorU32(ImVec4(0.86f, 0.18f, 0.14f, 1.00f)),
@@ -194,6 +307,10 @@ namespace EditorWidgets
             ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("G", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("B", ImGuiTableColumnFlags_WidthStretch);
+            if (defaults)
+            {
+                ImGui::TableSetupColumn("Reset", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+            }
             ImGui::TableNextRow();
 
             ImGui::TableSetColumnIndex(0);
@@ -229,6 +346,19 @@ namespace EditorWidgets
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 changed |= ImGui::DragFloat(axisIds[i], &values[i], speed, minValue, maxValue, "%.3f");
             }
+            if (defaults)
+            {
+                ImGui::TableNextColumn();
+                const bool modified = fabsf(values[0] - defaults[0]) > 1e-5f || fabsf(values[1] - defaults[1]) > 1e-5f ||
+                                      fabsf(values[2] - defaults[2]) > 1e-5f;
+                if (ResetButton("##Reset", modified))
+                {
+                    values[0] = defaults[0];
+                    values[1] = defaults[1];
+                    values[2] = defaults[2];
+                    changed = true;
+                }
+            }
             ImGui::EndTable();
         }
         ImGui::PopStyleColor(3);
@@ -237,10 +367,11 @@ namespace EditorWidgets
         return changed;
     }
 
-    bool DrawAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue)
+    bool DrawAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue,
+                        const float* defaults)
     {
         float values[3] = {value.x, value.y, value.z};
-        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue))
+        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue, defaults))
         {
             return false;
         }
@@ -404,10 +535,11 @@ namespace EditorWidgets
         return XMFLOAT3(0.0f, 0.0f, 0.0f);
     }
 
-    bool DrawScaleAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue)
+    bool DrawScaleAxisFloat3(const char* label, XMFLOAT3& value, float speed, float minValue, float maxValue,
+                             const float* defaults)
     {
         float values[3] = {value.x, value.y, value.z};
-        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue))
+        if (!DrawAxisFloat3(label, values, speed, minValue, maxValue, defaults))
         {
             return false;
         }
@@ -590,3 +722,4 @@ namespace EditorWidgets
     }
 
 } // 名前空間 EditorWidgets の終わり。
+

@@ -13,6 +13,7 @@
 #include "vertexdeformation.h"
 #include "texturemanager.h"
 #include "materialgraphshader.h"
+#include "editorvisibility.h"
 
 namespace
 {
@@ -174,6 +175,10 @@ namespace
 
     bool IsOpaqueCaster(EntityID entity)
     {
+        if (EditorVisibility::IsHidden(entity))
+        {
+            return false; // #5 アウトライナーで非表示（影 / GI / 反射からも外す）
+        }
         if (ComponentManager::HasComponent<MeshComponent>(entity) &&
             ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
         {
