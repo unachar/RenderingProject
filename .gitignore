@@ -120,4 +120,46 @@ imgui.ini
 /External/Draco/install-dx12-md/
 *.tar.gz
 *.zip
-*.cfg
+
+# ==========================================
+# RenderingProject - Generated Files
+# ==========================================
+
+# Texture / Model / Shader caches
+/Data/Cache/
+/cache/
+/EditorCache/
+
+# Visual Studio intermediate files
+/DirectX12/x64/
+*.res
+*.VC.db
+*.VC.VC.opendb
+*.ipch
+*.tlog
+*.lastbuildstate
+*.vcxproj.user
+
+# Shader generated binaries
+*.cso
+*.dxil
+
+# Editor personal configuration
+/Save/editor_layout.cfg
+/Save/editor_preferences.cfg
+/Save/editor_workspaces.json
+imgui.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.log
+
+# Debug dumps
+*.dmp
+*.mdmp
+
+# Local testing
+/Testing/
+
