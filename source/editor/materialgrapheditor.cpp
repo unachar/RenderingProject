@@ -7,6 +7,10 @@
 #include "materialgraphpreview.h"
 #include "materialgraphtextures.h"
 #include "materialpreview.h"
+#include "materialgraphbake.h"
+#include "materialgraphmath.h"
+#include "assetthumbnailmanager.h"
+#include "texturemanager.h"
 #include "../../External/imgui-node-editor/imgui_node_editor.h"
 #include <json/json.h>
 #include <fstream>
@@ -72,9 +76,25 @@ namespace
         uint64_t AppliedSignature = 0;
         uint32_t ManagedSlots = 0;
         std::vector<std::string> ApplyNotes;
+        // ピクセルごとの式 → エンジン用テクスチャのベイク
+        MaterialGraphPreview::BakedTextures Baked;
+        std::future<MaterialGraphBake::Result> BakeJob;
+        uint64_t BakeJobSignature = 0;
+        uint64_t FailedBakeSignature = 0;
+        uint64_t LastContentSignature = 0;
+        double LastContentChange = 0.0;
+        uint32_t PendingBakeMask = 0;
+        MaterialGraphPreview::AlphaSource PendingAlpha = MaterialGraphPreview::AlphaSource::BaseColor;
+        bool BakeRequested = false;
+        std::string BakeStatus;
+        std::vector<std::string> BakeWarnings;
 
         ~GraphDocument()
         {
+            if (BakeJob.valid())
+            {
+                BakeJob.wait(); // ワーカーはグラフのコピーで動くので、待つだけでよい
+            }
             MaterialGraphPreview::Forget(Graph);
             if (Context)
             {
@@ -347,7 +367,25 @@ namespace
             case Kind::CheapContrast:
             case Kind::Noise:
             case Kind::Reroute:
+            case Kind::StaticSwitch:
                 return {"Utility", IM_COL32(140, 104, 40, 255)};
+            case Kind::Pi:
+                return {"Constants", IM_COL32(56, 118, 70, 255)};
+            case Kind::HueShift:
+            case Kind::Blend:
+            case Kind::BlackBody:
+                return {"Color", IM_COL32(170, 70, 120, 255)};
+            case Kind::LinearGradient:
+            case Kind::RadialGradient:
+            case Kind::Voronoi:
+                return {"Procedural", IM_COL32(60, 128, 140, 255)};
+            case Kind::NormalFromHeight:
+            case Kind::BlendAngleCorrectedNormals:
+            case Kind::FlattenNormal:
+            case Kind::BumpOffset:
+                return {"Normal / Height", IM_COL32(86, 96, 170, 255)};
+            case Kind::RotateAboutAxis:
+                return {"Vector", IM_COL32(108, 78, 146, 255)};
             case Kind::Group:
                 return {"Comment", IM_COL32(80, 100, 130, 255)};
             default:
@@ -496,6 +534,180 @@ namespace
         }
     }
 
+    std::string SlotList(uint32_t mask)
+    {
+        std::string text;
+        for (size_t slot = 0; slot < MaterialGraphBake::kSlotCount; ++slot)
+        {
+            if (mask & (1u << slot))
+            {
+                text += (text.empty() ? "" : ", ") + std::string(MaterialGraphBake::SlotName(static_cast<MaterialTextureSlot>(slot)));
+            }
+        }
+        return text;
+    }
+
+    // グラフ設定の編集を 1 回の Undo にまとめる（ドラッグ中は確定しない）
+    constexpr uint64_t kSettingsEditNode = ~0ull;
+
+    void TrackSettingsEdit(GraphDocument& document, const MaterialGraphSettings& before, bool changed)
+    {
+        if (ImGui::IsItemActivated())
+        {
+            FinishValueEdit(document);
+            document.PendingEdit = document.Graph;
+            document.PendingEdit->Settings = before;
+            document.PendingValueNode = kSettingsEditNode;
+            document.ValueChanged = false;
+        }
+        if (changed)
+        {
+            if (!document.PendingEdit || document.PendingValueNode != kSettingsEditNode)
+            {
+                FinishValueEdit(document);
+                document.PendingEdit = document.Graph;
+                document.PendingEdit->Settings = before;
+                document.PendingValueNode = kSettingsEditNode;
+            }
+            document.ValueChanged = true;
+            document.Dirty = true;
+            document.RecoveryDirty = true;
+            ++document.Graph.Revision;
+        }
+        if (document.PendingEdit && document.PendingValueNode == kSettingsEditNode &&
+            (ImGui::IsItemDeactivatedAfterEdit() ||
+             (!ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))))
+        {
+            FinishValueEdit(document);
+        }
+    }
+
+    // UE のマテリアル Details に相当する設定（グラフに保存。「マテリアルの設定」はアセット側の値を使う）
+    void DrawGraphSettings(GraphDocument& document)
+    {
+        auto& settings = document.Graph.Settings;
+        const float width = ImGui::GetContentRegionAvail().x * 0.55f;
+        const auto combo = [&](const char* label, int& value, const char* const* names, int count, const char* tooltip) {
+            const MaterialGraphSettings before = settings;
+            int index = value + 1; // 0 = マテリアルの設定
+            ImGui::SetNextItemWidth(width);
+            bool changed = false;
+            if (ImGui::BeginCombo(label, index >= 0 && index <= count ? names[index] : names[0]))
+            {
+                for (int i = 0; i <= count; ++i)
+                {
+                    if (ImGui::Selectable(names[i], i == index))
+                    {
+                        changed = i != index;
+                        value = i - 1;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (tooltip)
+            {
+                ImGui::SetItemTooltip("%s", tooltip);
+            }
+            TrackSettingsEdit(document, before, changed);
+        };
+        static const char* surfaces[] = {"マテリアルの設定", "Opaque", "Masked", "Translucent"};
+        static const char* culls[] = {"マテリアルの設定", "片面（Back）", "両面（Two Sided）", "Front"};
+        static const char* models[] = {"マテリアルの設定", "Default Lit", "Clear Coat", "Cloth", "Subsurface (Skin)", "Hair",
+                                       "Anisotropic"};
+        static const char* shadows[] = {"マテリアルの設定", "None", "Opaque", "Alpha Test", "Transmittance", "Auto"};
+        combo("Blend Mode", settings.Surface, surfaces, 3, "Opacity / Opacity Mask を繋ぐと自動で Translucent / Masked になります");
+        combo("Two Sided", settings.Cull, culls, 3, nullptr);
+        combo("Shading Model", settings.ShadingModel, models, 6, nullptr);
+        combo("Shadow", settings.ShadowMode, shadows, 5, nullptr);
+        {
+            const MaterialGraphSettings before = settings;
+            bool useClip = settings.AlphaCutoff >= 0.0f;
+            bool changed = ImGui::Checkbox("##UseClip", &useClip);
+            if (changed)
+            {
+                settings.AlphaCutoff = useClip ? 0.3333f : -1.0f;
+            }
+            TrackSettingsEdit(document, before, changed);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!useClip);
+            float clip = useClip ? settings.AlphaCutoff : 0.3333f;
+            ImGui::SetNextItemWidth(width - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+            changed = ImGui::SliderFloat("Opacity Mask Clip", &clip, 0.0f, 1.0f, "%.4f");
+            if (changed && useClip)
+            {
+                settings.AlphaCutoff = clip;
+            }
+            TrackSettingsEdit(document, before, changed && useClip);
+            ImGui::EndDisabled();
+        }
+        ImGui::SeparatorText("テクスチャベイク（エンジン反映）");
+        {
+            static const int resolutions[] = {128, 256, 512, 1024, 2048};
+            static const char* resolutionNames[] = {"128", "256", "512", "1024", "2048"};
+            int current = 2;
+            for (int i = 0; i < 5; ++i)
+            {
+                if (resolutions[i] == settings.BakeResolution)
+                {
+                    current = i;
+                }
+            }
+            const MaterialGraphSettings before = settings;
+            ImGui::SetNextItemWidth(width);
+            bool changed = false;
+            if (ImGui::BeginCombo("解像度", resolutionNames[current]))
+            {
+                for (int i = 0; i < 5; ++i)
+                {
+                    if (ImGui::Selectable(resolutionNames[i], i == current))
+                    {
+                        changed = i != current;
+                        settings.BakeResolution = resolutions[i];
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("ピクセルごとの式（UV 演算 / Noise / Blend / Normal From Height など）を焼くテクスチャの解像度");
+            TrackSettingsEdit(document, before, changed);
+        }
+        {
+            const MaterialGraphSettings before = settings;
+            ImGui::SetNextItemWidth(width);
+            const bool changed = ImGui::DragFloat("ベイク時刻 (秒)", &settings.BakeTime, 0.05f, 0.0f, 3600.0f, "%.2f");
+            ImGui::SetItemTooltip("Time / Panner / Rotator を含む式は、この時刻の値で焼かれます");
+            TrackSettingsEdit(document, before, changed);
+        }
+        {
+            const MaterialGraphSettings before = settings;
+            const bool changed = ImGui::Checkbox("自動ベイク", &settings.AutoBake);
+            ImGui::SetItemTooltip("グラフの変更が 0.5 秒落ち着いたら自動で焼き直します");
+            TrackSettingsEdit(document, before, changed);
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(document.PendingBakeMask == 0 || document.BakeJob.valid());
+        if (ImGui::Button("今すぐベイク"))
+        {
+            document.BakeRequested = true;
+        }
+        ImGui::EndDisabled();
+        if (document.PendingBakeMask != 0)
+        {
+            ImGui::TextDisabled("対象: %s", SlotList(document.PendingBakeMask).c_str());
+        }
+        else
+        {
+            ImGui::TextDisabled("ベイク不要（定数 / テクスチャを直接使用）");
+        }
+        if (!document.BakeStatus.empty() && document.PendingBakeMask != 0)
+        {
+            ImGui::TextWrapped("%s", document.BakeStatus.c_str());
+        }
+        for (const auto& warning : document.BakeWarnings)
+        {
+            ImGui::TextColored(ImVec4(0.98f, 0.72f, 0.20f, 1.0f), "⚠ %s", warning.c_str());
+        }
+    }
+
     void DrawValueEditors(GraphDocument& document, MaterialGraphNode& node, float width)
     {
         const auto before = node.Value;
@@ -578,6 +790,64 @@ namespace
                     }
                     ImGui::EndDragDropTarget();
                 }
+                // UE の Sampler Type（Color = sRGB / Normal = 法線マップ / Linear = マスク・高さ）
+                static const char* samplers[] = {"Sampler: Color", "Sampler: Normal", "Sampler: Linear"};
+                int sampler = std::clamp(static_cast<int>(node.Value[0]), 0, 2);
+                ImGui::SetNextItemWidth(width);
+                changed = ImGui::SliderInt("##Sampler", &sampler, 0, 2, samplers[sampler]);
+                if (changed)
+                {
+                    node.Value[0] = static_cast<float>(sampler);
+                }
+                TrackValueEdit(document, node, before, changed);
+                ImGui::SetItemTooltip("Color: カラー（sRGB）\nNormal: 法線マップ（-1〜1 に展開）\nLinear: マスク / 高さ / ラフネス");
+                break;
+            }
+            case Kind::StaticSwitch: {
+                bool value = node.Value[0] > 0.5f;
+                changed = ImGui::Checkbox("Value", &value);
+                if (changed)
+                {
+                    node.Value[0] = value ? 1.0f : 0.0f;
+                }
+                TrackValueEdit(document, node, before, changed);
+                break;
+            }
+            case Kind::Pi:
+                changed = ImGui::DragFloat("##Multiplier", node.Value.data(), 0.01f, 0.0f, 0.0f, "x %.3f");
+                TrackValueEdit(document, node, before, changed);
+                break;
+            case Kind::Blend: {
+                int mode = std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialBlendMode::Count) - 1);
+                changed = ImGui::SliderInt("##BlendMode", &mode, 0, static_cast<int>(MaterialBlendMode::Count) - 1,
+                                           MaterialGraphMath::BlendModeName(mode));
+                if (changed)
+                {
+                    node.Value[0] = static_cast<float>(mode);
+                }
+                TrackValueEdit(document, node, before, changed);
+                break;
+            }
+            case Kind::LinearGradient: {
+                static const char* directions[] = {"方向: U（横）", "方向: V（縦）"};
+                int direction = node.Value[0] > 0.5f ? 1 : 0;
+                changed = ImGui::SliderInt("##Direction", &direction, 0, 1, directions[direction]);
+                if (changed)
+                {
+                    node.Value[0] = static_cast<float>(direction);
+                }
+                TrackValueEdit(document, node, before, changed);
+                break;
+            }
+            case Kind::Voronoi: {
+                static const char* outputs[] = {"出力: 距離 (F1)", "出力: セル値"};
+                int output = node.Value[0] > 0.5f ? 1 : 0;
+                changed = ImGui::SliderInt("##VoronoiOutput", &output, 0, 1, outputs[output]);
+                if (changed)
+                {
+                    node.Value[0] = static_cast<float>(output);
+                }
+                TrackValueEdit(document, node, before, changed);
                 break;
             }
             default:
@@ -1403,8 +1673,9 @@ namespace
     }
 
     // ============================================================ ノード追加（UE のパレット）
-    const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture", "Coordinates",
-                                          "Math",       "Vector",    "Utility", "Comment"};
+    const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture",         "Coordinates", "Math",
+                                          "Vector",     "Color",     "Normal / Height", "Procedural",  "Utility",
+                                          "Comment"};
 
     uint64_t AddNodeAt(GraphDocument& document, Kind kind, ImVec2 position)
     {
@@ -1982,6 +2253,133 @@ namespace
 
 namespace
 {
+    uint64_t MixHash(uint64_t hash, uint64_t value)
+    {
+        hash ^= value + 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
+        return hash;
+    }
+
+    // ベイク結果を受け取り、テクスチャアセットとして登録してエンジンに再読み込みさせる
+    bool PollBakeJob(AssetHandle material, GraphDocument& document)
+    {
+        if (!document.BakeJob.valid() ||
+            document.BakeJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        {
+            return false;
+        }
+        MaterialGraphBake::Result result = document.BakeJob.get();
+        document.BakeWarnings = result.Warnings;
+        if (!result.Success)
+        {
+            document.FailedBakeSignature = result.Signature;
+            document.BakeStatus = "ベイク失敗: " + result.Error;
+            return false;
+        }
+        MaterialGraphPreview::BakedTextures baked;
+        baked.Signature = result.Signature;
+        baked.EmissivePeak = result.EmissivePeak;
+        auto& registry = MaterialManager::Registry();
+        for (size_t slot = 0; slot < MaterialGraphBake::kSlotCount; ++slot)
+        {
+            if (result.Files[slot].empty())
+            {
+                continue;
+            }
+            std::string error;
+            const AssetHandle handle = registry.Register(result.Files[slot], AssetType::Texture, error);
+            if (handle == 0)
+            {
+                document.BakeWarnings.push_back(std::string(MaterialGraphBake::SlotName(static_cast<MaterialTextureSlot>(slot))) +
+                                                ": " + error);
+                continue;
+            }
+            baked.Textures[slot] = handle;
+            baked.Mask |= 1u << slot;
+            // 同じパス・同じ SRV のまま中身だけ差し替える（SRV を消費しない）
+            TextureManager::RequestReload(result.Files[slot]);
+            MaterialGraphTextures::Invalidate(handle);
+            AssetThumbnailManager::MarkDirty(handle);
+        }
+        document.Baked = baked;
+        AssetThumbnailManager::MarkDirty(material);
+        char status[160];
+        snprintf(status, sizeof(status), "ベイク完了: %s（%dpx / %.2f 秒）", SlotList(baked.Mask).c_str(), result.Resolution,
+                 result.Seconds);
+        document.BakeStatus = status;
+        return true;
+    }
+
+    uint64_t BakeSignature(const GraphDocument& document, uint64_t contentSignature)
+    {
+        uint64_t hash = MixHash(contentSignature, document.PendingBakeMask);
+        return MixHash(hash, static_cast<uint64_t>(document.PendingAlpha) + 1);
+    }
+
+    // 変更が落ち着いたら（または手動で）ピクセルごとの式をテクスチャへ焼く
+    void ScheduleBake(AssetHandle material, GraphDocument& document, uint64_t contentSignature)
+    {
+        if (document.PendingBakeMask == 0)
+        {
+            document.BakeRequested = false;
+            return;
+        }
+        const uint64_t signature = BakeSignature(document, contentSignature);
+        const bool upToDate = document.Baked.Signature == signature &&
+                              (document.Baked.Mask & document.PendingBakeMask) == document.PendingBakeMask;
+        if (document.BakeJob.valid() || (upToDate && !document.BakeRequested))
+        {
+            return;
+        }
+        if (signature == document.FailedBakeSignature && !document.BakeRequested)
+        {
+            return; // 同じ内容で失敗したものは自動では繰り返さない
+        }
+        const auto& settings = document.Graph.Settings;
+        const bool idle = ImGui::GetTime() - document.LastContentChange >= 0.5 && !ImGui::IsAnyItemActive();
+        if (!document.BakeRequested && !(settings.AutoBake && idle))
+        {
+            if (!settings.AutoBake)
+            {
+                document.BakeStatus = "未ベイクの変更があります（「今すぐベイク」で反映）";
+            }
+            return;
+        }
+        const auto materialPath = MaterialManager::Registry().Resolve(material);
+        if (materialPath.empty())
+        {
+            document.BakeStatus = "ベイク失敗: マテリアルのパスが見つかりません";
+            document.FailedBakeSignature = signature;
+            document.BakeRequested = false;
+            return;
+        }
+        MaterialGraphBake::Request request;
+        request.Graph = document.Graph;
+        request.Mask = document.PendingBakeMask;
+        request.Alpha = document.PendingAlpha;
+        request.Resolution = std::clamp(settings.BakeResolution, 64, 2048);
+        request.Time = settings.BakeTime;
+        request.Signature = signature;
+        request.Stem = materialPath.stem().string();
+        request.Directory = materialPath.parent_path() / (request.Stem + "_GraphBake");
+        for (const auto& node : document.Graph.Nodes)
+        {
+            if (node.Kind == Kind::TextureSample && node.Texture != 0 && !request.TexturePaths.contains(node.Texture))
+            {
+                const auto path = MaterialManager::Registry().Resolve(node.Texture);
+                if (!path.empty())
+                {
+                    request.TexturePaths[node.Texture] = path;
+                }
+            }
+        }
+        document.BakeJobSignature = signature;
+        document.BakeRequested = false;
+        document.BakeStatus = "ベイク中: " + SlotList(request.Mask) + "...";
+        document.BakeJob = std::async(std::launch::async, [request = std::move(request)] {
+            return MaterialGraphBake::Run(request);
+        });
+    }
+
     // グラフ → マテリアルアセット（エンジンが描画に使う値）へ焼き込む
     void ApplyGraphToMaterial(AssetHandle material, GraphDocument& document, bool force)
     {
@@ -2004,21 +2402,62 @@ namespace
                     }
                 }
             }
+            // 以前のセッションで焼いたテクスチャがあれば、それもグラフ管理（ベイクし直すまで使い続ける）
+            const auto materialPath = MaterialManager::Registry().Resolve(material);
+            if (!materialPath.empty())
+            {
+                const auto stem = materialPath.stem().string();
+                const auto directory = materialPath.parent_path() / (stem + "_GraphBake");
+                for (size_t slot = 0; slot < MaterialGraphBake::kSlotCount; ++slot)
+                {
+                    const auto file =
+                        directory / (stem + "_" + MaterialGraphBake::SlotName(static_cast<MaterialTextureSlot>(slot)) + ".png");
+                    std::error_code exists;
+                    if (runtime.Editing.Textures[slot] == 0 || !std::filesystem::exists(file, exists))
+                    {
+                        continue;
+                    }
+                    std::string error;
+                    const AssetHandle handle = MaterialManager::Registry().Register(file, AssetType::Texture, error);
+                    if (handle != 0 && handle == runtime.Editing.Textures[slot])
+                    {
+                        document.Baked.Textures[slot] = handle;
+                        document.Baked.Mask |= 1u << slot;
+                        document.ManagedSlots |= 1u << slot;
+                        if (slot == static_cast<size_t>(MaterialTextureSlot::Emissive))
+                        {
+                            document.Baked.EmissivePeak = runtime.Editing.EmissiveIntensity;
+                        }
+                    }
+                }
+            }
             document.ApplyInitialized = true;
         }
+        if (PollBakeJob(material, document))
+        {
+            force = true; // 焼き上がったテクスチャを割り当てる
+        }
         const uint64_t signature = MaterialGraphPreview::ContentSignature(document.Graph);
-        if (!force && signature == document.AppliedSignature)
+        if (signature != document.LastContentSignature)
         {
-            return;
+            document.LastContentSignature = signature;
+            document.LastContentChange = ImGui::GetTime();
         }
-        document.AppliedSignature = signature;
-        auto baked = MaterialGraphPreview::BakeToMaterial(document.Graph, runtime.Editing, document.ManagedSlots);
-        document.ManagedSlots = baked.ManagedSlots;
-        document.ApplyNotes = std::move(baked.Notes);
-        if (baked.HasOutput && !(baked.Data == runtime.Editing))
+        if (force || signature != document.AppliedSignature)
         {
-            MaterialManager::SetEditing(material, baked.Data);
+            document.AppliedSignature = signature;
+            auto baked = MaterialGraphPreview::BakeToMaterial(document.Graph, runtime.Editing, document.ManagedSlots,
+                                                             &document.Baked);
+            document.ManagedSlots = baked.ManagedSlots;
+            document.ApplyNotes = std::move(baked.Notes);
+            document.PendingBakeMask = baked.TextureBakeMask;
+            document.PendingAlpha = baked.Alpha;
+            if (baked.HasOutput && !(baked.Data == runtime.Editing))
+            {
+                MaterialManager::SetEditing(material, baked.Data);
+            }
         }
+        ScheduleBake(material, document, signature);
     }
 } // namespace
 
@@ -2027,6 +2466,12 @@ void MaterialGraphEditor::BeginFrame()
     focusedMaterial = 0;
     for (auto& [handle, document] : documents)
     {
+        // エディターを描いていないフレームでもベイク結果を受け取って反映する
+        if (document->BakeJob.valid() &&
+            document->BakeJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            ApplyGraphToMaterial(handle, *document, true);
+        }
         if (document->ShaderJob.valid() &&
             document->ShaderJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
@@ -2235,6 +2680,10 @@ void MaterialGraphEditor::DrawPreviewPanel(AssetHandle material)
     }
     ImGui::TextDisabled("ノード %zu / 接続 %zu / テクスチャ %zu", document.Graph.Nodes.size(),
                         document.Graph.Links.size(), textures);
+    if (!document.LoadFailed && ImGui::CollapsingHeader("マテリアル設定（Details）", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DrawGraphSettings(document);
+    }
     ImGui::SeparatorText("マテリアルへの反映");
     if (document.ApplyNotes.empty())
     {
@@ -2377,3 +2826,4 @@ void MaterialGraphEditor::Shutdown()
     focusedMaterial = 0;
     nextRecoverySave = 0;
 }
+

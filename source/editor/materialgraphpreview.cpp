@@ -2,6 +2,7 @@
 #include "materialgraphpreview.h"
 #include "materialgraph.h"
 #include "materialgraphmath.h"
+#include "materialgraphevaluator.h"
 #include "materialgraphtextures.h"
 #include <imgui_internal.h>
 #include <algorithm>
@@ -18,28 +19,30 @@ namespace MaterialGraphPreview
     namespace
     {
         using Kind = MaterialNodeKind;
+        using Pin = MaterialOutputPin;
         namespace GraphMath = MaterialGraphMath;
+        using MaterialGraphEval::Context;
+        using MaterialGraphEval::Evaluator;
+        using MaterialGraphEval::Topology;
+        using MaterialGraphEval::Value;
         constexpr int kNodeResolution = 64;   // ノードプレビューの評価解像度
         constexpr int kOutputResolution = 96; // Material Output の球
         constexpr double kAnimatedInterval = 1.0 / 15.0;
         constexpr float kPi = 3.14159265f;
+        constexpr float kDefaultClip = 0.3333f; // UE の Opacity Mask Clip Value の既定値
 
-        struct Value
+        size_t PinIndex(Pin pin)
         {
-            float V[4]{};
-            int N = 1; // 成分数（1〜4）
-        };
+            return static_cast<size_t>(pin);
+        }
 
-        struct Context
+        // プレビュー用のテクスチャサンプラー（256px の縮小キャッシュ）
+        MaterialGraphEval::TextureSampler PreviewSampler()
         {
-            float UV[2]{};
-            float Position[3]{};
-            float Normal[3]{0.0f, 0.0f, -1.0f};
-            float Camera[3]{0.0f, 0.0f, -1.0f}; // 表面 → カメラ
-            float Tangent[3]{1.0f, 0.0f, 0.0f};
-            float Bitangent[3]{0.0f, 1.0f, 0.0f};
-            float Time = 0.0f;
-        };
+            return [](AssetHandle texture, float u, float v, bool raw, float out[4]) {
+                return MaterialGraphTextures::Sample(texture, u, v, raw, out);
+            };
+        }
 
         // ---------------------------------------------------------------- GPU 画像（ImGui 1.92 の管理テクスチャ）
         std::vector<ImTextureData*> g_Graveyard;
@@ -53,7 +56,6 @@ namespace MaterialGraphPreview
         {
             auto* texture = IM_NEW(ImTextureData)();
             texture->Create(ImTextureFormat_RGBA32, size, size);
-            texture->RefCount = 1;
             texture->SetStatus(ImTextureStatus_WantCreate);
             ImGui::RegisterUserTexture(texture);
             return texture;
@@ -94,6 +96,8 @@ namespace MaterialGraphPreview
                 IM_DELETE(texture);
                 return;
             }
+            // SetStatus(Destroyed) otherwise schedules creation again while CPU pixels exist.
+            texture->WantDestroyNextFrame = true;
             texture->SetStatus(ImTextureStatus_WantDestroy);
             g_Graveyard.push_back(texture);
         }
@@ -133,10 +137,7 @@ namespace MaterialGraphPreview
             uint64_t Signature = ~0ull;
             int SignatureFrame = -1;
             double LastEvaluation = -1.0;
-            bool Animated = false;
-            std::unordered_map<uint64_t, size_t> Index; // ノード ID → Nodes の添字
-            std::vector<uint8_t> Spatial;               // 法線・位置・カメラに依存する（球で表示）
-            std::vector<uint8_t> TimeDependent;         // Time に依存する（アニメーション中はこれだけ再評価）
+            Topology Topo;
             std::unordered_map<uint64_t, NodeImage> Images;
             std::unordered_set<uint64_t> Collapsed;
 
@@ -151,459 +152,16 @@ namespace MaterialGraphPreview
 
         std::unordered_map<const MaterialGraph*, GraphCache> g_Caches;
 
-        // ---------------------------------------------------------------- 評価器
         float Saturate(float v)
         {
             return std::clamp(v, 0.0f, 1.0f);
         }
 
-        float LinearToSrgb(float v)
-        {
-            v = Saturate(v);
-            return v <= 0.0031308f ? v * 12.92f : 1.055f * powf(v, 1.0f / 2.4f) - 0.055f;
-        }
-
-        class Evaluator
-        {
-          public:
-            Evaluator(const MaterialGraph& graph, const GraphCache& cache) : m_Graph(graph), m_Cache(cache)
-            {
-                m_Memo.resize(graph.Nodes.size());
-                m_Done.resize(graph.Nodes.size());
-            }
-
-            void Reset(const Context& context)
-            {
-                m_Context = context;
-                std::fill(m_Done.begin(), m_Done.end(), uint8_t{0});
-            }
-
-            Value Node(size_t index, int depth = 0)
-            {
-                if (m_Done[index] == 1)
-                {
-                    return m_Memo[index];
-                }
-                if (m_Done[index] == 2 || depth > 256)
-                {
-                    return {}; // 循環（通常は Connect で防がれる）
-                }
-                m_Done[index] = 2;
-                Value result = Compute(m_Graph.Nodes[index], depth);
-                for (float& v : result.V)
-                {
-                    if (!std::isfinite(v))
-                    {
-                        v = 0.0f;
-                    }
-                }
-                m_Memo[index] = result;
-                m_Done[index] = 1;
-                return result;
-            }
-
-            const MaterialGraphNode* SourceNode(const MaterialGraphNode& node, size_t input) const
-            {
-                if (input < node.InputPins.size())
-                {
-                    if (const auto* link = m_Graph.InputLink(node.InputPins[input]))
-                    {
-                        return m_Graph.FindPinNode(link->SourcePin);
-                    }
-                }
-                return nullptr;
-            }
-
-            Value Input(const MaterialGraphNode& node, size_t input, int depth)
-            {
-                if (const auto* source = SourceNode(node, input))
-                {
-                    const auto found = m_Cache.Index.find(source->Id);
-                    if (found != m_Cache.Index.end())
-                    {
-                        return Node(found->second, depth + 1);
-                    }
-                }
-                switch (GraphMath::DefaultInput(node.Kind, input))
-                {
-                    case GraphMath::SpecialInput::UV:
-                        return Make(m_Context.UV, 2);
-                    case GraphMath::SpecialInput::Time:
-                        return Make(&m_Context.Time, 1);
-                    case GraphMath::SpecialInput::WorldPosition:
-                        return Make(m_Context.Position, 3);
-                    default:
-                        break;
-                }
-                const auto& definition = MaterialGraph::Definition(node.Kind);
-                Value value;
-                if (input < definition.Inputs.size())
-                {
-                    const auto& pin = definition.Inputs[input];
-                    value.N = std::clamp(pin.Type == MaterialGraphType::Numeric ? 1 : static_cast<int>(pin.Type), 1, 4);
-                    for (int i = 0; i < 4; ++i)
-                    {
-                        value.V[i] = pin.Default[i];
-                    }
-                }
-                return value;
-            }
-
-            const Context& Ctx() const
-            {
-                return m_Context;
-            }
-
-          private:
-            static Value Make(const float* v, int count)
-            {
-                Value value;
-                for (int i = 0; i < count; ++i)
-                {
-                    value.V[i] = v[i];
-                }
-                value.N = count;
-                return value;
-            }
-
-            static Value Promote(Value value, int count)
-            {
-                if (value.N == count)
-                {
-                    return value;
-                }
-                if (value.N == 1)
-                {
-                    value.V[1] = value.V[2] = value.V[3] = value.V[0];
-                }
-                else
-                {
-                    for (int i = value.N; i < 4; ++i)
-                    {
-                        value.V[i] = 0.0f;
-                    }
-                }
-                value.N = count;
-                return value;
-            }
-
-            static float SafeDivide(float a, float b)
-            {
-                return fabsf(b) < 1e-8f ? 0.0f : a / b;
-            }
-
-            static float Dot3(const float* a, const float* b)
-            {
-                return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-            }
-
-            // 入力をすべて読み、最大の成分数に揃える（スカラーは全成分へ複製）
-            int Gather(const MaterialGraphNode& node, int depth, Value* inputs, size_t count, size_t promoteCount)
-            {
-                int width = 1;
-                for (size_t i = 0; i < count; ++i)
-                {
-                    inputs[i] = Input(node, i, depth);
-                    if (i < promoteCount)
-                    {
-                        width = (std::max)(width, inputs[i].N);
-                    }
-                }
-                for (size_t i = 0; i < promoteCount; ++i)
-                {
-                    inputs[i] = Promote(inputs[i], width);
-                }
-                return width;
-            }
-
-            Value Compute(const MaterialGraphNode& node, int depth)
-            {
-                Value result;
-                const Kind kind = node.Kind;
-                if (GraphMath::IsConstantNode(kind))
-                {
-                    const auto type = MaterialGraph::Definition(kind).OutputType;
-                    return Make(node.Value.data(), type == MaterialGraphType::Numeric ? 1 : static_cast<int>(type));
-                }
-                if (GraphMath::IsUnary(kind))
-                {
-                    result = Input(node, 0, depth);
-                    for (int c = 0; c < result.N; ++c)
-                    {
-                        result.V[c] = GraphMath::Unary(kind, result.V[c]);
-                    }
-                    return result;
-                }
-                if (GraphMath::IsBinary(kind))
-                {
-                    Value inputs[2];
-                    const bool power = kind == Kind::Power;
-                    const int width = Gather(node, depth, inputs, 2, power ? 1 : 2);
-                    result.N = width;
-                    for (int c = 0; c < width; ++c)
-                    {
-                        result.V[c] = GraphMath::Binary(kind, inputs[0].V[c], power ? inputs[1].V[0] : inputs[1].V[c]);
-                    }
-                    return result;
-                }
-                switch (kind)
-                {
-                    case Kind::Reroute:
-                        return Input(node, 0, depth);
-                    case Kind::TextureSample: {
-                        const Value uv = Promote(Input(node, 0, depth), 2);
-                        result.N = 4;
-                        if (node.Texture != 0 && MaterialGraphTextures::Sample(node.Texture, uv.V[0], uv.V[1], result.V))
-                        {
-                            return result;
-                        }
-                        // 読み込み中 / 未設定はチェッカー
-                        const int cx = static_cast<int>(floorf(uv.V[0] * 8.0f));
-                        const int cy = static_cast<int>(floorf(uv.V[1] * 8.0f));
-                        const float c = ((cx + cy) & 1) ? 0.45f : 0.12f;
-                        result.V[0] = result.V[1] = result.V[2] = c;
-                        result.V[3] = 1.0f;
-                        return result;
-                    }
-                    case Kind::Add:
-                    case Kind::Subtract:
-                    case Kind::Multiply:
-                    case Kind::Divide:
-                    case Kind::Lerp:
-                    case Kind::Clamp:
-                    case Kind::Smoothstep: {
-                        Value inputs[3];
-                        const size_t count = (std::min)(node.InputPins.size(), size_t{3});
-                        // Lerp の Alpha はスカラー入力
-                        const int width = Gather(node, depth, inputs, count, kind == Kind::Lerp ? 2 : count);
-                        if (kind == Kind::Lerp)
-                        {
-                            inputs[2] = Promote(inputs[2], width);
-                        }
-                        result.N = width;
-                        for (int c = 0; c < 4; ++c)
-                        {
-                            const float a = inputs[0].V[c];
-                            const float b = inputs[1].V[c];
-                            const float z = inputs[2].V[c];
-                            float v = 0.0f;
-                            switch (kind)
-                            {
-                                case Kind::Add:
-                                    v = a + b;
-                                    break;
-                                case Kind::Subtract:
-                                    v = a - b;
-                                    break;
-                                case Kind::Multiply:
-                                    v = a * b;
-                                    break;
-                                case Kind::Divide:
-                                    v = SafeDivide(a, b);
-                                    break;
-                                case Kind::Lerp:
-                                    v = a + (b - a) * z;
-                                    break;
-                                case Kind::Clamp:
-                                    v = (std::min)((std::max)(a, b), z);
-                                    break;
-                                default: {
-                                    const float t = Saturate(SafeDivide(z - a, b - a));
-                                    v = t * t * (3.0f - 2.0f * t);
-                                    break;
-                                }
-                            }
-                            result.V[c] = v;
-                        }
-                        return result;
-                    }
-                    case Kind::ConstantBiasScale: {
-                        result = Input(node, 0, depth);
-                        const float bias = Input(node, 1, depth).V[0];
-                        const float scale = Input(node, 2, depth).V[0];
-                        for (int c = 0; c < result.N; ++c)
-                        {
-                            result.V[c] = (result.V[c] + bias) * scale;
-                        }
-                        return result;
-                    }
-                    case Kind::Normalize: {
-                        result = Promote(Input(node, 0, depth), 3);
-                        const float length = sqrtf(Dot3(result.V, result.V));
-                        for (int i = 0; i < 3; ++i)
-                        {
-                            result.V[i] = SafeDivide(result.V[i], length);
-                        }
-                        return result;
-                    }
-                    case Kind::Dot: {
-                        const Value a = Promote(Input(node, 0, depth), 3);
-                        const Value b = Promote(Input(node, 1, depth), 3);
-                        result.V[0] = Dot3(a.V, b.V);
-                        return result;
-                    }
-                    case Kind::CrossProduct: {
-                        const Value a = Promote(Input(node, 0, depth), 3);
-                        const Value b = Promote(Input(node, 1, depth), 3);
-                        result.V[0] = a.V[1] * b.V[2] - a.V[2] * b.V[1];
-                        result.V[1] = a.V[2] * b.V[0] - a.V[0] * b.V[2];
-                        result.V[2] = a.V[0] * b.V[1] - a.V[1] * b.V[0];
-                        result.N = 3;
-                        return result;
-                    }
-                    case Kind::Distance: {
-                        const Value a = Promote(Input(node, 0, depth), 3);
-                        const Value b = Promote(Input(node, 1, depth), 3);
-                        const float d[3] = {a.V[0] - b.V[0], a.V[1] - b.V[1], a.V[2] - b.V[2]};
-                        result.V[0] = sqrtf(Dot3(d, d));
-                        return result;
-                    }
-                    case Kind::Length: {
-                        const Value a = Input(node, 0, depth);
-                        float sum = 0.0f;
-                        for (int c = 0; c < a.N; ++c)
-                        {
-                            sum += a.V[c] * a.V[c];
-                        }
-                        result.V[0] = sqrtf(sum);
-                        return result;
-                    }
-                    case Kind::AppendVector: {
-                        const Value a = Input(node, 0, depth);
-                        const Value b = Input(node, 1, depth);
-                        int n = 0;
-                        for (int c = 0; c < a.N && n < 4; ++c)
-                        {
-                            result.V[n++] = a.V[c];
-                        }
-                        for (int c = 0; c < b.N && n < 4; ++c)
-                        {
-                            result.V[n++] = b.V[c];
-                        }
-                        result.N = (std::max)(n, 1);
-                        return result;
-                    }
-                    case Kind::ComponentMask: {
-                        const Value a = Input(node, 0, depth);
-                        int n = 0;
-                        for (int c = 0; c < 4; ++c)
-                        {
-                            if (node.Value[c] > 0.5f)
-                            {
-                                result.V[n++] = a.V[(std::min)(c, a.N - 1)];
-                            }
-                        }
-                        if (n == 0)
-                        {
-                            result.V[n++] = a.V[0];
-                        }
-                        result.N = n;
-                        return result;
-                    }
-                    case Kind::Fresnel: {
-                        const float exponent = (std::max)(Input(node, 0, depth).V[0], 0.0f);
-                        const float d = Saturate(Dot3(m_Context.Normal, m_Context.Camera));
-                        result.V[0] = powf((std::max)(1.0f - d, 0.0f), exponent);
-                        return result;
-                    }
-                    case Kind::UV:
-                        return Make(m_Context.UV, 2);
-                    case Kind::TextureCoordinate: {
-                        const float uv[2] = {m_Context.UV[0] * node.Value[0], m_Context.UV[1] * node.Value[1]};
-                        return Make(uv, 2);
-                    }
-                    case Kind::Panner: {
-                        const Value coordinate = Promote(Input(node, 0, depth), 2);
-                        const float time = Input(node, 1, depth).V[0];
-                        const Value speed = Promote(Input(node, 2, depth), 2);
-                        const float uv[2] = {coordinate.V[0] + speed.V[0] * time, coordinate.V[1] + speed.V[1] * time};
-                        return Make(uv, 2);
-                    }
-                    case Kind::Rotator: {
-                        const Value coordinate = Promote(Input(node, 0, depth), 2);
-                        const float angle = Input(node, 1, depth).V[0] * Input(node, 2, depth).V[0];
-                        const Value center = Promote(Input(node, 3, depth), 2);
-                        const float s = sinf(angle), c = cosf(angle);
-                        const float dx = coordinate.V[0] - center.V[0], dy = coordinate.V[1] - center.V[1];
-                        const float uv[2] = {center.V[0] + dx * c - dy * s, center.V[1] + dx * s + dy * c};
-                        return Make(uv, 2);
-                    }
-                    case Kind::WorldPosition:
-                        return Make(m_Context.Position, 3);
-                    case Kind::WorldNormal:
-                        return Make(m_Context.Normal, 3);
-                    case Kind::CameraVector:
-                        return Make(m_Context.Camera, 3);
-                    case Kind::ReflectionVector: {
-                        // reflect(-V, N) = -V + 2 * dot(V, N) * N
-                        const float* n = m_Context.Normal;
-                        const float* v = m_Context.Camera;
-                        const float d = Dot3(v, n);
-                        const float r[3] = {-v[0] + 2.0f * d * n[0], -v[1] + 2.0f * d * n[1], -v[2] + 2.0f * d * n[2]};
-                        return Make(r, 3);
-                    }
-                    case Kind::Time:
-                        return Make(&m_Context.Time, 1);
-                    case Kind::Desaturation: {
-                        const Value color = Promote(Input(node, 0, depth), 3);
-                        const float fraction = Input(node, 1, depth).V[0];
-                        const float luminance = color.V[0] * 0.3f + color.V[1] * 0.59f + color.V[2] * 0.11f;
-                        result.N = 3;
-                        for (int c = 0; c < 3; ++c)
-                        {
-                            result.V[c] = color.V[c] + (luminance - color.V[c]) * fraction;
-                        }
-                        return result;
-                    }
-                    case Kind::If: {
-                        const float a = Input(node, 0, depth).V[0];
-                        const float b = Input(node, 1, depth).V[0];
-                        Value branches[3] = {Input(node, 2, depth), Input(node, 3, depth), Input(node, 4, depth)};
-                        int width = 1;
-                        for (const auto& branch : branches)
-                        {
-                            width = (std::max)(width, branch.N);
-                        }
-                        return Promote(a > b ? branches[0] : (a == b ? branches[1] : branches[2]), width);
-                    }
-                    case Kind::SphereMask: {
-                        const Value a = Promote(Input(node, 0, depth), 3);
-                        const Value b = Promote(Input(node, 1, depth), 3);
-                        const float d[3] = {a.V[0] - b.V[0], a.V[1] - b.V[1], a.V[2] - b.V[2]};
-                        result.V[0] = GraphMath::SphereMask(sqrtf(Dot3(d, d)), Input(node, 2, depth).V[0],
-                                                            Input(node, 3, depth).V[0]);
-                        return result;
-                    }
-                    case Kind::CheapContrast: {
-                        const float in = Input(node, 0, depth).V[0];
-                        const float contrast = Input(node, 1, depth).V[0];
-                        result.V[0] = Saturate(-contrast + (1.0f + 2.0f * contrast) * in);
-                        return result;
-                    }
-                    case Kind::Noise: {
-                        const Value position = Promote(Input(node, 0, depth), 3);
-                        const float scale = Input(node, 1, depth).V[0];
-                        result.V[0] =
-                            GraphMath::Noise(position.V[0] * scale, position.V[1] * scale, position.V[2] * scale);
-                        return result;
-                    }
-                    default:
-                        return result;
-                }
-            }
-
-            const MaterialGraph& m_Graph;
-            const GraphCache& m_Cache;
-            Context m_Context;
-            std::vector<Value> m_Memo;
-            std::vector<uint8_t> m_Done;
-        };
-
         // ---------------------------------------------------------------- ユーティリティ
         ImU32 PackLinear(float r, float g, float b, float a = 1.0f)
         {
             auto encode = [](float v) {
-                return static_cast<int>(LinearToSrgb(std::isfinite(v) ? v : 0.0f) * 255.0f + 0.5f);
+                return static_cast<int>(MaterialGraphEval::LinearToSrgb(std::isfinite(v) ? v : 0.0f) * 255.0f + 0.5f);
             };
             return IM_COL32(encode(r), encode(g), encode(b), static_cast<int>(Saturate(a) * 255.0f + 0.5f));
         }
@@ -613,7 +171,7 @@ namespace MaterialGraphPreview
             // スカラーはグレー、Vector2 は RG、Vector3/4 は RGB（0〜1）。テクスチャ由来の色は sRGB で表示
             auto encode = [color](float v) {
                 v = std::isfinite(v) ? v : 0.0f;
-                return static_cast<int>((color ? LinearToSrgb(v) : Saturate(v)) * 255.0f + 0.5f);
+                return static_cast<int>((color ? MaterialGraphEval::LinearToSrgb(v) : Saturate(v)) * 255.0f + 0.5f);
             };
             if (value.N == 1)
             {
@@ -640,6 +198,11 @@ namespace MaterialGraphPreview
             return bits;
         }
 
+        float Dot3(const float* a, const float* b)
+        {
+            return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        }
+
         // 球の画素から評価コンテキストを作る（カメラは -Z 側から +Z を見る）
         bool SphereContext(int x, int y, int resolution, float yaw, float pitch, float time, Context& context)
         {
@@ -660,6 +223,7 @@ namespace MaterialGraphPreview
             context.Camera[1] = 0.0f;
             context.Camera[2] = -1.0f;
             context.Time = time;
+            context.PixelSize = 1.0f / (static_cast<float>(resolution) * 2.0f);
             // オブジェクト空間へ（pitch → yaw の逆回転）して球面 UV を求める
             const float cp = cosf(-pitch), sp = sinf(-pitch);
             const float oy = n[1] * cp - n[2] * sp;
@@ -669,7 +233,7 @@ namespace MaterialGraphPreview
             const float oz = -n[0] * sy + oz1 * cy;
             context.UV[0] = atan2f(ox, -oz) / (2.0f * kPi) + 0.5f;
             context.UV[1] = acosf(std::clamp(oy, -1.0f, 1.0f)) / kPi;
-            // 接線（U 方向）と従法線（-V 方向）
+            // 接線（+U 方向）と従法線（+V 方向 = 下向き）。エンジンの接空間と同じ向き
             float t[3] = {-n[2], 0.0f, n[0]};
             const float tl = sqrtf(t[0] * t[0] + t[2] * t[2]);
             if (tl > 1e-4f)
@@ -701,42 +265,34 @@ namespace MaterialGraphPreview
             context.Position[1] = 1.0f - v * 2.0f;
             context.Position[2] = 0.0f;
             context.Time = time;
+            context.PixelSize = 1.0f / static_cast<float>(resolution);
         }
 
-        // 中継ノードを飛ばして、入力ピンに実際に繋がっているノードを返す
         const MaterialGraphNode* ResolveSource(const MaterialGraph& graph, const MaterialGraphNode& node, size_t input)
         {
-            if (input >= node.InputPins.size())
-            {
-                return nullptr;
-            }
-            const MaterialGraphNode* source = nullptr;
-            if (const auto* link = graph.InputLink(node.InputPins[input]))
-            {
-                source = graph.FindPinNode(link->SourcePin);
-            }
-            for (int guard = 0; source && source->Kind == Kind::Reroute && guard < 256; ++guard)
-            {
-                const auto* link = graph.InputLink(source->InputPins[0]);
-                source = link ? graph.FindPinNode(link->SourcePin) : nullptr;
-            }
-            return source;
+            return MaterialGraphEval::ResolveSource(graph, node, input);
         }
 
-        // 色として表示する（sRGB 変換する）ノードか：テクスチャ / カラーパラメーター由来
+        // 色として表示する（sRGB 変換する）ノードか：テクスチャ（Color サンプラー）/ カラー由来
         bool IsColorNode(const MaterialGraph& graph, const MaterialGraphNode& node)
         {
-            if (node.Kind == Kind::TextureSample || node.Kind == Kind::ColorParameter)
+            const auto colorSource = [](const MaterialGraphNode* source) {
+                return source && ((source->Kind == Kind::TextureSample &&
+                                   static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color)) ||
+                                  source->Kind == Kind::ColorParameter || source->Kind == Kind::BlackBody ||
+                                  source->Kind == Kind::HueShift || source->Kind == Kind::Blend);
+            };
+            if (colorSource(&node))
             {
                 return true;
             }
             if (node.Kind == Kind::Multiply || node.Kind == Kind::Lerp || node.Kind == Kind::Add ||
-                node.Kind == Kind::Desaturation || node.Kind == Kind::Reroute)
+                node.Kind == Kind::Desaturation || node.Kind == Kind::Reroute || node.Kind == Kind::StaticSwitch ||
+                node.Kind == Kind::ComponentMask)
             {
                 for (size_t i = 0; i < (std::min)(node.InputPins.size(), size_t{2}); ++i)
                 {
-                    const auto* source = ResolveSource(graph, node, i);
-                    if (source && (source->Kind == Kind::TextureSample || source->Kind == Kind::ColorParameter))
+                    if (colorSource(ResolveSource(graph, node, i)))
                     {
                         return true;
                     }
@@ -745,124 +301,135 @@ namespace MaterialGraphPreview
             return false;
         }
 
-        // ---------------------------------------------------------------- 依存関係の解析
-        void RebuildTopology(const MaterialGraph& graph, GraphCache& cache)
+        // Normal 入力の値を接空間の法線（-1〜1）に直す。Color サンプラーの法線マップ（旧グラフ）は格納値に戻す
+        void DecodeNormalInput(const MaterialGraph& graph, const MaterialGraphNode& output, Value tangent, float out[3])
         {
-            cache.Index.clear();
-            cache.Index.reserve(graph.Nodes.size());
-            for (size_t i = 0; i < graph.Nodes.size(); ++i)
+            const auto* source = ResolveSource(graph, output, PinIndex(Pin::Normal));
+            tangent = MaterialGraphEval::Promote(tangent, 3);
+            if (source && source->Kind == Kind::TextureSample &&
+                static_cast<int>(source->Value[0]) == static_cast<int>(MaterialSamplerType::Color))
             {
-                cache.Index[graph.Nodes[i].Id] = i;
+                for (int i = 0; i < 3; ++i)
+                {
+                    tangent.V[i] = MaterialGraphEval::LinearToSrgb(tangent.V[i]) * 2.0f - 1.0f;
+                }
             }
-            // bit0: 空間（法線・位置・カメラ）依存、bit1: 時間依存
-            std::vector<uint8_t> flags(graph.Nodes.size(), 0);
-            std::vector<uint8_t> state(graph.Nodes.size(), 0);
-            std::function<uint8_t(size_t, int)> visit = [&](size_t index, int depth) -> uint8_t {
-                if (state[index] == 1 || depth > 256)
-                {
-                    return flags[index];
-                }
-                if (state[index] == 2)
-                {
-                    return 0;
-                }
-                state[index] = 2;
-                const auto& node = graph.Nodes[index];
-                uint8_t value = 0;
-                switch (node.Kind)
-                {
-                    case Kind::WorldPosition:
-                    case Kind::WorldNormal:
-                    case Kind::CameraVector:
-                    case Kind::Fresnel:
-                    case Kind::ReflectionVector:
-                        value |= 1;
-                        break;
-                    case Kind::Time:
-                        value |= 2;
-                        break;
-                    default:
-                        break;
-                }
-                for (size_t i = 0; i < node.InputPins.size(); ++i)
-                {
-                    const auto* link = graph.InputLink(node.InputPins[i]);
-                    const auto* source = link ? graph.FindPinNode(link->SourcePin) : nullptr;
-                    if (source)
-                    {
-                        const auto found = cache.Index.find(source->Id);
-                        if (found != cache.Index.end())
-                        {
-                            value |= visit(found->second, depth + 1);
-                        }
-                    }
-                    else
-                    {
-                        const auto special = GraphMath::DefaultInput(node.Kind, i);
-                        value |= special == GraphMath::SpecialInput::WorldPosition ? 1 : 0;
-                        value |= special == GraphMath::SpecialInput::Time ? 2 : 0;
-                    }
-                }
-                flags[index] = value;
-                state[index] = 1;
-                return value;
-            };
-            cache.Spatial.assign(graph.Nodes.size(), 0);
-            cache.TimeDependent.assign(graph.Nodes.size(), 0);
-            cache.Animated = false;
-            for (size_t i = 0; i < graph.Nodes.size(); ++i)
-            {
-                const uint8_t value = visit(i, 0);
-                cache.Spatial[i] = value & 1;
-                cache.TimeDependent[i] = (value & 2) ? 1 : 0;
-                cache.Animated |= (value & 2) != 0;
-            }
+            out[0] = tangent.V[0];
+            out[1] = tangent.V[1];
+            out[2] = tangent.V[2];
         }
 
-        // ---------------------------------------------------------------- Material Output の簡易 PBR
-        ImU32 ShadeOutput(Evaluator& evaluator, const MaterialGraph& graph, const MaterialGraphNode& output, int x,
-                          int y, int resolution)
+        float ClipValue(const MaterialGraph& graph)
         {
-            const Context& c = evaluator.Ctx();
-            auto in = [&](size_t index) {
-                Value v = evaluator.Input(output, index, 0);
+            return graph.Settings.AlphaCutoff >= 0.0f ? graph.Settings.AlphaCutoff : kDefaultClip;
+        }
+
+        // ---------------------------------------------------------------- Material Output の簡易 PBR（POM / 高さ法線込み）
+        ImU32 ShadeOutput(Evaluator& evaluator, const MaterialGraph& graph, const MaterialGraphNode& output,
+                          const Context& base, int x, int y, int resolution)
+        {
+            Context c = base;
+            const bool heightLinked = ResolveSource(graph, output, PinIndex(Pin::Height)) != nullptr;
+            const bool normalLinked = ResolveSource(graph, output, PinIndex(Pin::Normal)) != nullptr;
+            float depth = 0.0f;
+            if (heightLinked)
+            {
+                evaluator.Reset(c);
+                depth = std::clamp(evaluator.Input(output, PinIndex(Pin::ParallaxDepth), 0).V[0], 0.0f, 0.2f);
+            }
+            // ---- POM（エンジンの ApplyAssetParallaxEx と同じ向き：uv - (V・T, V・B) / (V・N) * 深さ * 層）
+            if (depth > 0.0f)
+            {
+                const float vt = Dot3(c.Camera, c.Tangent);
+                const float vb = Dot3(c.Camera, c.Bitangent);
+                const float vn = Dot3(c.Camera, c.Normal);
+                if (vn > 0.02f)
+                {
+                    const float fade = std::clamp((vn - 0.02f) / 0.13f, 0.0f, 1.0f);
+                    const float scale = depth * fade * fade * (3.0f - 2.0f * fade) / (std::max)(vn, 0.1f);
+                    const float offset[2] = {vt * scale, vb * scale};
+                    const int steps = 24;
+                    float previous = 0.0f;
+                    float hitLayer = 1.0f;
+                    for (int i = 0; i <= steps; ++i)
+                    {
+                        const float layer = static_cast<float>(i) / steps;
+                        const float h = Saturate(evaluator
+                                                     .InputAt(output, PinIndex(Pin::Height), base.UV[0] - offset[0] * layer,
+                                                              base.UV[1] - offset[1] * layer)
+                                                     .V[0]);
+                        const float difference = (1.0f - h) - layer;
+                        if (difference <= 0.0f)
+                        {
+                            const float t = i > 0 ? previous / (std::max)(previous - difference, 1e-6f) : 0.0f;
+                            hitLayer = i > 0 ? (static_cast<float>(i - 1) + t) / steps : 0.0f;
+                            break;
+                        }
+                        previous = difference;
+                    }
+                    c.UV[0] = base.UV[0] - offset[0] * hitLayer;
+                    c.UV[1] = base.UV[1] - offset[1] * hitLayer;
+                }
+            }
+
+            // ---- 法線：Normal 入力（Normal Intensity で xy を拡大）、無ければ高さの勾配から作る（エンジンと同じ）
+            float tangentNormal[3] = {0.0f, 0.0f, 1.0f};
+            bool hasTangentNormal = false;
+            if (!normalLinked && depth > 0.0f)
+            {
+                const float e = 1.0f / 256.0f;
+                const float h0 = evaluator.InputAt(output, PinIndex(Pin::Height), c.UV[0], c.UV[1]).V[0];
+                const float hu = evaluator.InputAt(output, PinIndex(Pin::Height), c.UV[0] + e, c.UV[1]).V[0];
+                const float hv = evaluator.InputAt(output, PinIndex(Pin::Height), c.UV[0], c.UV[1] + e).V[0];
+                tangentNormal[0] = -(hu - h0) / e * depth;
+                tangentNormal[1] = -(hv - h0) / e * depth;
+                hasTangentNormal = true;
+            }
+            evaluator.Reset(c);
+            auto in = [&](Pin pin) {
+                Value v = evaluator.Input(output, PinIndex(pin), 0);
                 if (v.N == 1)
                 {
                     v.V[1] = v.V[2] = v.V[3] = v.V[0];
                 }
                 return v;
             };
-            const Value baseValue = in(0);
-            const float base[3] = {Saturate(baseValue.V[0]), Saturate(baseValue.V[1]), Saturate(baseValue.V[2])};
-            const float metallic = Saturate(in(1).V[0]);
-            const float roughness = std::clamp(in(2).V[0], 0.04f, 1.0f);
-            const Value emissive = in(4);
-            const float opacity = Saturate(in(5).V[0]);
-            const float mask = in(6).V[0];
-            const float ao = Saturate(in(7).V[0]);
-            if (ResolveSource(graph, output, 6) && mask < 0.3333f)
+            if (normalLinked)
             {
-                return 0; // Opacity Mask（UE 既定のクリップ値 0.3333）
+                DecodeNormalInput(graph, output, evaluator.Input(output, PinIndex(Pin::Normal), 0), tangentNormal);
+                const float intensity = (std::max)(in(Pin::NormalIntensity).V[0], 0.0f);
+                tangentNormal[0] *= intensity;
+                tangentNormal[1] *= intensity;
+                hasTangentNormal = true;
+            }
+            const Value baseValue = in(Pin::BaseColor);
+            const float baseColor[3] = {Saturate(baseValue.V[0]), Saturate(baseValue.V[1]), Saturate(baseValue.V[2])};
+            const float metallic = Saturate(in(Pin::Metallic).V[0]);
+            const float roughness = std::clamp(in(Pin::Roughness).V[0], 0.04f, 1.0f);
+            const Value emissive = in(Pin::Emissive);
+            float opacity = Saturate(in(Pin::Opacity).V[0]);
+            const float mask = in(Pin::OpacityMask).V[0];
+            const float ao = Saturate(in(Pin::AO).V[0]);
+            const float transmission = Saturate(in(Pin::Transmission).V[0]);
+            if (ResolveSource(graph, output, PinIndex(Pin::OpacityMask)) && mask < ClipValue(graph))
+            {
+                return 0; // Opacity Mask
+            }
+            if (ResolveSource(graph, output, PinIndex(Pin::Transmission)))
+            {
+                opacity *= 1.0f - 0.7f * transmission; // 透過の目安（背景が透けて見える）
             }
 
-            // 法線：接続されていれば接空間の値を適用。テクスチャの場合は sRGB → 0〜1 → -1〜1 に戻す
             float n[3] = {c.Normal[0], c.Normal[1], c.Normal[2]};
-            if (const auto* normalSource = ResolveSource(graph, output, 3))
+            if (hasTangentNormal)
             {
-                Value tangent = in(3);
-                if (normalSource->Kind == Kind::TextureSample)
-                {
-                    for (int i = 0; i < 3; ++i)
-                    {
-                        tangent.V[i] = LinearToSrgb(tangent.V[i]) * 2.0f - 1.0f;
-                    }
-                }
                 float p[3];
                 for (int i = 0; i < 3; ++i)
                 {
-                    p[i] = c.Tangent[i] * tangent.V[0] + c.Bitangent[i] * tangent.V[1] + c.Normal[i] * tangent.V[2];
+                    p[i] = c.Tangent[i] * tangentNormal[0] + c.Bitangent[i] * tangentNormal[1] +
+                           c.Normal[i] * tangentNormal[2];
                 }
-                const float length = sqrtf(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+                const float length = sqrtf(Dot3(p, p));
                 if (length > 1e-4f)
                 {
                     for (int i = 0; i < 3; ++i)
@@ -874,21 +441,21 @@ namespace MaterialGraphPreview
 
             const float v[3] = {c.Camera[0], c.Camera[1], c.Camera[2]}; // 表面 → カメラ
             float l[3] = {-0.45f, 0.65f, -0.6f};
-            const float ll = sqrtf(l[0] * l[0] + l[1] * l[1] + l[2] * l[2]);
+            const float ll = sqrtf(Dot3(l, l));
             for (float& k : l)
             {
                 k /= ll;
             }
             float h[3] = {l[0] + v[0], l[1] + v[1], l[2] + v[2]};
-            const float hl = (std::max)(sqrtf(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]), 1e-5f);
+            const float hl = (std::max)(sqrtf(Dot3(h, h)), 1e-5f);
             for (float& k : h)
             {
                 k /= hl;
             }
-            const float nDotL = Saturate(n[0] * l[0] + n[1] * l[1] + n[2] * l[2]);
-            const float nDotV = Saturate(n[0] * v[0] + n[1] * v[1] + n[2] * v[2]) + 1e-4f;
-            const float nDotH = Saturate(n[0] * h[0] + n[1] * h[1] + n[2] * h[2]);
-            const float vDotH = Saturate(v[0] * h[0] + v[1] * h[1] + v[2] * h[2]);
+            const float nDotL = Saturate(Dot3(n, l));
+            const float nDotV = Saturate(Dot3(n, v)) + 1e-4f;
+            const float nDotH = Saturate(Dot3(n, h));
+            const float vDotH = Saturate(Dot3(v, h));
             const float a = roughness * roughness;
             const float a2 = a * a;
             const float d = a2 / (kPi * powf(nDotH * nDotH * (a2 - 1.0f) + 1.0f, 2.0f) + 1e-6f);
@@ -902,14 +469,14 @@ namespace MaterialGraphPreview
             float color[3];
             for (int i = 0; i < 3; ++i)
             {
-                const float f0 = 0.04f + (base[i] - 0.04f) * metallic;
+                const float f0 = 0.04f + (baseColor[i] - 0.04f) * metallic;
                 const float f = f0 + (1.0f - f0) * fresnelWeight;
                 const float specular = d * f * g / (4.0f * nDotL * nDotV + 1e-4f);
-                const float diffuse = base[i] * (1.0f - metallic) / kPi;
+                const float diffuse = baseColor[i] * (1.0f - metallic) / kPi;
                 const float ambientColor = (i == 2 ? 0.30f : 0.22f) * sky + 0.06f * (1.0f - sky);
                 const float ambient = ambientColor * ao *
-                                      (base[i] * (1.0f - metallic) + (f0 + (1.0f - f0) * ambientWeight) *
-                                                                         (1.0f - roughness * 0.7f));
+                                      (baseColor[i] * (1.0f - metallic) +
+                                       (f0 + (1.0f - f0) * ambientWeight) * (1.0f - roughness * 0.7f));
                 color[i] = (diffuse + specular) * nDotL * light + ambient + (std::max)(emissive.V[i], 0.0f);
                 color[i] = color[i] / (1.0f + color[i]); // Reinhard
             }
@@ -929,7 +496,8 @@ namespace MaterialGraphPreview
         // timeOnly: アニメーション更新では Time に依存するノードと Output だけを評価し直す（最適化）
         void EvaluateImages(const MaterialGraph& graph, GraphCache& cache, float time, bool timeOnly)
         {
-            Evaluator evaluator(graph, cache);
+            Evaluator evaluator(graph, cache.Topo, PreviewSampler());
+            const auto& topology = cache.Topo;
             // 1) 値ノード：平面用と球用の 2 パス。各画素で全ノードをメモ化して評価（O(ノード数 × 画素数)）
             for (int pass = 0; pass < 2; ++pass)
             {
@@ -938,8 +506,8 @@ namespace MaterialGraphPreview
                 for (size_t i = 0; i < graph.Nodes.size(); ++i)
                 {
                     const auto& node = graph.Nodes[i];
-                    if (!HasPreview(node) || node.Kind == Kind::Output || (cache.Spatial[i] != 0) != sphere ||
-                        cache.Collapsed.contains(node.Id) || (timeOnly && !cache.TimeDependent[i]))
+                    if (!HasPreview(node) || node.Kind == Kind::Output || (topology.Spatial[i] != 0) != sphere ||
+                        cache.Collapsed.contains(node.Id) || (timeOnly && !topology.TimeDependent[i]))
                     {
                         continue;
                     }
@@ -978,8 +546,22 @@ namespace MaterialGraphPreview
                         evaluator.Reset(context);
                         for (size_t t = 0; t < targets.size(); ++t)
                         {
+                            Value value = evaluator.Node(targets[t].first);
+                            // 法線系ノードは -1〜1 を 0〜1 に直して表示する（UE と同じ見え方）
+                            const Kind kind = graph.Nodes[targets[t].first].Kind;
+                            if (kind == Kind::NormalFromHeight || kind == Kind::BlendAngleCorrectedNormals ||
+                                kind == Kind::FlattenNormal ||
+                                (kind == Kind::TextureSample &&
+                                 static_cast<int>(graph.Nodes[targets[t].first].Value[0]) ==
+                                     static_cast<int>(MaterialSamplerType::Normal)))
+                            {
+                                for (int c = 0; c < 3; ++c)
+                                {
+                                    value.V[c] = value.V[c] * 0.5f + 0.5f;
+                                }
+                            }
                             targets[t].second->Pixels[static_cast<size_t>(y) * kNodeResolution + x] =
-                                PackValue(evaluator.Node(targets[t].first), colorNode[t] != 0);
+                                PackValue(value, colorNode[t] != 0);
                         }
                     }
                 }
@@ -988,7 +570,7 @@ namespace MaterialGraphPreview
             for (const auto& node : graph.Nodes)
             {
                 if (node.Kind != Kind::Output || cache.Collapsed.contains(node.Id) ||
-                    (timeOnly && !cache.TimeDependent[cache.Index.at(node.Id)]))
+                    (timeOnly && !topology.TimeDependent[topology.Index.at(node.Id)]))
                 {
                     continue;
                 }
@@ -1004,9 +586,8 @@ namespace MaterialGraphPreview
                         Context context;
                         if (SphereContext(x, y, kOutputResolution, 0.6f, 0.25f, time, context))
                         {
-                            evaluator.Reset(context);
                             image.Pixels[static_cast<size_t>(y) * kOutputResolution + x] =
-                                ShadeOutput(evaluator, graph, node, x, y, kOutputResolution);
+                                ShadeOutput(evaluator, graph, node, context, x, y, kOutputResolution);
                         }
                     }
                 }
@@ -1042,16 +623,16 @@ namespace MaterialGraphPreview
             }
             if (changed)
             {
-                RebuildTopology(graph, cache);
+                MaterialGraphEval::BuildTopology(graph, cache.Topo);
             }
-            if (changed || (cache.Animated && now - cache.LastEvaluation >= kAnimatedInterval))
+            if (changed || (cache.Topo.Animated && now - cache.LastEvaluation >= kAnimatedInterval))
             {
                 cache.Signature = signature;
                 cache.LastEvaluation = now;
                 // 削除済みノードの画像を捨てる
                 for (auto it = cache.Images.begin(); it != cache.Images.end();)
                 {
-                    if (cache.Index.contains(it->first))
+                    if (cache.Topo.Index.contains(it->first))
                     {
                         ++it;
                         continue;
@@ -1177,7 +758,7 @@ namespace MaterialGraphPreview
                 image.Dirty = false;
             }
             image.Texture->UnusedFrames = 0;
-            draw->AddImage(ImTextureRef(image.Texture), min, max);
+            draw->AddImage(image.Texture->GetTexRef(), min, max);
         }
         else
         {
@@ -1209,6 +790,14 @@ namespace MaterialGraphPreview
             hash = Mix(hash, link.SourcePin);
             hash = Mix(hash, link.TargetPin);
         }
+        const auto& settings = graph.Settings;
+        hash = Mix(hash, static_cast<uint64_t>(settings.Surface + 8));
+        hash = Mix(hash, static_cast<uint64_t>(settings.Cull + 8));
+        hash = Mix(hash, static_cast<uint64_t>(settings.ShadingModel + 8));
+        hash = Mix(hash, static_cast<uint64_t>(settings.ShadowMode + 8));
+        hash = Mix(hash, FloatBits(settings.AlphaCutoff));
+        hash = Mix(hash, static_cast<uint64_t>(settings.BakeResolution));
+        hash = Mix(hash, FloatBits(settings.BakeTime));
         return hash;
     }
 
@@ -1217,6 +806,11 @@ namespace MaterialGraphPreview
         const MaterialGraphNode* Source(const MaterialGraph& graph, const MaterialGraphNode& node, size_t input)
         {
             return ResolveSource(graph, node, input);
+        }
+
+        int SamplerOf(const MaterialGraphNode& node)
+        {
+            return std::clamp(static_cast<int>(node.Value[0]), 0, 2);
         }
 
         // ピクセルに依存しない（＝定数として畳み込める）か
@@ -1242,21 +836,39 @@ namespace MaterialGraphPreview
                 case Kind::Noise:
                 case Kind::DDX:
                 case Kind::DDY:
+                case Kind::LinearGradient:
+                case Kind::RadialGradient:
+                case Kind::Voronoi:
+                case Kind::NormalFromHeight:
+                case Kind::BumpOffset:
                     return false;
+                case Kind::StaticSwitch: {
+                    // 選ばれている側だけが結果に影響する
+                    const size_t chosen = node.Value[0] > 0.5f ? 0 : 1;
+                    const auto* source = Source(graph, node, chosen);
+                    return !source || IsUniform(graph, *source, depth + 1);
+                }
                 default:
                     break;
             }
             for (size_t i = 0; i < node.InputPins.size(); ++i)
             {
-                if (const auto* source = Source(graph, node, i); source && !IsUniform(graph, *source, depth + 1))
+                if (const auto* source = Source(graph, node, i))
                 {
-                    return false;
+                    if (!IsUniform(graph, *source, depth + 1))
+                    {
+                        return false;
+                    }
+                }
+                else if (GraphMath::DefaultInput(node.Kind, i) != GraphMath::SpecialInput::None)
+                {
+                    return false; // 未接続でも UV / Time / World Position を使うピン
                 }
             }
             return true;
         }
 
-        // UV 未接続（または UV ノード直結）の Texture Sample
+        // UV 未接続（または UV ノード / TexCoord(1,1) 直結）の Texture Sample
         const MaterialGraphNode* PlainTexture(const MaterialGraph& graph, const MaterialGraphNode* node)
         {
             if (!node || node->Kind != Kind::TextureSample || node->Texture == 0)
@@ -1264,21 +876,183 @@ namespace MaterialGraphPreview
                 return nullptr;
             }
             const auto* uv = Source(graph, *node, 0);
-            const bool plainCoordinate = uv && uv->Kind == Kind::TextureCoordinate && uv->Value[0] == 1.0f &&
-                                         uv->Value[1] == 1.0f;
+            const bool plainCoordinate =
+                uv && uv->Kind == Kind::TextureCoordinate && uv->Value[0] == 1.0f && uv->Value[1] == 1.0f;
             return (!uv || uv->Kind == Kind::UV || plainCoordinate) ? node : nullptr;
         }
 
-        struct InputBake
+        // ノード出力の定数値（IsUniform のノードだけに使う）
+        struct UniformReader
         {
-            bool Linked = false;
-            bool Constant = false;
-            Value Uniform;                 // Constant 時の値（テクスチャ時は乗算する色）
-            AssetHandle Texture = 0;       // テクスチャ（× Uniform）
+            const MaterialGraph& Graph;
+            const Topology& Topo;
+            Evaluator& Eval;
+            Context Neutral;
+
+            Value Of(const MaterialGraphNode& node)
+            {
+                const auto found = Topo.Index.find(node.Id);
+                if (found == Topo.Index.end())
+                {
+                    return {};
+                }
+                Eval.Reset(Neutral);
+                return Eval.Node(found->second);
+            }
+
+            Value PinValue(const MaterialGraphNode& output, Pin pin)
+            {
+                Eval.Reset(Neutral);
+                return Eval.Input(output, PinIndex(pin), 0);
+            }
+
+            // ピクセルごとに変わる入力の平均（エンジンが定数しか持たない項目用）
+            float Average(const MaterialGraphNode& output, Pin pin)
+            {
+                double sum = 0.0;
+                constexpr int kGrid = 8;
+                for (int y = 0; y < kGrid; ++y)
+                {
+                    for (int x = 0; x < kGrid; ++x)
+                    {
+                        Context context = Neutral;
+                        context.UV[0] = (x + 0.5f) / kGrid;
+                        context.UV[1] = (y + 0.5f) / kGrid;
+                        context.Position[0] = context.UV[0] * 2.0f - 1.0f;
+                        context.Position[1] = 1.0f - context.UV[1] * 2.0f;
+                        Eval.Reset(context);
+                        sum += Eval.Input(output, PinIndex(pin), 0).V[0];
+                    }
+                }
+                return static_cast<float>(sum / (kGrid * kGrid));
+            }
         };
+
+        // 色入力が「テクスチャ（RGB / RGBA）× 定数」の形か（Base Color / Emissive をスロットへ直接割り当てる）
+        struct ColorMatch
+        {
+            AssetHandle Texture = 0;
+            Value Tint; // 乗算する色（RGBA）
+        };
+
+        bool MatchColorTexture(const MaterialGraph& graph, UniformReader& reader, const MaterialGraphNode* source,
+                               ColorMatch& match)
+        {
+            const auto plainColor = [&](const MaterialGraphNode* node) -> const MaterialGraphNode* {
+                if (!node)
+                {
+                    return nullptr;
+                }
+                if (node->Kind == Kind::ComponentMask)
+                {
+                    // R,G,B（,A）の先頭からの連続マスクなら同じテクスチャとして扱う
+                    const bool rgb = node->Value[0] > 0.5f && node->Value[1] > 0.5f && node->Value[2] > 0.5f;
+                    node = rgb ? Source(graph, *node, 0) : nullptr;
+                }
+                const auto* texture = PlainTexture(graph, node);
+                return texture && SamplerOf(*texture) == static_cast<int>(MaterialSamplerType::Color) ? texture : nullptr;
+            };
+            if (const auto* texture = plainColor(source))
+            {
+                match.Texture = texture->Texture;
+                match.Tint = Value{{1.0f, 1.0f, 1.0f, 1.0f}, 4};
+                return true;
+            }
+            if (source && source->Kind == Kind::Multiply)
+            {
+                for (size_t side = 0; side < 2; ++side)
+                {
+                    const auto* texture = plainColor(Source(graph, *source, side));
+                    const auto* tint = Source(graph, *source, 1 - side);
+                    if (texture && (!tint || IsUniform(graph, *tint)))
+                    {
+                        match.Texture = texture->Texture;
+                        Value value = tint ? reader.Of(*tint) : Value{{1.0f, 1.0f, 1.0f, 1.0f}, 4};
+                        if (value.N == 1)
+                        {
+                            value.V[1] = value.V[2] = value.V[0];
+                            value.V[3] = 1.0f;
+                        }
+                        else if (value.N < 4)
+                        {
+                            value.V[3] = 1.0f;
+                        }
+                        value.N = 4;
+                        match.Tint = value;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // スカラー入力が「テクスチャの 1 チャンネル × 定数」の形か（MR / AO / Height をスロットへ直接割り当てる）
+        struct ChannelMatch
+        {
+            AssetHandle Texture = 0;
+            int Channel = 0;
+            float Factor = 1.0f;
+        };
+
+        bool MatchTextureChannel(const MaterialGraph& graph, UniformReader& reader, const MaterialGraphNode* source,
+                                 ChannelMatch& match)
+        {
+            const auto channelOf = [&](const MaterialGraphNode* node, int& channel) -> const MaterialGraphNode* {
+                if (!node)
+                {
+                    return nullptr;
+                }
+                channel = 0; // スカラー入力へは .x（R）が入る
+                if (node->Kind == Kind::ComponentMask)
+                {
+                    int count = 0;
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        if (node->Value[c] > 0.5f)
+                        {
+                            channel = count == 0 ? c : channel;
+                            ++count;
+                        }
+                    }
+                    if (count != 1)
+                    {
+                        return nullptr;
+                    }
+                    node = Source(graph, *node, 0);
+                }
+                const auto* texture = PlainTexture(graph, node);
+                return texture && SamplerOf(*texture) != static_cast<int>(MaterialSamplerType::Normal) ? texture : nullptr;
+            };
+            int channel = 0;
+            if (const auto* texture = channelOf(source, channel))
+            {
+                match = {texture->Texture, channel, 1.0f};
+                return true;
+            }
+            if (source && source->Kind == Kind::Multiply)
+            {
+                for (size_t side = 0; side < 2; ++side)
+                {
+                    const auto* texture = channelOf(Source(graph, *source, side), channel);
+                    const auto* factor = Source(graph, *source, 1 - side);
+                    if (texture && (!factor || IsUniform(graph, *factor)))
+                    {
+                        const Value value = factor ? reader.Of(*factor) : Value{{1.0f}, 1};
+                        if (value.N != 1)
+                        {
+                            return false;
+                        }
+                        match = {texture->Texture, channel, value.V[0]};
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
     } // namespace
 
-    BakeResult BakeToMaterial(const MaterialGraph& graph, const MaterialAssetData& current, uint32_t managedSlots)
+    BakeResult BakeToMaterial(const MaterialGraph& graph, const MaterialAssetData& current, uint32_t managedSlots,
+                              const BakedTextures* baked)
     {
         BakeResult result;
         result.Data = current;
@@ -1298,88 +1072,98 @@ namespace MaterialGraphPreview
         }
         result.HasOutput = true;
 
-        GraphCache cache;
-        RebuildTopology(graph, cache);
-        Evaluator evaluator(graph, cache);
+        Topology topology;
+        MaterialGraphEval::BuildTopology(graph, topology);
+        Evaluator evaluator(graph, topology, PreviewSampler());
         Context neutral;
         neutral.UV[0] = neutral.UV[1] = 0.5f;
+        neutral.Normal[0] = neutral.Normal[1] = 0.0f;
+        neutral.Normal[2] = -1.0f;
+        neutral.Time = graph.Settings.BakeTime;
+        UniformReader reader{graph, topology, evaluator, neutral};
 
-        const auto& definition = MaterialGraph::Definition(Kind::Output);
-        auto bake = [&](size_t input) {
-            InputBake bakeResult;
-            const MaterialGraphNode* source = Source(graph, *output, input);
-            bakeResult.Linked = source != nullptr;
-            evaluator.Reset(neutral);
-            if (!source || IsUniform(graph, *source))
-            {
-                bakeResult.Constant = true;
-                bakeResult.Uniform = evaluator.Input(*output, input, 0);
-                return bakeResult;
-            }
-            if (const auto* texture = PlainTexture(graph, source))
-            {
-                bakeResult.Texture = texture->Texture;
-                bakeResult.Uniform.V[0] = bakeResult.Uniform.V[1] = bakeResult.Uniform.V[2] =
-                    bakeResult.Uniform.V[3] = 1.0f;
-                bakeResult.Uniform.N = 4;
-                return bakeResult;
-            }
-            if (source->Kind == Kind::Multiply)
-            {
-                const auto* a = Source(graph, *source, 0);
-                const auto* b = Source(graph, *source, 1);
-                const MaterialGraphNode* texture = PlainTexture(graph, a);
-                const MaterialGraphNode* tint = b;
-                size_t tintInput = 1;
-                if (!texture)
-                {
-                    texture = PlainTexture(graph, b);
-                    tint = a;
-                    tintInput = 0;
-                }
-                if (texture && (!tint || IsUniform(graph, *tint)))
-                {
-                    bakeResult.Texture = texture->Texture;
-                    evaluator.Reset(neutral);
-                    bakeResult.Uniform = evaluator.Input(*source, tintInput, 0);
-                    if (bakeResult.Uniform.N == 1)
-                    {
-                        bakeResult.Uniform.V[1] = bakeResult.Uniform.V[2] = bakeResult.Uniform.V[0];
-                        bakeResult.Uniform.V[3] = 1.0f;
-                    }
-                    else if (bakeResult.Uniform.N < 4)
-                    {
-                        bakeResult.Uniform.V[3] = 1.0f;
-                    }
-                    return bakeResult;
-                }
-            }
-            result.Notes.push_back(std::string(definition.Inputs[input].Name) +
-                                   ": ピクセルごとに変わる式（UV / Fresnel / Time 等）はエンジン側が未対応のため反映していません");
-            return bakeResult;
+        const auto source = [&](Pin pin) {
+            return Source(graph, *output, PinIndex(pin));
         };
-        auto scalar = [](const Value& v) {
-            return std::isfinite(v.V[0]) ? v.V[0] : 0.0f;
+        const auto uniformPin = [&](Pin pin) {
+            const auto* node = source(pin);
+            return !node || IsUniform(graph, *node);
         };
-        auto setSlot = [&](MaterialTextureSlot slot, AssetHandle texture) {
-            const uint32_t bit = 1u << static_cast<uint32_t>(slot);
+        const auto bit = [](MaterialTextureSlot slot) {
+            return 1u << static_cast<uint32_t>(slot);
+        };
+        const auto setSlot = [&](MaterialTextureSlot slot, AssetHandle texture) {
             if (texture != 0)
             {
                 result.Data.Textures[static_cast<size_t>(slot)] = texture;
-                result.ManagedSlots |= bit;
+                result.ManagedSlots |= bit(slot);
             }
-            else if (managedSlots & bit)
+            else if (managedSlots & bit(slot))
             {
                 result.Data.Textures[static_cast<size_t>(slot)] = 0; // グラフが設定したものだけ解除する
             }
         };
-
-        // 0: Base Color
-        {
-            const InputBake b = bake(0);
-            if (b.Constant || b.Texture)
+        // ピクセルごとの式：ベイク済みテクスチャがあれば割り当てる。無ければ（ベイク中）今のスロットを保つ
+        const auto useBaked = [&](MaterialTextureSlot slot) {
+            result.TextureBakeMask |= bit(slot);
+            if (baked && (baked->Mask & bit(slot)) && baked->Textures[static_cast<size_t>(slot)] != 0)
             {
-                Value color = b.Uniform;
+                setSlot(slot, baked->Textures[static_cast<size_t>(slot)]);
+                return true;
+            }
+            result.ManagedSlots |= managedSlots & bit(slot);
+            result.BakeMissing = true;
+            return false;
+        };
+        const auto scalar = [](const Value& v) {
+            return std::isfinite(v.V[0]) ? v.V[0] : 0.0f;
+        };
+        // エンジンが定数しか持たない項目：接続されていれば値（ピクセルごとの式なら平均）を入れる
+        const auto scalarPin = [&](Pin pin, float minimum, float maximum, float& target) {
+            const auto* node = source(pin);
+            if (!node)
+            {
+                return false;
+            }
+            float value = 0.0f;
+            if (IsUniform(graph, *node))
+            {
+                value = scalar(reader.PinValue(*output, pin));
+            }
+            else
+            {
+                value = reader.Average(*output, pin);
+                result.Notes.push_back(std::string(MaterialGraph::Definition(Kind::Output).Inputs[PinIndex(pin)].Name) +
+                                       ": エンジンは定数のみ対応のため、UV 全体の平均値を使います");
+            }
+            target = std::clamp(std::isfinite(value) ? value : minimum, minimum, maximum);
+            return true;
+        };
+
+        // ---- 0 / 5 / 6: Base Color とアルファ（Opacity / Opacity Mask）
+        {
+            const bool maskPerPixel = source(Pin::OpacityMask) && !uniformPin(Pin::OpacityMask);
+            const bool opacityPerPixel = source(Pin::Opacity) && !uniformPin(Pin::Opacity);
+            if (maskPerPixel && opacityPerPixel)
+            {
+                result.Notes.push_back("Opacity と Opacity Mask の両方がピクセルごとの式です。エンジンは 1 つのアルファ"
+                                       "なので Opacity Mask（Masked）を優先します");
+            }
+            result.Alpha = AlphaSource::BaseColor;
+            // The engine clips the BaseColor texture alpha, so constant masks must be baked too.
+            if (source(Pin::OpacityMask))
+            {
+                result.Alpha = AlphaSource::OpacityMask;
+            }
+            else if (opacityPerPixel)
+            {
+                result.Alpha = AlphaSource::Opacity;
+            }
+            const bool perPixelAlpha = result.Alpha != AlphaSource::BaseColor;
+            ColorMatch colorMatch;
+            if (!perPixelAlpha && uniformPin(Pin::BaseColor))
+            {
+                Value color = reader.PinValue(*output, Pin::BaseColor);
                 if (color.N == 1)
                 {
                     color.V[1] = color.V[2] = color.V[0];
@@ -1388,52 +1172,117 @@ namespace MaterialGraphPreview
                 {
                     result.Data.BaseColor[i] = Saturate(color.V[i]);
                 }
-                if (color.N == 4 && !(output->InputPins.size() > 5 && Source(graph, *output, 5)))
+                result.Data.BaseColor[3] = 1.0f;
+                if (color.N == 4)
                 {
                     result.Data.BaseColor[3] = Saturate(color.V[3]);
                 }
+                setSlot(MaterialTextureSlot::BaseColor, 0);
             }
-            setSlot(MaterialTextureSlot::BaseColor, b.Texture);
+            else if (!perPixelAlpha && MatchColorTexture(graph, reader, source(Pin::BaseColor), colorMatch))
+            {
+                for (int i = 0; i < 3; ++i)
+                {
+                    result.Data.BaseColor[i] = Saturate(colorMatch.Tint.V[i]);
+                }
+                result.Data.BaseColor[3] = Saturate(colorMatch.Tint.V[3]);
+                setSlot(MaterialTextureSlot::BaseColor, colorMatch.Texture);
+            }
+            else if (useBaked(MaterialTextureSlot::BaseColor))
+            {
+                result.Data.BaseColor = {1.0f, 1.0f, 1.0f, 1.0f}; // 色とアルファはテクスチャに焼いてある
+            }
+            // 半透明 / マスク
+            if (result.Alpha == AlphaSource::Opacity)
+            {
+                result.Data.Surface = MaterialSurface::Transparent;
+                result.Data.DepthWrite = false;
+            }
+            else if (result.Alpha == AlphaSource::OpacityMask)
+            {
+                result.Data.Surface = MaterialSurface::Masked;
+                result.Data.DepthWrite = true;
+                result.Data.AlphaCutoff = ClipValue(graph);
+            }
+            else if (source(Pin::Opacity))
+            {
+                const float alpha = Saturate(scalar(reader.PinValue(*output, Pin::Opacity)));
+                result.Data.BaseColor[3] *= alpha;
+                if (alpha < 0.999f)
+                {
+                    result.Data.Surface = MaterialSurface::Transparent;
+                    result.Data.DepthWrite = false;
+                }
+            }
         }
-        // 1: Metallic / 2: Roughness（テクスチャはエンジンの MetallicRoughness スロット：G=Roughness, B=Metallic）
+        // ---- 1 / 2: Metallic / Roughness（エンジンの MR テクスチャは R = Metallic, G = Roughness）
         {
-            const InputBake metallic = bake(1);
-            const InputBake roughness = bake(2);
-            if (metallic.Constant)
+            if (uniformPin(Pin::Metallic) && uniformPin(Pin::Roughness))
             {
-                result.Data.Metallic = Saturate(scalar(metallic.Uniform));
+                result.Data.Metallic = Saturate(scalar(reader.PinValue(*output, Pin::Metallic)));
+                result.Data.Roughness = Saturate(scalar(reader.PinValue(*output, Pin::Roughness)));
+                setSlot(MaterialTextureSlot::MetallicRoughness, 0);
             }
-            else if (metallic.Texture)
+            else
             {
-                result.Data.Metallic = Saturate(scalar(metallic.Uniform));
-            }
-            if (roughness.Constant || roughness.Texture)
-            {
-                result.Data.Roughness = Saturate(scalar(roughness.Uniform));
-            }
-            AssetHandle texture = metallic.Texture ? metallic.Texture : roughness.Texture;
-            if (metallic.Texture && roughness.Texture && metallic.Texture != roughness.Texture)
-            {
-                result.Notes.push_back("Metallic と Roughness に別のテクスチャが接続されています。"
-                                       "エンジンは 1 枚（G=Roughness, B=Metallic）なので Metallic 側を使います");
-            }
-            setSlot(MaterialTextureSlot::MetallicRoughness, texture);
-        }
-        // 3: Normal（テクスチャのみ）
-        {
-            const InputBake normal = bake(3);
-            setSlot(MaterialTextureSlot::Normal, normal.Texture);
-            if (normal.Linked && normal.Constant)
-            {
-                result.Notes.push_back("Normal: 定数の法線はエンジンに対応する項目が無いため反映していません");
+                ChannelMatch metallic;
+                ChannelMatch roughness;
+                if (MatchTextureChannel(graph, reader, source(Pin::Metallic), metallic) &&
+                    MatchTextureChannel(graph, reader, source(Pin::Roughness), roughness) &&
+                    metallic.Texture == roughness.Texture && metallic.Channel == 0 && roughness.Channel == 1)
+                {
+                    result.Data.Metallic = Saturate(metallic.Factor);
+                    result.Data.Roughness = Saturate(roughness.Factor);
+                    setSlot(MaterialTextureSlot::MetallicRoughness, metallic.Texture);
+                }
+                else if (useBaked(MaterialTextureSlot::MetallicRoughness))
+                {
+                    result.Data.Metallic = 1.0f; // 値はテクスチャ（R / G）に焼いてある
+                    result.Data.Roughness = 1.0f;
+                }
             }
         }
-        // 4: Emissive（色 × 強度に分解）
+        // ---- 3 / 9: Normal と Normal Intensity
         {
-            const InputBake emissive = bake(4);
-            if (emissive.Constant || emissive.Texture)
+            const auto* normal = source(Pin::Normal);
+            if (!normal)
             {
-                Value color = emissive.Uniform;
+                setSlot(MaterialTextureSlot::Normal, 0);
+            }
+            else if (const auto* texture = PlainTexture(graph, normal))
+            {
+                if (SamplerOf(*texture) == static_cast<int>(MaterialSamplerType::Linear))
+                {
+                    result.Notes.push_back("Normal: 法線マップの Texture Sample は Sampler Type を Normal にしてください");
+                }
+                setSlot(MaterialTextureSlot::Normal, texture->Texture);
+            }
+            else if (IsUniform(graph, *normal))
+            {
+                float n[3];
+                DecodeNormalInput(graph, *output, reader.PinValue(*output, Pin::Normal), n);
+                const float length = sqrtf(Dot3(n, n));
+                if (length < 1e-4f || (fabsf(n[0] / length) < 1e-3f && fabsf(n[1] / length) < 1e-3f && n[2] > 0.0f))
+                {
+                    setSlot(MaterialTextureSlot::Normal, 0); // 平らな法線 = 法線マップ無し
+                }
+                else
+                {
+                    useBaked(MaterialTextureSlot::Normal);
+                }
+            }
+            else
+            {
+                useBaked(MaterialTextureSlot::Normal);
+            }
+            scalarPin(Pin::NormalIntensity, 0.0f, 8.0f, result.Data.NormalScale);
+        }
+        // ---- 4: Emissive（色 × 強度に分解）
+        {
+            ColorMatch match;
+            if (uniformPin(Pin::Emissive))
+            {
+                Value color = reader.PinValue(*output, Pin::Emissive);
                 if (color.N == 1)
                 {
                     color.V[1] = color.V[2] = color.V[0];
@@ -1445,45 +1294,147 @@ namespace MaterialGraphPreview
                     {
                         result.Data.EmissiveColor[i] = (std::max)(color.V[i], 0.0f) / peak;
                     }
-                    result.Data.EmissiveIntensity = peak;
+                    result.Data.EmissiveIntensity = (std::min)(peak, 65504.0f);
                 }
                 else
                 {
                     result.Data.EmissiveIntensity = 0.0f;
                 }
+                setSlot(MaterialTextureSlot::Emissive, 0);
             }
-            setSlot(MaterialTextureSlot::Emissive, emissive.Texture);
-        }
-        // 5: Opacity（接続したときだけ。1 未満なら半透明）
-        {
-            const InputBake opacity = bake(5);
-            if (opacity.Linked && opacity.Constant)
+            else if (MatchColorTexture(graph, reader, source(Pin::Emissive), match))
             {
-                const float alpha = Saturate(scalar(opacity.Uniform));
-                result.Data.BaseColor[3] = alpha;
-                if (alpha < 0.999f)
+                const float peak = (std::max)({match.Tint.V[0], match.Tint.V[1], match.Tint.V[2], 0.0f});
+                for (int i = 0; i < 3; ++i)
                 {
-                    result.Data.Surface = MaterialSurface::Transparent;
-                    result.Data.DepthWrite = false;
+                    result.Data.EmissiveColor[i] = peak > 1e-6f ? (std::max)(match.Tint.V[i], 0.0f) / peak : 0.0f;
+                }
+                result.Data.EmissiveIntensity = (std::min)(peak, 65504.0f);
+                setSlot(MaterialTextureSlot::Emissive, match.Texture);
+            }
+            else if (useBaked(MaterialTextureSlot::Emissive))
+            {
+                result.Data.EmissiveColor = {1.0f, 1.0f, 1.0f};
+                result.Data.EmissiveIntensity = std::clamp(baked->EmissivePeak, 0.0f, 65504.0f);
+            }
+        }
+        // ---- 7: AO（エンジンは lerp(1, テクスチャ.r, AO 強度)。定数 1 = 無し）
+        {
+            const auto* ao = source(Pin::AO);
+            ChannelMatch match;
+            if (!ao)
+            {
+                setSlot(MaterialTextureSlot::AO, 0);
+            }
+            else if (IsUniform(graph, *ao) && scalar(reader.PinValue(*output, Pin::AO)) >= 0.999f)
+            {
+                setSlot(MaterialTextureSlot::AO, 0);
+            }
+            else if (MatchTextureChannel(graph, reader, ao, match) && match.Channel == 0 && fabsf(match.Factor - 1.0f) < 1e-4f)
+            {
+                setSlot(MaterialTextureSlot::AO, match.Texture);
+            }
+            else if (useBaked(MaterialTextureSlot::AO))
+            {
+                result.Data.AOStrength = 1.0f;
+            }
+        }
+        // ---- 8 / 10 / 11: Height（POM）と深さ / ステップ
+        {
+            const auto* height = source(Pin::Height);
+            ChannelMatch match;
+            if (!height || IsUniform(graph, *height))
+            {
+                setSlot(MaterialTextureSlot::Height, 0);
+            }
+            else if (MatchTextureChannel(graph, reader, height, match) && match.Channel == 0 &&
+                     fabsf(match.Factor - 1.0f) < 1e-4f)
+            {
+                setSlot(MaterialTextureSlot::Height, match.Texture);
+            }
+            else
+            {
+                useBaked(MaterialTextureSlot::Height);
+            }
+            const bool depthLinked = scalarPin(Pin::ParallaxDepth, 0.0f, 0.2f, result.Data.ParallaxDepth);
+            scalarPin(Pin::ParallaxSteps, 8.0f, 1024.0f, result.Data.ParallaxSteps);
+            if (height && !IsUniform(graph, *height) && !depthLinked && result.Data.ParallaxDepth <= 0.0f)
+            {
+                result.Data.ParallaxDepth = 0.05f;
+                result.Notes.push_back("Height: Parallax Depth が 0 だったので 0.05 にしました（Parallax Depth ピンで変更できます）");
+            }
+        }
+        // ---- 12〜17: 屈折 / 透過 / 吸収 / シェーディング強度
+        scalarPin(Pin::IOR, 1.0f, 10.0f, result.Data.IOR);
+        scalarPin(Pin::Transmission, 0.0f, 1.0f, result.Data.Transmission);
+        scalarPin(Pin::TransmissionRoughness, 0.0f, 1.0f, result.Data.TransmissionRoughness);
+        scalarPin(Pin::Thickness, 0.0f, 65504.0f, result.Data.Thickness);
+        scalarPin(Pin::ShadingStrength, 0.0f, 1.0f, result.Data.ShadingStrength);
+        if (const auto* absorption = source(Pin::Absorption))
+        {
+            if (!IsUniform(graph, *absorption))
+            {
+                result.Notes.push_back("Absorption: エンジンは定数のみ対応のため、UV 中央の値を使います");
+            }
+            Value value = reader.PinValue(*output, Pin::Absorption);
+            if (value.N == 1)
+            {
+                value.V[1] = value.V[2] = value.V[0];
+            }
+            for (int i = 0; i < 3; ++i)
+            {
+                result.Data.AbsorptionCoefficient[i] = std::clamp(std::isfinite(value.V[i]) ? value.V[i] : 0.0f, 0.0f, 65504.0f);
+            }
+        }
+
+        // ---- 焼いたチャンネルの注意（視線 / 時間依存）
+        if (result.TextureBakeMask != 0)
+        {
+            bool view = false;
+            bool time = false;
+            for (size_t i = 0; i < PinIndex(Pin::Count) && i < output->InputPins.size(); ++i)
+            {
+                const auto* node = Source(graph, *output, i);
+                const auto found = node ? topology.Index.find(node->Id) : topology.Index.end();
+                if (found != topology.Index.end())
+                {
+                    view |= topology.ViewDependent[found->second] != 0;
+                    time |= topology.TimeDependent[found->second] != 0;
                 }
             }
-        }
-        // 6: Opacity Mask（ピクセルごとのマスクはエンジンではテクスチャのアルファで行うため、定数は反映しない）
-        {
-            const InputBake mask = bake(6);
-            if (mask.Linked && mask.Constant)
+            if (view)
             {
-                result.Notes.push_back("Opacity Mask: 定数は反映しません（Masked はベースカラーテクスチャのアルファを使います）");
+                result.Notes.push_back("Fresnel / Camera Vector / Bump Offset などの視線依存の式は、正面から見た値で"
+                                       "テクスチャに焼かれます（POM は Height ピンを使ってください）");
+            }
+            if (time)
+            {
+                result.Notes.push_back("Time を使う式は、グラフ設定の「ベイク時刻」の値でテクスチャに焼かれます");
             }
         }
-        // 7: AO（テクスチャはスロット、定数は強度）
+
+        // ---- グラフ設定（UE のマテリアル Details）で上書き
+        const auto& settings = graph.Settings;
+        if (settings.Surface >= 0)
         {
-            const InputBake ao = bake(7);
-            setSlot(MaterialTextureSlot::AO, ao.Texture);
-            if (ao.Linked && ao.Constant)
-            {
-                result.Data.AOStrength = Saturate(scalar(ao.Uniform));
-            }
+            result.Data.Surface = static_cast<MaterialSurface>(std::clamp(settings.Surface, 0, 2));
+            result.Data.DepthWrite = result.Data.Surface != MaterialSurface::Transparent;
+        }
+        if (settings.Cull >= 0)
+        {
+            result.Data.Cull = static_cast<MaterialCull>(std::clamp(settings.Cull, 0, 2));
+        }
+        if (settings.ShadingModel >= 0)
+        {
+            result.Data.ShadingModel = static_cast<uint32_t>(std::clamp(settings.ShadingModel, 0, 5));
+        }
+        if (settings.ShadowMode >= 0)
+        {
+            result.Data.ShadowMode = static_cast<MaterialShadowMode>(std::clamp(settings.ShadowMode, 0, 4));
+        }
+        if (settings.AlphaCutoff >= 0.0f)
+        {
+            result.Data.AlphaCutoff = std::clamp(settings.AlphaCutoff, 0.0f, 1.0f);
         }
         return result;
     }
@@ -1493,3 +1444,4 @@ namespace MaterialGraphPreview
         g_Caches.erase(&graph);
     }
 } // namespace MaterialGraphPreview
+

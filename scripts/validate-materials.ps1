@@ -15,7 +15,7 @@ foreach ($name in $environmentNames) {
 }
 Push-Location -LiteralPath $workspace
 try {
-    foreach ($relative in @('Save/project_environment.cfg','Save/editor_layout.cfg','imgui.ini')) {
+    foreach ($relative in @('Save/project_environment.cfg','Save/editor_layout.cfg','Save/scene_materials.json','Save/editor_workspaces.json','imgui.ini')) {
         $path = Join-Path $workspace $relative
         $savedSettings[$path] = if (Test-Path -LiteralPath $path) {
             ,([IO.File]::ReadAllBytes($path))

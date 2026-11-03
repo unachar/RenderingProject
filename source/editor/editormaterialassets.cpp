@@ -133,6 +133,9 @@ void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
     {
         return;
     }
+    // Opening an asset can happen before the first editor update (startup and validation).
+    // Register areas before posting a request, otherwise workspace initialization drops it.
+    InitializeWorkspaces();
     FinishMaterialEdit();
     if (openMaterial != 0 && openMaterial != handle && (MaterialManager::GetRuntime(openMaterial).Dirty ||
         MaterialGraphEditor::HasUnsavedChanges(openMaterial)))
@@ -143,6 +146,11 @@ void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
         return;
     }
     openMaterial = handle;
+    if (MaterialValidation::Enabled())
+    {
+        // The material asset UI validation exercises the Properties controls.
+        showMaterialGraph = false;
+    }
     EditorWorkspaceManager::Get().Registry().ShowEditorType("material");
     m_ShowMaterialEditorWindow = true;
     focusEditorRequested = true;
@@ -212,10 +220,14 @@ void ImGuiManager::DrawMaterialEditorWindow()
     if (focusEditorRequested)
     {
         ImGui::SetNextWindowFocus();
-        focusEditorRequested = false;
     }
     const bool expanded = EditorWindowRegistry::BeginEditorWindow(title.c_str(), &visible);
     editorFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (expanded && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsWindowAppearing())
+    {
+        // Initial docking resolves tab selection after the first submission.
+        focusEditorRequested = false;
+    }
     if (!visible)
     {
         FinishMaterialEdit();

@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <iostream>
 #include <stdexcept>
+#include <cwctype>
 
 void Check(bool condition, const char* message)
 {
@@ -68,7 +69,9 @@ int main()
         invalid.ParallaxDepth = -0.1f;
         Check(!MaterialSerializer::Validate(invalid, error), "reject negative POM depth");
         invalid = authored;
-        invalid.ParallaxSteps = 129.0f;
+        invalid.ParallaxSteps = 1024.0f;
+        Check(MaterialSerializer::Validate(invalid, error), "accept maximum supported POM iterations");
+        invalid.ParallaxSteps = 1025.0f;
         Check(!MaterialSerializer::Validate(invalid, error), "reject unbounded POM iterations");
         invalid = authored;
         invalid.Roughness = -1.0f;
@@ -96,6 +99,19 @@ int main()
         AssetRegistry reopened(root);
         Check(reopened.Refresh(error), error.c_str());
         Check(reopened.Resolve(handle) == registry.Resolve(handle), "identity survives registry restart");
+        const auto alternateSpelling = std::filesystem::path(moved.generic_string());
+        Check(reopened.Register(alternateSpelling, AssetType::Material, error) == handle,
+              "opening a scanned asset with generic separators preserves its GUID");
+        Check(!reopened.Resolve(handle).empty(), "reopening the same asset does not invalidate its GUID");
+#ifdef _WIN32
+        auto alternateCase = moved.wstring();
+        for (auto& letter : alternateCase)
+        {
+            letter = static_cast<wchar_t>(std::towupper(letter));
+        }
+        Check(reopened.Register(alternateCase, AssetType::Material, error) == handle,
+              "Windows path casing does not create missing or duplicate GUIDs");
+#endif
         const auto copy = root / "Wall_Copy.material";
         const auto copyHandle = registry.Duplicate(handle, copy, error);
         Check(copyHandle != 0 && copyHandle != handle, "duplicate gets new handle");

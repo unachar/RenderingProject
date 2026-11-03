@@ -3,6 +3,9 @@
 #include <fstream>
 #include <random>
 #include <cctype>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 AssetHandle GenerateAssetHandle()
 {
@@ -51,8 +54,23 @@ bool AssetRegistry::Contains(const std::filesystem::path& path) const
         return false;
     }
     auto inside = [&canonical](const std::filesystem::path& root) {
+#ifdef _WIN32
+        // Windows file identities are case-insensitive even when path strings differ.
+        auto child = canonical.begin();
+        for (const auto& component : root)
+        {
+            if (child == canonical.end() ||
+                CompareStringOrdinal(child->c_str(), -1, component.c_str(), -1, TRUE) != CSTR_EQUAL)
+            {
+                return false;
+            }
+            ++child;
+        }
+        return child != canonical.end();
+#else
         const auto relative = canonical.lexically_relative(root);
         return !relative.empty() && *relative.begin() != ".." && *relative.begin() != ".";
+#endif
     };
     if (inside(Root()))
     {
@@ -131,7 +149,14 @@ AssetHandle AssetRegistry::Register(const std::filesystem::path& path, AssetType
         }
     }
     const auto existing = m_Entries.find(handle);
-    if (m_Collisions.contains(handle) || (existing != m_Entries.end() && existing->second.Path != absolute))
+    bool differentFile = false;
+    if (existing != m_Entries.end() && existing->second.Path != absolute)
+    {
+        std::error_code identityError;
+        const bool sameFile = std::filesystem::equivalent(existing->second.Path, absolute, identityError);
+        differentFile = identityError || !sameFile;
+    }
+    if (m_Collisions.contains(handle) || differentFile)
     {
         m_Entries.erase(handle);
         m_Collisions.insert(handle);

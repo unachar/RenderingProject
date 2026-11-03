@@ -57,6 +57,8 @@ namespace
     XMFLOAT2 previewImage{};
     XMFLOAT2 transparencySlider{};
     ImVec2 previewWindowPosition{};
+    ImGuiID previewWindowId = 0;
+    ImGuiID inspectorWindowId = 0;
     RenderCapture::TextureData beforeOrbit;
     float savedPreviewAlpha = 1.0f;
     bool injectDrag = false;
@@ -1220,6 +1222,10 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
                       handle,
               "invalid scene GUID is rejected before altering assignments");
     }
+    if (frame == 11)
+    {
+        ImGuiManager::m_SelectedEntity = second;
+    }
     if (frame == 12)
     {
         ImGuiManager::m_SelectedEntity = second;
@@ -1292,10 +1298,15 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     {
         constantEditPipelineCreations = PsoManager::GraphicsPipelineCreations();
         unlitPreviewBrightness = PreviewBrightness();
+        RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-unlit.png");
     }
     if (frame == 3)
     {
-        Check(PreviewBrightness() > unlitPreviewBrightness + 0.015f,
+        const float litPreviewBrightness = PreviewBrightness();
+        RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-lit.png");
+        WriteGraphicsLog("Preview lighting brightness: unlit=%.6f lit=%.6f\n", unlitPreviewBrightness,
+                         litPreviewBrightness);
+        Check(litPreviewBrightness > unlitPreviewBrightness + 0.015f,
               "preview studio light increases rendered surface brightness");
         Check(firstInstance && firstInstance->MaterialIndex == gpuIndex, "constant edit updates GPU record in place");
         vector<uint8_t> records;
@@ -1411,7 +1422,7 @@ void MaterialValidation::AfterFrame(uint64_t frame)
         Check(!MaterialManager::GetRuntime(copyHandle).Dirty &&
                   MaterialManager::GetRuntime(copyHandle).Editing.Roughness == 0.42f,
               "Revert toolbar discards unsaved changes");
-        if (const auto* window = ImGui::FindWindowByName("###MaterialAssetEditor"))
+        if (const auto* window = ImGui::FindWindowByID(previewWindowId))
         {
             previewWindowPosition = window->Pos;
         }
@@ -1423,7 +1434,7 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     }
     if (frame == 26)
     {
-        const auto* window = ImGui::FindWindowByName("###MaterialAssetEditor");
+        const auto* window = ImGui::FindWindowByID(previewWindowId);
         Check(window && window->Pos.x == previewWindowPosition.x && window->Pos.y == previewWindowPosition.y,
               "orbit drag keeps material editor window stationary");
         RenderCapture::TextureData afterOrbit;
@@ -1472,10 +1483,19 @@ void MaterialValidation::CaptureDropTarget(const char* name, float left, float t
     if (strcmp(name, "Inspector") == 0)
     {
         inspectorDrop = center;
+        inspectorWindowId = ImGui::GetCurrentWindow()->RootWindow->ID;
+        if (frames <= 14)
+        {
+            ImGui::SetScrollHereY(0.5f);
+        }
     }
     else if (strcmp(name, "Normal") == 0)
     {
         normalDrop = center;
+        if (frames <= 16)
+        {
+            ImGui::SetScrollHereY(0.5f);
+        }
     }
     else if (strcmp(name, "Revert") == 0)
     {
@@ -1484,10 +1504,17 @@ void MaterialValidation::CaptureDropTarget(const char* name, float left, float t
     else if (strcmp(name, "Preview") == 0)
     {
         previewImage = center;
+        previewWindowId = ImGui::GetCurrentWindow()->RootWindow->ID;
     }
     else if (strcmp(name, "Transparency") == 0)
     {
-        transparencySlider = center;
+        // Slider item bounds include the label; the navigation rectangle is the clickable track.
+        const ImRect track = ImGui::GetCurrentContext()->LastItemData.NavRect;
+        transparencySlider = {(track.Min.x + track.Max.x) * 0.5f, (track.Min.y + track.Max.y) * 0.5f};
+        if (frames == 23 || frames == 24)
+        {
+            ImGui::SetScrollHereY(0.5f);
+        }
     }
 }
 
@@ -1507,6 +1534,14 @@ void MaterialValidation::BeforeEditorFrame()
     }
     injectDrag = false;
     const auto frame = frames - 1;
+    if (frame == 12)
+    {
+        // Bring the target area forward before dragging, as a user would with floating panels.
+        if (ImGuiWindow* window = ImGui::FindWindowByID(inspectorWindowId))
+        {
+            ImGui::FocusWindow(window);
+        }
+    }
     if (frame >= 24 && frame <= 28)
     {
         auto mouse = previewImage;

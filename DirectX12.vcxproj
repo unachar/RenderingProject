@@ -797,6 +797,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\assets\materialgraphcompiler.h" />
     <ClCompile Include="source\assets\materialgraph.cpp" />
     <ClInclude Include="source\assets\materialgraph.h" />
+    <ClCompile Include="source\assets\materialgraphevaluator.cpp" />
+    <ClInclude Include="source\assets\materialgraphevaluator.h" />
     <ClCompile Include="source\editor\editorworkspace.cpp" />
     <ClCompile Include="source\editor\editorworkspaces.cpp" />
     <ClInclude Include="source\editor\editorworkspace.h" />
@@ -1493,6 +1495,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\core\viewportinputgate.h" />
     <ClCompile Include="source\editor\materialgraphtextures.cpp" />
     <ClInclude Include="source\editor\materialgraphtextures.h" />
+    <ClCompile Include="source\editor\materialgraphbake.cpp" />
+    <ClInclude Include="source\editor\materialgraphbake.h" />
     <ClInclude Include="source\assets\materialgraphmath.h" />
   </ItemGroup>
 </Project>

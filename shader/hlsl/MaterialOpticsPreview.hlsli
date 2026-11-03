@@ -216,6 +216,7 @@ float3 EvaluateMaterialOpticsPreview(SurfaceData surface, float3 position, float
     {
         return result + surface.Emissive;
     }
-    return (1 - metallic) * result + metallic * surface.BaseColor * reflection + surface.Emissive;
+    return (1 - metallic) * result + metallic * surface.BaseColor * reflection +
+           MaterialStudioDirect(surface, N, viewDir) + surface.Emissive;
 }
 #endif

@@ -1,46 +1,71 @@
 {
-  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":580,\"y\":80}},\"node:10\":{\"location\":{\"x\":-340,\"y\":114}},\"node:13\":{\"location\":{\"x\":-328,\"y\":210}},\"node:16\":{\"location\":{\"x\":-328,\"y\":306}},\"node:19\":{\"location\":{\"x\":-328,\"y\":402}},\"node:25\":{\"location\":{\"x\":72,\"y\":-46}},\"node:35\":{\"location\":{\"x\":-472,\"y\":-46}},\"node:42\":{\"location\":{\"x\":-776,\"y\":82}},\"node:52\":{\"location\":{\"x\":-776,\"y\":-14}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-479.00006103515625,\"y\":-185.499984741210938},\"visible_rect\":{\"max\":{\"x\":895.2052001953125,\"y\":454.40264892578125},\"min\":{\"x\":-383.202239990234375,\"y\":-148.000869750976562}},\"zoom\":1.2499927282333374}}",
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":744,\"y\":26}},\"node:140\":{\"location\":{\"x\":-431,\"y\":118}},\"node:147\":{\"location\":{\"x\":-431,\"y\":593}},\"node:152\":{\"location\":{\"x\":-719,\"y\":441}},\"node:156\":{\"location\":{\"x\":97,\"y\":86}},\"node:180\":{\"location\":{\"x\":-719,\"y\":169}},\"node:183\":{\"location\":{\"x\":-431,\"y\":356}},\"node:188\":{\"location\":{\"x\":88,\"y\":340}},\"node:208\":{\"location\":{\"x\":-111,\"y\":566}},\"node:212\":{\"location\":{\"x\":296,\"y\":310}},\"node:219\":{\"location\":{\"x\":504,\"y\":54}},\"node:250\":{\"location\":{\"x\":173,\"y\":566}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-79.0000076293945312,\"y\":107.999984741210938},\"visible_rect\":{\"max\":{\"x\":302.666717529296875,\"y\":594.666748046875},\"min\":{\"x\":-105.333343505859375,\"y\":144.000015258789062}},\"zoom\":0.749999880790710449}}",
   "links" : 
   [
     {
-      "id" : 15,
-      "source" : 14,
-      "target" : 3
+      "id" : 155,
+      "source" : 154,
+      "target" : 149
     },
     {
-      "id" : 18,
-      "source" : 17,
-      "target" : 4
+      "id" : 160,
+      "source" : 143,
+      "target" : 157
     },
     {
-      "id" : 21,
-      "source" : 20,
-      "target" : 6
+      "id" : 161,
+      "source" : 150,
+      "target" : 158
     },
     {
-      "id" : 30,
-      "source" : 11,
-      "target" : 27
+      "id" : 187,
+      "source" : 182,
+      "target" : 185
     },
     {
-      "id" : 31,
-      "source" : 28,
+      "id" : 191,
+      "source" : 186,
+      "target" : 189
+    },
+    {
+      "id" : 211,
+      "source" : 150,
+      "target" : 209
+    },
+    {
+      "id" : 216,
+      "source" : 190,
+      "target" : 213
+    },
+    {
+      "id" : 223,
+      "source" : 159,
+      "target" : 220
+    },
+    {
+      "id" : 224,
+      "source" : 215,
+      "target" : 221
+    },
+    {
+      "id" : 237,
+      "source" : 182,
+      "target" : 142
+    },
+    {
+      "id" : 253,
+      "source" : 222,
       "target" : 2
     },
     {
-      "id" : 44,
-      "source" : 43,
-      "target" : 37
+      "id" : 254,
+      "source" : 210,
+      "target" : 251
     },
     {
-      "id" : 45,
-      "source" : 38,
-      "target" : 26
-    },
-    {
-      "id" : 54,
-      "source" : 53,
-      "target" : 36
+      "id" : 255,
+      "source" : 252,
+      "target" : 214
     }
   ],
   "nodes" : 
@@ -56,15 +81,25 @@
         6,
         7,
         8,
-        9
+        9,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64
       ],
       "kind" : "Material Output",
       "name" : "Material Output",
       "output" : 0,
       "position" : 
       [
-        580.0,
-        80.0
+        744.0,
+        26.0
       ],
       "size" : 
       [
@@ -81,121 +116,105 @@
       ]
     },
     {
-      "height" : 61.200000762939453,
-      "id" : 10,
-      "inputs" : [],
-      "kind" : "Color Parameter",
-      "name" : "Base Color",
-      "output" : 11,
-      "position" : 
-      [
-        -340.0,
-        114.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        1.0,
-        0.67100000381469727,
-        1.0,
-        1.0
-      ],
-      "width" : 299.39999389648438
-    },
-    {
-      "id" : 13,
-      "inputs" : [],
-      "kind" : "Scalar Parameter",
-      "name" : "Metallic",
-      "output" : 14,
-      "position" : 
-      [
-        -328.0,
-        210.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        0.28600001335144043,
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "id" : 16,
-      "inputs" : [],
-      "kind" : "Scalar Parameter",
-      "name" : "Roughness",
-      "output" : 17,
-      "position" : 
-      [
-        -328.0,
-        306.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        1.0,
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "id" : 19,
-      "inputs" : [],
-      "kind" : "Vector Parameter",
-      "name" : "Emissive",
-      "output" : 20,
-      "position" : 
-      [
-        -328.0,
-        402.0
-      ],
-      "size" : 
-      [
-        400.0,
-        250.0
-      ],
-      "texture" : "guid:0000000000000000",
-      "value" : 
-      [
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ]
-    },
-    {
-      "id" : 25,
+      "id" : 140,
       "inputs" : 
       [
-        26,
-        27
+        141,
+        142
+      ],
+      "kind" : "Step",
+      "name" : "Step",
+      "output" : 143,
+      "position" : 
+      [
+        -431.0,
+        118.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 147,
+      "inputs" : 
+      [
+        148,
+        149
+      ],
+      "kind" : "Step",
+      "name" : "Step",
+      "output" : 150,
+      "position" : 
+      [
+        -431.0,
+        593.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 152,
+      "inputs" : 
+      [
+        153
+      ],
+      "kind" : "Linear Gradient",
+      "name" : "Linear Gradient",
+      "output" : 154,
+      "position" : 
+      [
+        -719.0,
+        441.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 156,
+      "inputs" : 
+      [
+        157,
+        158
       ],
       "kind" : "Multiply",
       "name" : "Multiply",
-      "output" : 28,
+      "output" : 159,
       "position" : 
       [
-        72.0,
-        -46.0
+        97.0,
+        86.0
       ],
       "size" : 
       [
@@ -212,19 +231,18 @@
       ]
     },
     {
-      "id" : 35,
+      "id" : 180,
       "inputs" : 
       [
-        36,
-        37
+        181
       ],
-      "kind" : "Dot Product",
-      "name" : "Dot Product",
-      "output" : 38,
+      "kind" : "Linear Gradient",
+      "name" : "Linear Gradient",
+      "output" : 182,
       "position" : 
       [
-        -472.0,
-        -46.0
+        -719.0,
+        169.0
       ],
       "size" : 
       [
@@ -241,15 +259,19 @@
       ]
     },
     {
-      "id" : 42,
-      "inputs" : [],
-      "kind" : "Constant",
-      "name" : "Constant",
-      "output" : 43,
+      "id" : 183,
+      "inputs" : 
+      [
+        184,
+        185
+      ],
+      "kind" : "Step",
+      "name" : "Step",
+      "output" : 186,
       "position" : 
       [
-        -776.0,
-        82.0
+        -431.0,
+        356.0
       ],
       "size" : 
       [
@@ -259,22 +281,25 @@
       "texture" : "guid:0000000000000000",
       "value" : 
       [
-        0.20000000298023224,
+        0.0,
         0.0,
         0.0,
         0.0
       ]
     },
     {
-      "id" : 52,
-      "inputs" : [],
-      "kind" : "Constant",
-      "name" : "Constant",
-      "output" : 53,
+      "id" : 188,
+      "inputs" : 
+      [
+        189
+      ],
+      "kind" : "OneMinus",
+      "name" : "OneMinus",
+      "output" : 190,
       "position" : 
       [
-        -776.0,
-        -14.0
+        88.0,
+        340.0
       ],
       "size" : 
       [
@@ -284,7 +309,121 @@
       "texture" : "guid:0000000000000000",
       "value" : 
       [
-        0.17599999904632568,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 208,
+      "inputs" : 
+      [
+        209
+      ],
+      "kind" : "OneMinus",
+      "name" : "OneMinus",
+      "output" : 210,
+      "position" : 
+      [
+        -111.0,
+        566.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 212,
+      "inputs" : 
+      [
+        213,
+        214
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 215,
+      "position" : 
+      [
+        296.0,
+        310.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 219,
+      "inputs" : 
+      [
+        220,
+        221
+      ],
+      "kind" : "Add",
+      "name" : "Add",
+      "output" : 222,
+      "position" : 
+      [
+        504.0,
+        54.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 250,
+      "inputs" : 
+      [
+        251
+      ],
+      "kind" : "Reroute",
+      "name" : "Reroute",
+      "output" : 252,
+      "position" : 
+      [
+        173.0,
+        566.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
         0.0,
         0.0,
         0.0

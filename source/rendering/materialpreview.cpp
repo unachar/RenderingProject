@@ -17,6 +17,7 @@
 #include "imguimanager.h"
 #include "materialvalidation.h"
 #include "rendererstate.h"
+#include "graphicslog.h"
 #include <cmath>
 #include <mutex>
 
@@ -560,6 +561,12 @@ namespace
         {
             optics[1] = {preview.SceneEnvironment && material.Transmission <= 0.0f ? 1.0f : 0.0f,
                          preview.LightIntensity, static_cast<float>(preview.Shape + 1), 1.0f};
+            if (MaterialValidation::Enabled() && ImGui::GetFrameCount() <= 4)
+            {
+                WriteGraphicsLog("Material preview draw: frame=%d light=%.3f environment=%d material=%llu\n",
+                                 ImGui::GetFrameCount(), preview.LightIntensity, preview.SceneEnvironment,
+                                 material.RuntimeHandle);
+            }
         }
         commands->SetGraphicsRootConstantBufferView(17, preview.OpticsGlobals->GetGPUVirtualAddress() +
                                                             GraphicsDevice::GetFrameIndex() * 2816);

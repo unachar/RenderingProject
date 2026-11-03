@@ -189,6 +189,24 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     {
         return false;
     }
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->DockId == 0 && !workspaces.IsMaximized(area->Id))
+    {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 available = viewport->WorkSize;
+        const ImVec2 size(ImMin(window->Size.x, available.x), ImMin(window->Size.y, available.y));
+        const ImVec2 maximum(viewport->WorkPos.x + available.x - size.x, viewport->WorkPos.y + available.y - size.y);
+        const ImVec2 position(ImClamp(window->Pos.x, viewport->WorkPos.x, maximum.x),
+                              ImClamp(window->Pos.y, viewport->WorkPos.y, maximum.y));
+        if (size.x != window->Size.x || size.y != window->Size.y)
+        {
+            ImGui::SetWindowSize(size);
+        }
+        if (position.x != window->Pos.x || position.y != window->Pos.y)
+        {
+            ImGui::SetWindowPos(position);
+        }
+    }
     const bool ctrlSpace = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
                            !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl &&
                            ImGui::IsKeyPressed(ImGuiKey_Space, false);
@@ -544,14 +562,44 @@ void EditorWorkspaceManager::BeginFrame()
     Save();
 }
 
-void EditorWorkspaceManager::DrawTabs()
+void EditorWorkspaceManager::DrawTabBar()
 {
-    // メインメニューバー内に描く（Blender のトップバーと同じ位置）。
+    if (!m_Initialized || m_Workspaces.empty())
+    {
+        return;
+    }
+    // ツールバーと同じくビューポートの作業領域から差し引くので、ドックスペースはこの下から始まる
+    const float uiScale = EditorPreferences::Get().UiScale;
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float padding = 3.0f * uiScale;
+    const float height = ImGui::GetFrameHeight() + padding * 2.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * uiScale, padding));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, EditorPreferences::PanelDark());
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavFocus;
+    const bool open = ImGui::BeginViewportSideBar("##EditorWorkspaceBar", viewport, ImGuiDir_Up, height, flags);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    if (open)
+    {
+        DrawTabs(0.0f);
+        // ドック領域との境界線
+        const ImVec2 min = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(min.x, min.y + size.y - 1.0f), ImVec2(min.x + size.x, min.y + size.y - 1.0f),
+                                            ImGui::GetColorU32(ImGuiCol_Border));
+    }
+    ImGui::End();
+}
+
+void EditorWorkspaceManager::DrawTabs(float reserveRight)
+{
+    // DrawTabBar（ツールバー下の専用バー）から呼ぶ。
     const float uiScale = EditorPreferences::Get().UiScale;
     const ImVec4 accent = EditorPreferences::Accent();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f * uiScale, ImGui::GetStyle().ItemSpacing.y));
     ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
-    const float reserveRight = 300.0f * uiScale; // シーン名と検索ボタンの領域
     size_t overflowFrom = m_Workspaces.size();
     for (size_t i = 0; i < m_Workspaces.size(); ++i)
     {
@@ -940,3 +988,4 @@ void EditorWorkspaceManager::Shutdown()
     m_MaximizedLayout.clear();
     m_LastSaved.clear();
 }
+

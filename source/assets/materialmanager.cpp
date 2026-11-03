@@ -7,6 +7,7 @@
 #include "modelmanager.h"
 #include "world.h"
 #include "materialsystem.h"
+#include "graphicslog.h"
 #include "gpuscene/gpuscenechanges.h"
 #include <json/json.h>
 #include <fstream>
@@ -42,10 +43,11 @@ void MaterialManager::Shutdown()
 void MaterialManager::Refresh()
 {
     string error;
-    registry.Refresh(error);
+    const bool refreshed = registry.Refresh(error);
+    WriteGraphicsLog("Asset registry: root=%s, refreshed=%d\n", registry.Root().generic_string().c_str(), refreshed);
     if (!error.empty())
     {
-        Debug::Log("Asset registry: %s\n", error.c_str());
+        WriteGraphicsLog("Asset registry: %s\n", error.c_str());
     }
     for (auto& [handle, runtime] : runtimes)
     {

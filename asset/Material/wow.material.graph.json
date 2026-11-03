@@ -1,0 +1,404 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":720,\"y\":40}},\"node:20\":{\"location\":{\"x\":-201,\"y\":-12}},\"node:23\":{\"location\":{\"x\":-296,\"y\":308}},\"node:25\":{\"location\":{\"x\":40,\"y\":250}},\"node:29\":{\"location\":{\"x\":40,\"y\":350}},\"node:32\":{\"location\":{\"x\":-600,\"y\":-12}},\"node:35\":{\"location\":{\"x\":-520,\"y\":564}},\"node:49\":{\"location\":{\"x\":-696,\"y\":644}},\"node:53\":{\"location\":{\"x\":456,\"y\":342}},\"node:59\":{\"location\":{\"x\":248,\"y\":468}},\"node:63\":{\"location\":{\"x\":408,\"y\":68}},\"node:67\":{\"location\":{\"x\":519,\"y\":271}},\"node:70\":{\"location\":{\"x\":-808,\"y\":49}}},\"selection\":[\"node:29\"],\"view\":{\"scroll\":{\"x\":-615,\"y\":-37},\"visible_rect\":{\"max\":{\"x\":928,\"y\":739},\"min\":{\"x\":-615,\"y\":-37}},\"zoom\":1}}",
+  "links" : 
+  [
+    {
+      "id" : 27,
+      "source" : 24,
+      "target" : 3
+    },
+    {
+      "id" : 28,
+      "source" : 26,
+      "target" : 4
+    },
+    {
+      "id" : 31,
+      "source" : 30,
+      "target" : 6
+    },
+    {
+      "id" : 51,
+      "source" : 50,
+      "target" : 36
+    },
+    {
+      "id" : 58,
+      "source" : 37,
+      "target" : 54
+    },
+    {
+      "id" : 61,
+      "source" : 60,
+      "target" : 55
+    },
+    {
+      "id" : 62,
+      "source" : 56,
+      "target" : 5
+    },
+    {
+      "id" : 66,
+      "source" : 65,
+      "target" : 2
+    },
+    {
+      "id" : 69,
+      "source" : 68,
+      "target" : 12
+    }
+  ],
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        720.0,
+        40.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "height" : 184.80000305175781,
+      "id" : 20,
+      "inputs" : [],
+      "kind" : "Color Parameter",
+      "name" : "Base Color",
+      "output" : 21,
+      "position" : 
+      [
+        -201.0,
+        -12.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "width" : 240.80000305175781
+    },
+    {
+      "id" : 23,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 24,
+      "position" : 
+      [
+        -296.0,
+        308.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 25,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 26,
+      "position" : 
+      [
+        40.0,
+        250.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0399999618530273,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 29,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 30,
+      "position" : 
+      [
+        40.0,
+        350.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "height" : 235.0,
+      "id" : 32,
+      "inputs" : [],
+      "kind" : "Constant4Vector",
+      "name" : "Constant4Vector",
+      "output" : 33,
+      "position" : 
+      [
+        -600.0,
+        -12.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        1.6549999713897705,
+        0.0,
+        1.0
+      ],
+      "width" : 277.0
+    },
+    {
+      "height" : 292.0,
+      "id" : 35,
+      "inputs" : 
+      [
+        36
+      ],
+      "kind" : "Texture Sample",
+      "name" : "Texture Sample",
+      "output" : 37,
+      "position" : 
+      [
+        -520.0,
+        564.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:c10f984bc75ee1f5",
+      "value" : 
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "width" : 202.0
+    },
+    {
+      "id" : 49,
+      "inputs" : [],
+      "kind" : "Constant2Vector",
+      "name" : "Constant2Vector",
+      "output" : 50,
+      "position" : 
+      [
+        -696.0,
+        644.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.95499998331069946,
+        0.99000000953674316,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 53,
+      "inputs" : 
+      [
+        54,
+        55
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 56,
+      "position" : 
+      [
+        456.0,
+        342.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 59,
+      "inputs" : [],
+      "kind" : "Constant",
+      "name" : "Constant",
+      "output" : 60,
+      "position" : 
+      [
+        248.0,
+        468.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0099999904632568,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "height" : 292.0,
+      "id" : 63,
+      "inputs" : 
+      [
+        64
+      ],
+      "kind" : "Texture Sample",
+      "name" : "Texture Sample",
+      "output" : 65,
+      "position" : 
+      [
+        408.0,
+        68.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:c10f984bc75ee1f5",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "width" : 202.0
+    },
+    {
+      "id" : 67,
+      "inputs" : [],
+      "kind" : "Constant",
+      "name" : "Constant",
+      "output" : 68,
+      "position" : 
+      [
+        519.0,
+        271.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.18400000035762787,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "settings" : 
+  {
+    "alphaCutoff" : 0.33329999446868896,
+    "autoBake" : true,
+    "bakeResolution" : 512,
+    "bakeTime" : 0.0,
+    "cull" : -1,
+    "shadingModel" : -1,
+    "shadowMode" : -1,
+    "surface" : -1
+  },
+  "version" : 1
+}

@@ -57,7 +57,18 @@ namespace
           {"Emissive", Type::Vector3},
           {"Opacity", Type::Scalar, {1}},
           {"Opacity Mask", Type::Scalar, {1}},
-          {"AO", Type::Scalar, {1}}}},
+          {"AO", Type::Scalar, {1}},
+          // ---- エンジンのマテリアルパラメーター（2026-11 追加。未接続ならマテリアルアセットの値を保持する）
+          {"Height", Type::Scalar, {1}},
+          {"Normal Intensity", Type::Scalar, {1}},
+          {"Parallax Depth", Type::Scalar, {0.05f}},
+          {"Parallax Steps", Type::Scalar, {32}},
+          {"IOR", Type::Scalar, {1.5f}},
+          {"Transmission", Type::Scalar},
+          {"Transmission Roughness", Type::Scalar, {0.02f}},
+          {"Thickness", Type::Scalar, {0.1f}},
+          {"Absorption", Type::Vector3},
+          {"Shading Model Strength", Type::Scalar, {1}}}},
         {Kind::Group, "Comment Group", Type::Numeric, {}},
         {Kind::Constant2Vector, "Constant2Vector", Type::Vector2, {}},
         {Kind::Constant3Vector, "Constant3Vector", Type::Vector3, {}},
@@ -131,7 +142,57 @@ namespace
          {{"A", Type::Vector3}, {"B", Type::Vector3}, {"Radius", Type::Scalar, {0.5f}}, {"Hardness", Type::Scalar, {0.5f}}}},
         {Kind::CheapContrast, "Cheap Contrast", Type::Scalar, {{"In", Type::Scalar}, {"Contrast", Type::Scalar, {1}}}},
         {Kind::Noise, "Noise", Type::Scalar, {{"Position", Type::Vector3}, {"Scale", Type::Scalar, {4}}}},
-        {Kind::Reroute, "Reroute", Type::Numeric, {{"In", Type::Numeric}}}};
+        {Kind::Reroute, "Reroute", Type::Numeric, {{"In", Type::Numeric}}},
+        // ---- 2026-11 追加（UE のノード / マテリアル関数）
+        {Kind::StaticSwitch, "Static Switch", Type::Numeric, {{"True", Type::Numeric, {1, 1, 1, 1}}, {"False", Type::Numeric}}},
+        {Kind::Pi, "Pi", Type::Scalar, {}},
+        {Kind::RemapValueRange,
+         "Remap Value Range",
+         Type::Numeric,
+         {{"Input", Type::Numeric},
+          {"Input Low", Type::Scalar},
+          {"Input High", Type::Scalar, {1}},
+          {"Target Low", Type::Scalar},
+          {"Target High", Type::Scalar, {1}}}},
+        {Kind::Posterize, "Posterize", Type::Numeric, {{"Input", Type::Numeric}, {"Steps", Type::Scalar, {4}}}},
+        {Kind::HueShift, "Hue Shift", Type::Vector3, {{"Color", Type::Vector3, {1, 0, 0}}, {"Shift", Type::Scalar}}},
+        {Kind::Blend,
+         "Blend",
+         Type::Vector3,
+         {{"Base", Type::Vector3, {0.5f, 0.5f, 0.5f}}, {"Blend", Type::Vector3, {0.5f, 0.5f, 0.5f}}, {"Opacity", Type::Scalar, {1}}}},
+        {Kind::LinearGradient, "Linear Gradient", Type::Scalar, {{"UV", Type::Vector2}}},
+        {Kind::RadialGradient,
+         "Radial Gradient",
+         Type::Scalar,
+         {{"UV", Type::Vector2}, {"Center", Type::Vector2, {0.5f, 0.5f}}, {"Radius", Type::Scalar, {0.5f}}, {"Density", Type::Scalar, {2}}}},
+        {Kind::Voronoi,
+         "Voronoi",
+         Type::Scalar,
+         {{"UV", Type::Vector2}, {"Scale", Type::Scalar, {8}}, {"Jitter", Type::Scalar, {1}}}},
+        {Kind::NormalFromHeight,
+         "Normal From Height",
+         Type::Vector3,
+         {{"Height", Type::Scalar, {0.5f}}, {"Strength", Type::Scalar, {0.05f}}}},
+        {Kind::BlendAngleCorrectedNormals,
+         "Blend Angle Corrected Normals",
+         Type::Vector3,
+         {{"Base Normal", Type::Vector3, {0, 0, 1}}, {"Additional Normal", Type::Vector3, {0, 0, 1}}}},
+        {Kind::FlattenNormal, "Flatten Normal", Type::Vector3, {{"Normal", Type::Vector3, {0, 0, 1}}, {"Flatness", Type::Scalar}}},
+        {Kind::BumpOffset,
+         "Bump Offset",
+         Type::Vector2,
+         {{"Height", Type::Scalar, {0.5f}},
+          {"Height Ratio", Type::Scalar, {0.05f}},
+          {"Reference Plane", Type::Scalar, {0.5f}},
+          {"Coordinate", Type::Vector2}}},
+        {Kind::RotateAboutAxis,
+         "Rotate About Axis",
+         Type::Vector3,
+         {{"Rotation Axis", Type::Vector3, {0, 0, 1}},
+          {"Rotation Angle", Type::Scalar},
+          {"Pivot Point", Type::Vector3},
+          {"Position", Type::Vector3}}},
+        {Kind::BlackBody, "Black Body", Type::Vector3, {{"Temp", Type::Scalar, {6500}}}}};
 
     int Dimensions(Type type)
     {
@@ -140,8 +201,10 @@ namespace
 
     bool Compatible(Type source, Type target)
     {
+        // Vector3 → Vector4 はアルファ 1 を足して受け付ける（UE の Base Color に float3 を繋ぐのと同じ）
         return target == Type::Numeric || source == Type::Scalar || source == target ||
-               (static_cast<int>(target) > 1 && static_cast<int>(source) > static_cast<int>(target));
+               (static_cast<int>(target) > 1 && static_cast<int>(source) > static_cast<int>(target)) ||
+               (source == Type::Vector3 && target == Type::Vector4);
     }
 }
 
@@ -164,24 +227,149 @@ const MaterialNodeDefinition& MaterialGraph::Definition(MaterialNodeKind kind)
 
 MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
 {
+    // マテリアルアセットの現在の値・テクスチャから、同じ見た目になるグラフを組み立てる
+    // （テクスチャ / POM / 法線強度も含む。エンジン側はテクスチャを直接使うのでベイクは発生しない）
     MaterialGraph graph;
-    const auto output = graph.AddNode(Kind::Output, 580, 80);
-    const auto addConstant = [&](Kind kind, const char* name, std::array<float, 4> value, size_t input, float y) {
-        const auto id = graph.AddNode(kind, 40, y);
-        auto* node = graph.FindNode(id);
-        node->Name = name;
-        node->Value = value;
-        std::string error;
-        graph.Connect(node->OutputPin, graph.FindNode(output)->InputPins[input], error);
+    const auto output = graph.AddNode(Kind::Output, 720, 40);
+    std::string error;
+    const auto pinOf = [&](MaterialOutputPin pin) {
+        return graph.FindNode(output)->InputPins[static_cast<size_t>(pin)];
     };
-    addConstant(Kind::ColorParameter, "Base Color", material.BaseColor, 0, 20);
-    addConstant(Kind::ScalarParameter, "Metallic", {material.Metallic}, 1, 170);
-    addConstant(Kind::ScalarParameter, "Roughness", {material.Roughness}, 2, 280);
-    addConstant(Kind::VectorParameter, "Emissive",
-                {material.EmissiveColor[0] * material.EmissiveIntensity,
-                 material.EmissiveColor[1] * material.EmissiveIntensity,
-                 material.EmissiveColor[2] * material.EmissiveIntensity, 0},
-                4, 390);
+    const auto add = [&](Kind kind, const char* name, std::array<float, 4> value, float x, float y) {
+        const auto id = graph.AddNode(kind, x, y);
+        if (auto* node = graph.FindNode(id))
+        {
+            if (name)
+            {
+                node->Name = name;
+            }
+            if (kind != Kind::TextureSample && kind != Kind::ComponentMask)
+            {
+                node->Value = value;
+            }
+        }
+        return id;
+    };
+    const auto outputOf = [&](uint64_t node) {
+        const auto* found = graph.FindNode(node);
+        return found ? found->OutputPin : 0;
+    };
+    const auto inputOf = [&](uint64_t node, size_t index) {
+        const auto* found = graph.FindNode(node);
+        return found && index < found->InputPins.size() ? found->InputPins[index] : 0;
+    };
+    const auto link = [&](uint64_t sourceNode, uint64_t targetPin) {
+        graph.Connect(outputOf(sourceNode), targetPin, error);
+    };
+    const auto texture = [&](MaterialTextureSlot slot, MaterialSamplerType sampler, const char* name, float y) -> uint64_t {
+        const AssetHandle handle = material.Textures[static_cast<size_t>(slot)];
+        if (handle == 0)
+        {
+            return 0;
+        }
+        const auto id = add(Kind::TextureSample, name, {}, 40, y);
+        if (auto* node = graph.FindNode(id))
+        {
+            node->Texture = handle;
+            node->Value = {static_cast<float>(sampler), 0, 0, 0};
+        }
+        return id;
+    };
+    const auto mask = [&](uint64_t source, int channel, float y) {
+        const auto id = add(Kind::ComponentMask, nullptr, {}, 300, y);
+        if (auto* node = graph.FindNode(id))
+        {
+            node->Value = {channel == 0 ? 1.0f : 0.0f, channel == 1 ? 1.0f : 0.0f, channel == 2 ? 1.0f : 0.0f, 0.0f};
+        }
+        graph.Connect(outputOf(source), inputOf(id, 0), error);
+        return id;
+    };
+    const auto multiply = [&](uint64_t a, uint64_t b, float y) {
+        const auto id = add(Kind::Multiply, nullptr, {}, 480, y);
+        graph.Connect(outputOf(a), inputOf(id, 0), error);
+        graph.Connect(outputOf(b), inputOf(id, 1), error);
+        return id;
+    };
+
+    float y = 0.0f;
+    // Base Color（テクスチャ × 色）
+    {
+        const auto base = texture(MaterialTextureSlot::BaseColor, MaterialSamplerType::Color, "Base Color Texture", y);
+        const auto color = add(Kind::ColorParameter, "Base Color", material.BaseColor, base ? 300.0f : 40.0f, base ? y + 120 : y);
+        link(base ? multiply(base, color, y + 40) : color, pinOf(MaterialOutputPin::BaseColor));
+        y += base ? 260.0f : 150.0f;
+    }
+    // Metallic / Roughness（エンジンの MR テクスチャは R = Metallic, G = Roughness）
+    {
+        const auto mr = texture(MaterialTextureSlot::MetallicRoughness, MaterialSamplerType::Linear, "Metallic Roughness", y);
+        const auto metallic = add(Kind::ScalarParameter, "Metallic", {material.Metallic}, mr ? 300.0f : 40.0f, y + (mr ? 180.0f : 0.0f));
+        const auto roughness = add(Kind::ScalarParameter, "Roughness", {material.Roughness}, mr ? 300.0f : 40.0f, y + (mr ? 260.0f : 100.0f));
+        if (mr)
+        {
+            link(multiply(mask(mr, 0, y), metallic, y), pinOf(MaterialOutputPin::Metallic));
+            link(multiply(mask(mr, 1, y + 90), roughness, y + 120), pinOf(MaterialOutputPin::Roughness));
+            y += 340.0f;
+        }
+        else
+        {
+            link(metallic, pinOf(MaterialOutputPin::Metallic));
+            link(roughness, pinOf(MaterialOutputPin::Roughness));
+            y += 200.0f;
+        }
+    }
+    // Normal（法線マップ）と強さ
+    if (const auto normal = texture(MaterialTextureSlot::Normal, MaterialSamplerType::Normal, "Normal Map", y))
+    {
+        link(normal, pinOf(MaterialOutputPin::Normal));
+        y += 200.0f;
+    }
+    if (material.NormalScale != 1.0f)
+    {
+        link(add(Kind::ScalarParameter, "Normal Intensity", {material.NormalScale}, 40, y), pinOf(MaterialOutputPin::NormalIntensity));
+        y += 100.0f;
+    }
+    // Emissive（テクスチャ × 色 × 強度）
+    {
+        const auto emissiveTexture = texture(MaterialTextureSlot::Emissive, MaterialSamplerType::Color, "Emissive Texture", y);
+        const std::array<float, 4> emissive = {material.EmissiveColor[0] * material.EmissiveIntensity,
+                                               material.EmissiveColor[1] * material.EmissiveIntensity,
+                                               material.EmissiveColor[2] * material.EmissiveIntensity, 0};
+        const auto color = add(Kind::VectorParameter, "Emissive", emissive, emissiveTexture ? 300.0f : 40.0f,
+                               emissiveTexture ? y + 120 : y);
+        if (emissiveTexture)
+        {
+            const auto rgb = add(Kind::ComponentMask, nullptr, {}, 300, y);
+            if (auto* node = graph.FindNode(rgb))
+            {
+                node->Value = {1, 1, 1, 0};
+            }
+            graph.Connect(outputOf(emissiveTexture), inputOf(rgb, 0), error);
+            link(multiply(rgb, color, y + 40), pinOf(MaterialOutputPin::Emissive));
+            y += 260.0f;
+        }
+        else
+        {
+            link(color, pinOf(MaterialOutputPin::Emissive));
+            y += 120.0f;
+        }
+    }
+    // AO
+    if (const auto ao = texture(MaterialTextureSlot::AO, MaterialSamplerType::Linear, "Ambient Occlusion", y))
+    {
+        link(mask(ao, 0, y), pinOf(MaterialOutputPin::AO));
+        y += 200.0f;
+    }
+    // Height（POM）と深さ / ステップ
+    if (const auto height = texture(MaterialTextureSlot::Height, MaterialSamplerType::Linear, "Height", y))
+    {
+        link(mask(height, 0, y), pinOf(MaterialOutputPin::Height));
+        y += 200.0f;
+    }
+    if (material.ParallaxDepth > 0.0f || material.Textures[static_cast<size_t>(MaterialTextureSlot::Height)] != 0)
+    {
+        link(add(Kind::ScalarParameter, "Parallax Depth", {material.ParallaxDepth}, 40, y), pinOf(MaterialOutputPin::ParallaxDepth));
+        link(add(Kind::ScalarParameter, "Parallax Steps", {material.ParallaxSteps}, 40, y + 100), pinOf(MaterialOutputPin::ParallaxSteps));
+    }
     graph.Revision = 0;
     return graph;
 }
@@ -218,6 +406,15 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
         case Kind::Group:
             node.Name = "Comment";
             node.Value = {0.30f, 0.42f, 0.60f, 1.0f}; // コメント色
+            break;
+        case Kind::StaticSwitch:
+            node.Value = {1, 0, 0, 0}; // 既定は True
+            break;
+        case Kind::Pi:
+            node.Value = {1, 0, 0, 0}; // Multiplier
+            break;
+        case Kind::Blend:
+            node.Value = {static_cast<float>(MaterialBlendMode::Overlay), 0, 0, 0};
             break;
         default:
             break;
@@ -395,6 +592,14 @@ MaterialGraphType MaterialGraph::OutputType(uint64_t id, std::vector<uint64_t>& 
         const auto* source = link ? FindPinNode(link->SourcePin) : nullptr;
         return source ? OutputType(source->Id, visiting) : fallback;
     };
+    if (node->Kind == Kind::StaticSwitch)
+    {
+        visiting.push_back(id);
+        const size_t selected = node->Value[0] > 0.5f ? 0 : 1;
+        const Type result = linkedType(selected, Type::Scalar);
+        visiting.pop_back();
+        return result;
+    }
     if (node->Kind == Kind::AppendVector)
     {
         visiting.push_back(id);
@@ -665,6 +870,20 @@ std::string MaterialGraph::Serialize() const
         value["target"] = Json::UInt64(link.TargetPin);
         document["links"].append(std::move(value));
     }
+    // グラフ設定（既定値と同じなら書かない：旧バージョンとの差分を最小にする）
+    if (!(Settings == MaterialGraphSettings{}))
+    {
+        Json::Value settings(Json::objectValue);
+        settings["surface"] = Settings.Surface;
+        settings["cull"] = Settings.Cull;
+        settings["shadingModel"] = Settings.ShadingModel;
+        settings["shadowMode"] = Settings.ShadowMode;
+        settings["alphaCutoff"] = Settings.AlphaCutoff;
+        settings["bakeResolution"] = Settings.BakeResolution;
+        settings["bakeTime"] = Settings.BakeTime;
+        settings["autoBake"] = Settings.AutoBake;
+        document["settings"] = std::move(settings);
+    }
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "  ";
     return Json::writeString(writer, document);
@@ -762,9 +981,33 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         }
         loaded.Links.push_back({value["id"].asUInt64(), value["source"].asUInt64(), value["target"].asUInt64()});
     }
-    if (!loaded.Validate(error))
+    if (document.isMember("settings") && document["settings"].isObject())
     {
-        return false;
+        const auto& settings = document["settings"];
+        const auto readInt = [&](const char* name, int& target, int minimum, int maximum) {
+            if (settings[name].isInt())
+            {
+                target = std::clamp(settings[name].asInt(), minimum, maximum);
+            }
+        };
+        const auto readFloat = [&](const char* name, float& target, float minimum, float maximum) {
+            if (settings[name].isNumeric())
+            {
+                const float value = settings[name].asFloat();
+                target = std::isfinite(value) ? std::clamp(value, minimum, maximum) : target;
+            }
+        };
+        readInt("surface", loaded.Settings.Surface, -1, 2);
+        readInt("cull", loaded.Settings.Cull, -1, 2);
+        readInt("shadingModel", loaded.Settings.ShadingModel, -1, 5);
+        readInt("shadowMode", loaded.Settings.ShadowMode, -1, 4);
+        readFloat("alphaCutoff", loaded.Settings.AlphaCutoff, -1.0f, 1.0f);
+        readInt("bakeResolution", loaded.Settings.BakeResolution, 64, 2048);
+        readFloat("bakeTime", loaded.Settings.BakeTime, 0.0f, 3600.0f);
+        if (settings["autoBake"].isBool())
+        {
+            loaded.Settings.AutoBake = settings["autoBake"].asBool();
+        }
     }
     uint64_t highest = 0;
     for (const auto& node : loaded.Nodes)
@@ -778,6 +1021,19 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
     for (const auto& link : loaded.Links)
     {
         highest = (std::max)(highest, link.Id);
+    }
+    // 旧バージョンのグラフ：後から入力ピンが増えたノード（Material Output の Height / POM など）にピンを足す
+    for (auto& node : loaded.Nodes)
+    {
+        const auto& definition = Definition(node.Kind);
+        while (node.InputPins.size() < definition.Inputs.size() && highest + 1 < MaxIdentity)
+        {
+            node.InputPins.push_back(++highest);
+        }
+    }
+    if (!loaded.Validate(error))
+    {
+        return false;
     }
     loaded.m_NextId = highest + 1;
     graph = std::move(loaded);
@@ -808,3 +1064,4 @@ bool MaterialGraph::Load(const std::filesystem::path& path, MaterialGraph& graph
     }
     return Deserialize(contents.str(), graph, error);
 }
+

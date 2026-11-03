@@ -475,6 +475,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
         {
             string error;
             found->second = MaterialManager::Registry().Register(path, type, error);
+            if (found->second == 0)
+            {
+                AddLog("アセットの登録に失敗: %s (%s)", PathToUtf8(path).c_str(), error.c_str());
+            }
         }
         return found->second;
     };

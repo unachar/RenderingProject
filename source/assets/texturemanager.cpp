@@ -1582,6 +1582,25 @@ void TextureManager::OnFrameSubmitted(uint64_t fence)
     }
 }
 
+namespace
+{
+    mutex g_ReloadMutex;
+    vector<filesystem::path> g_PendingReloads;
+}
+
+void TextureManager::RequestReload(const filesystem::path& path)
+{
+    if (path.empty())
+    {
+        return;
+    }
+    lock_guard<mutex> lock(g_ReloadMutex);
+    if (find(g_PendingReloads.begin(), g_PendingReloads.end(), path) == g_PendingReloads.end())
+    {
+        g_PendingReloads.push_back(path);
+    }
+}
+
 void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
 {
     ++g_StreamingFrame;
@@ -1658,6 +1677,68 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
         }
         return idle;
     };
+    // ファイルが書き換えられたテクスチャ（マテリアルグラフのベイク結果）を、同じ SRV 番号のまま差し替える。
+    // ディスクリプタは GPU アイドル後に書き換えるので、描画中のフレームと競合しない。
+    {
+        vector<filesystem::path> reloads;
+        {
+            lock_guard<mutex> reloadLock(g_ReloadMutex);
+            reloads.swap(g_PendingReloads);
+        }
+        for (const auto& path : reloads)
+        {
+            const string baseKey = MakeTextureCacheKey(path);
+            for (const TextureUsage usage :
+                 {TextureUsage::Color, TextureUsage::Normal, TextureUsage::TwoChannel, TextureUsage::SingleChannel})
+            {
+                const auto found = m_Textures.find(baseKey + TextureCompression::KeySuffix(usage));
+                if (found == m_Textures.end() || found->second.SrvIndex < 0)
+                {
+                    continue;
+                }
+                TexMetadata metadata{};
+                ScratchImage image;
+                if (FAILED(LoadImageFromFile(path.c_str(), metadata, image, usage)))
+                {
+                    WriteGraphicsLog("Texture reload failed: %s\n", PathToUtf8(path).c_str());
+                    continue;
+                }
+                EnsureMipChain(metadata, image);
+                if (!ensureIdle())
+                {
+                    lock_guard<mutex> reloadLock(g_ReloadMutex);
+                    g_PendingReloads.push_back(path); // 次のフレームでやり直す
+                    break;
+                }
+                auto replacement = LoadTextureToDevice(device, metadata, image);
+                if (!replacement)
+                {
+                    continue;
+                }
+                auto& texture = found->second;
+                texture.Resource = move(replacement);
+                texture.Streaming.reset();
+                texture.CompressionCacheKey = 0;
+                if (TextureCompression::GetSettings().Enabled && TextureCompression::IsCompressible(metadata))
+                {
+                    // 非圧縮で差し替え、BC 版はバックグラウンドで作って後から置き換える（既存の仕組み）
+                    const uint64_t cacheKey = TextureCompression::FileCacheKey(path, usage);
+                    if (cacheKey != 0)
+                    {
+                        TextureCompression::CompressFileInBackground(cacheKey, usage, path);
+                        texture.CompressionCacheKey = cacheKey;
+                    }
+                }
+                CreateShaderResourceView(texture.Resource.Get(), texture.Resource->GetDesc(), texture.SrvIndex, 0);
+                error_code timestampError;
+                const auto timestamp = filesystem::last_write_time(path, timestampError);
+                if (!timestampError)
+                {
+                    texture.SourceTime = timestamp.time_since_epoch().count();
+                }
+            }
+        }
+    }
     // Publish completed BC caches before recording draws. Descriptor indices stay stable.
     if (options.Enabled && TextureCompression::GetSettings().Enabled && g_StreamingFrame % 60 == 0)
     {
@@ -1818,3 +1899,4 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
 }
 
 #include "texturecompression.inl"
+

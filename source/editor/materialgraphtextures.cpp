@@ -18,13 +18,6 @@ namespace MaterialGraphTextures
     {
         constexpr int kMaxSize = 256;
 
-        struct CpuTexture
-        {
-            int Width = 0;
-            int Height = 0;
-            std::vector<float> Pixels; // RGBA 線形
-        };
-
         struct Entry
         {
             std::shared_ptr<const CpuTexture> Texture;
@@ -36,7 +29,13 @@ namespace MaterialGraphTextures
         std::unordered_map<AssetHandle, Entry> g_Entries;
         std::atomic<uint64_t> g_Generation{1};
 
-        std::shared_ptr<const CpuTexture> Load(std::filesystem::path path)
+        float ToSrgb(float v)
+        {
+            v = std::clamp(v, 0.0f, 1.0f);
+            return v <= 0.0031308f ? v * 12.92f : 1.055f * powf(v, 1.0f / 2.4f) - 0.055f;
+        }
+
+        std::shared_ptr<const CpuTexture> Load(std::filesystem::path path, int maxSize)
         {
             // WIC を使うので、このワーカースレッドで COM を初期化する
             const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -54,13 +53,15 @@ namespace MaterialGraphTextures
 
             ProcStudio::Image image;
             std::string error;
-            if (path.empty() || !ProceduralIO::LoadImageFile(path, image, error) || image.Width <= 0 ||
+            bool srgbEncoded = false;
+            if (path.empty() || !ProceduralIO::LoadImageFile(path, image, error, &srgbEncoded) || image.Width <= 0 ||
                 image.Height <= 0)
             {
                 return nullptr;
             }
             auto result = std::make_shared<CpuTexture>();
-            const float scale = (std::min)(1.0f, static_cast<float>(kMaxSize) / (std::max)(image.Width, image.Height));
+            result->SrgbEncoded = srgbEncoded;
+            const float scale = (std::min)(1.0f, static_cast<float>(maxSize) / (std::max)(image.Width, image.Height));
             result->Width = (std::max)(1, static_cast<int>(image.Width * scale));
             result->Height = (std::max)(1, static_cast<int>(image.Height * scale));
             result->Pixels.resize(static_cast<size_t>(result->Width) * result->Height * 4);
@@ -126,37 +127,79 @@ namespace MaterialGraphTextures
             }
             // パスの解決はメインスレッドで行い、読み込みだけをワーカーに渡す
             const auto path = MaterialManager::Registry().Resolve(texture);
-            entry.Job = std::async(std::launch::async, Load, path);
+            entry.Job = std::async(std::launch::async, Load, path, kMaxSize);
             return nullptr;
         }
     } // namespace
 
-    bool Sample(AssetHandle texture, float u, float v, float out[4])
+    void SampleTexture(const CpuTexture& texture, float u, float v, bool raw, float out[4])
     {
-        const auto data = Acquire(texture);
-        if (!data)
+        if (texture.Width <= 0 || texture.Height <= 0)
         {
-            return false;
+            out[0] = out[1] = out[2] = 0.0f;
+            out[3] = 1.0f;
+            return;
         }
         // 折り返し + 双線形補間
-        const float fx = (u - floorf(u)) * data->Width - 0.5f;
-        const float fy = (v - floorf(v)) * data->Height - 0.5f;
+        const float fx = (u - floorf(u)) * texture.Width - 0.5f;
+        const float fy = (v - floorf(v)) * texture.Height - 0.5f;
         const int x0 = static_cast<int>(floorf(fx));
         const int y0 = static_cast<int>(floorf(fy));
         const float tx = fx - x0;
         const float ty = fy - y0;
         auto texel = [&](int x, int y, int c) {
-            x = ((x % data->Width) + data->Width) % data->Width;
-            y = ((y % data->Height) + data->Height) % data->Height;
-            return data->Pixels[(static_cast<size_t>(y) * data->Width + x) * 4 + c];
+            x = ((x % texture.Width) + texture.Width) % texture.Width;
+            y = ((y % texture.Height) + texture.Height) % texture.Height;
+            return texture.Pixels[(static_cast<size_t>(y) * texture.Width + x) * 4 + c];
         };
         for (int c = 0; c < 4; ++c)
         {
             const float a = texel(x0, y0, c) + (texel(x0 + 1, y0, c) - texel(x0, y0, c)) * tx;
             const float b = texel(x0, y0 + 1, c) + (texel(x0 + 1, y0 + 1, c) - texel(x0, y0 + 1, c)) * tx;
             out[c] = a + (b - a) * ty;
+            // 格納値が必要な場合（法線 / マスク）は、読み込み時の sRGB 線形化を戻す（アルファは線形のまま）
+            if (raw && texture.SrgbEncoded && c < 3)
+            {
+                out[c] = ToSrgb(out[c]);
+            }
         }
+    }
+
+    bool Sample(AssetHandle texture, float u, float v, bool raw, float out[4])
+    {
+        const auto data = Acquire(texture);
+        if (!data)
+        {
+            return false;
+        }
+        SampleTexture(*data, u, v, raw, out);
         return true;
+    }
+
+    bool Sample(AssetHandle texture, float u, float v, float out[4])
+    {
+        return Sample(texture, u, v, false, out);
+    }
+
+    std::shared_ptr<const CpuTexture> LoadForBake(const std::filesystem::path& path, int maxSize)
+    {
+        return Load(path, (std::max)(maxSize, 16));
+    }
+
+    void Invalidate(AssetHandle texture)
+    {
+        std::lock_guard<std::mutex> lock(g_Mutex);
+        const auto found = g_Entries.find(texture);
+        if (found == g_Entries.end())
+        {
+            return;
+        }
+        if (found->second.Job.valid())
+        {
+            found->second.Job.wait();
+        }
+        g_Entries.erase(found);
+        ++g_Generation;
     }
 
     bool IsReady(AssetHandle texture)
@@ -195,3 +238,4 @@ namespace MaterialGraphTextures
         ++g_Generation;
     }
 } // namespace MaterialGraphTextures
+

@@ -36,6 +36,8 @@ float4 GraphPreviewPS(GraphPreviewInput input) : SV_Target
         context.WorldPosition.z = sqrt(saturate(1-radius));
         context.WorldNormal = normalize(context.WorldPosition);
     }
+    context.Tangent = normalize(cross(abs(context.WorldNormal.y) < 0.99 ? float3(0,1,0) : float3(1,0,0), context.WorldNormal));
+    context.Bitangent = -cross(context.WorldNormal, context.Tangent);
 )hlsl";
         if (program.MaterialOutput)
         {
@@ -44,7 +46,8 @@ float4 GraphPreviewPS(GraphPreviewInput input) : SV_Target
     float3 normal = context.WorldNormal;
     float3 tangent = normalize(cross(abs(normal.y) < 0.99 ? float3(0,1,0) : float3(1,0,0),normal));
     float3 bitangent = cross(normal,tangent);
-    normal = normalize(tangent * material.Normal.x + bitangent * material.Normal.y + normal * material.Normal.z);
+    float2 scaledNormal = material.Normal.xy * max(material.NormalIntensity, 0.0);
+    normal = normalize(tangent * scaledNormal.x + bitangent * scaledNormal.y + normal * material.Normal.z);
     float3 light = normalize(float3(-0.4,0.6,0.8));
     float3 view = float3(0,0,1);
     float3 halfVector = normalize(light + view);
@@ -142,3 +145,4 @@ MaterialGraphShader MaterialGraphShaderCompiler::Compile(const MaterialGraphProg
     }
     return shader;
 }
+

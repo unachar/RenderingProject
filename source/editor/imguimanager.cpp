@@ -354,6 +354,8 @@ void ImGuiManager::Update()
     DrawEditorMainMenu();
     // メインツールバー / ステータスバーはドックスペースより先に作り、作業領域から差し引く
     EditorShell::DrawToolbar();
+    // Workspace タブはツールバーの下（ドッキング領域の直上）に専用バーとして置く
+    EditorWorkspaceManager::Get().DrawTabBar();
     EditorShell::DrawStatusBar();
     DrawDockSpace();
     m_IsSceneViewHovered = false;
@@ -415,7 +417,7 @@ void ImGuiManager::DrawDockSpace()
     ImGui::Begin("EditorDockSpace", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
-    // Workspace タブはメインメニューバー内（Blender のトップバーと同じ位置）に移動した
+    // Workspace タブはツールバー下の専用バー（EditorWorkspaceManager::DrawTabBar）に描く
     auto& workspaces = EditorWorkspaceManager::Get();
     if (m_ResetEditorLayout)
     {
@@ -539,10 +541,7 @@ void ImGuiManager::DrawEditorMainMenu()
         ImGui::EndMenu();
     }
 
-    // Blender のトップバーと同じく、メニューの右に Workspace タブを並べる
-    ImGui::SameLine(0.0f, 18.0f * preferences.UiScale);
-    EditorWorkspaceManager::Get().DrawTabs();
-
+    // Workspace タブはメニューバーから、ツールバー下の専用バー（DrawTabBar）へ移動した
     if (!preferences.ShowToolbar)
     {
         // ツールバー非表示時の再生ボタン
@@ -769,3 +768,4 @@ void ImGuiManager::DrawAdjustmentPanel()
         ImGui::End();
     }
 }
+

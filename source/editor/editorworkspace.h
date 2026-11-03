@@ -82,8 +82,10 @@ class EditorWorkspaceManager
     void RequestSwitch(size_t index);
     // Apply queued changes before NewFrame, never while docking windows are being submitted.
     void BeginFrame();
-    // メインメニューバーの中に Blender 風の Workspace タブを描く
-    void DrawTabs();
+    // Workspace タブ（Blender / UE 風）を現在のウィンドウ内に描く。reserveRight は右側に残す幅
+    void DrawTabs(float reserveRight = 0.0f);
+    // ツールバーの下（ドッキング領域の直上）に Workspace タブ専用のバーを作って描く
+    void DrawTabBar();
     void DrawDockSpace();
     void RequestReset();
     void RequestMaximize(const std::string& area);
@@ -154,3 +156,4 @@ class EditorWorkspaceManager
     ImVec2 m_AreaWorkSize{};
     char m_Rename[128]{};
 };
+

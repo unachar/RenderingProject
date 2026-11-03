@@ -50,11 +50,11 @@ struct MeshPipelineStream
 bool CompileShader(const wchar_t* path, const char* entry, const char* target, ComPtr<ID3DBlob>& output)
 {
     ComPtr<ID3DBlob> errors;
-    UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+    // The shared material evaluator is too large for practical unoptimized driver compilation.
+    // Keep shader symbols in Debug while using the same optimized GPU program as Release.
+    UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #if defined(_DEBUG)
-    flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-    flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
+    flags |= D3DCOMPILE_DEBUG;
 #endif
     HRESULT hr = DxcCompileFromFileCompat(path, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target, flags, 0,
                                           &output, &errors);

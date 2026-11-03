@@ -61,6 +61,9 @@ class TextureManager
     static vector<TextureInfo> GetLoadedTextureInfos();
     static int FindLoadedTexture(const filesystem::path& path);
     static void TouchTexture(int srvIndex);
+    // ファイルを書き換えたテクスチャ（マテリアルグラフのベイク結果など）を、同じ SRV 番号のまま読み直す。
+    // 実際の差し替えは次の UpdateStreaming（フレーム先頭、GPU アイドル待ち後）で行う。未読み込みなら何もしない。
+    static void RequestReload(const filesystem::path& path);
     static void UpdateStreaming(ID3D12GraphicsCommandList* commandList);
     static void OnFrameSubmitted(uint64_t fence);
     static bool IsReservedResourceStreamingSupported();
@@ -88,3 +91,4 @@ class TextureManager
     static void ReleaseUploadBuffer(ComPtr<ID3D12Resource> upload, UINT64 size, bool defer = false);
     static bool ExecuteCommandListAndSync(ID3D12GraphicsCommandList* cmdList, bool closeList = true);
 };
+

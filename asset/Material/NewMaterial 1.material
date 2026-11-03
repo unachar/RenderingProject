@@ -10,10 +10,10 @@
     "aoStrength" : 1.0,
     "baseColor" : 
     [
-      0.10559999942779541,
-      0.070857599377632141,
-      0.10559999942779541,
-      0.10559999942779541
+      1.0,
+      1.0,
+      1.0,
+      1.0
     ],
     "emissiveColor" : 
     [
@@ -25,9 +25,9 @@
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 0.0,
-    "parallaxDepth" : 0.10199999809265137,
-    "parallaxSteps" : 38.0,
-    "roughness" : 0.40200001001358032,
+    "parallaxDepth" : 0.0,
+    "parallaxSteps" : 8.0,
+    "roughness" : 0.5,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
@@ -47,7 +47,7 @@
   "textures" : 
   {
     "ao" : "guid:0000000000000000",
-    "baseColor" : "guid:0000000000000000",
+    "baseColor" : "guid:8a9a81f2fcaa2143",
     "emissive" : "guid:0000000000000000",
     "height" : "guid:a76a6754c962b847",
     "metallicRoughness" : "guid:0000000000000000",

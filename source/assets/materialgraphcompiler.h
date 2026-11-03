@@ -20,6 +20,7 @@ struct MaterialGraphProgram
     std::vector<std::array<float, 4>> Parameters;
     std::vector<uint64_t> ParameterNodes;
     std::vector<AssetHandle> Textures;
+    std::vector<MaterialSamplerType> TextureSamplers;
     std::vector<MaterialGraphSourceLocation> Sources;
     std::vector<uint64_t> DependencyOrder;
 };
@@ -29,4 +30,6 @@ class MaterialGraphCompiler
   public:
     // targetNode==0 compiles Material Output; preview compilation visits only the chosen node's inputs.
     static MaterialGraphProgram Generate(const MaterialGraph& graph, uint64_t targetNode = 0);
+    // Production shaders supply parameter/texture descriptors through the material texture heap.
+    static MaterialGraphProgram GenerateRuntime(const MaterialGraph& graph, uint64_t targetNode = 0);
 };
