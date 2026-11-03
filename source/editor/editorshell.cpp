@@ -1447,8 +1447,16 @@ void EditorShell::DrawToolbar()
         const bool playing = ProjectManager::IsPlaying();
         const bool paused = ProjectManager::IsPaused();
         const float buttonWidth = ImGui::GetFrameHeight() * 1.6f;
-        const float optionsWidth = ImGui::GetFrameHeight() * 0.9f;
-        const float playGroupWidth = buttonWidth * 3.0f + optionsWidth + ImGui::GetStyle().ItemSpacing.x * 3.0f;
+        // ▾ ボタンはアイコン幅＋左右パディングを確保して、グリフが見切れないようにする
+        const std::string optionsLabel = std::string(EditorIcons::ChevronDown()) + "##PlayOptions";
+        const float optionsWidth = (std::max)(ImGui::GetFrameHeight() * 1.1f,
+                                              ImGui::CalcTextSize(optionsLabel.c_str(), nullptr, true).x +
+                                                  ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f * scale);
+        // 再生ボタン周りの余白（再生と▾は UE と同様に隣接、その後ろは広めに空ける）
+        const float playGap = 10.0f * scale;    // ▾ と一時停止の間
+        const float buttonGap = 8.0f * scale;   // 一時停止と停止の間
+        const float optionsGap = 2.0f * scale;  // 再生と▾の間
+        const float playGroupWidth = buttonWidth * 3.0f + optionsWidth + optionsGap + playGap + buttonGap;
         const float centerX = (ImGui::GetWindowWidth() - playGroupWidth) * 0.5f;
         ImGui::SameLine();
         if (ImGui::GetCursorPosX() < centerX)
@@ -1473,10 +1481,9 @@ void EditorShell::DrawToolbar()
             }
             ImGui::PopStyleColor();
             // #12 再生オプション（UE の「︙」と同じ）
-            ImGui::SameLine(0.0f, 1.0f);
+            ImGui::SameLine(0.0f, optionsGap);
             ImGui::BeginDisabled(playing);
-            if (ImGui::Button((std::string(EditorIcons::ChevronDown()) + "##PlayOptions").c_str(),
-                              ImVec2(optionsWidth, 0.0f)))
+            if (ImGui::Button(optionsLabel.c_str(), ImVec2(optionsWidth, 0.0f)))
             {
                 ImGui::OpenPopup("##PlayOptionsPopup");
             }
@@ -1508,13 +1515,13 @@ void EditorShell::DrawToolbar()
                 }
                 ImGui::EndPopup();
             }
-            ImGui::SameLine();
+            ImGui::SameLine(0.0f, playGap);
             ImGui::BeginDisabled(!playing);
             if (ToggleButton((std::string(EditorIcons::Pause()) + "##ToolbarPause").c_str(), paused, "一時停止 (Ctrl+Shift+P)", ImVec2(buttonWidth, 0.0f)))
             {
                 ProjectManager::TogglePause();
             }
-            ImGui::SameLine();
+            ImGui::SameLine(0.0f, buttonGap);
             ImGui::PushStyleColor(ImGuiCol_Text, playing ? EditorPreferences::Error() : ImGui::GetStyleColorVec4(ImGuiCol_Text));
             if (ImGui::Button((std::string(EditorIcons::Stop()) + "##ToolbarStop").c_str(), ImVec2(buttonWidth, 0.0f)))
             {
@@ -2496,4 +2503,5 @@ void EditorShell::DrawPreferencesWindow()
     EditorPreferences::DrawPreferencesContent();
     ImGui::End();
 }
+
 
