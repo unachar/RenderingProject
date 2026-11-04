@@ -280,6 +280,53 @@ namespace LiveMusic
             return m_Volume;
         }
 
+        uint32_t SampleRate() const
+        {
+            return m_Format.nSamplesPerSec;
+        }
+
+        // 再生位置（seconds）を中心にした count 個のモノラル PCM（-1〜1）を out へ書く（Audio Spectrum ノードの解析用）。
+        // 範囲外は 0。PCM16 / float32 の両方に対応。読み込めていなければ false
+        bool CopyMonoWindow(double centerSeconds, float* out, size_t count) const
+        {
+            if (!out || !count || m_Pcm.empty() || !m_Format.nSamplesPerSec || !m_Format.nChannels || !std::isfinite(centerSeconds))
+            {
+                return false;
+            }
+            const int64_t center = static_cast<int64_t>(std::max(0.0, centerSeconds) * m_Format.nSamplesPerSec);
+            const int64_t first = center - static_cast<int64_t>(count / 2);
+            const bool isFloat = m_Format.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
+            const size_t channels = m_Format.nChannels;
+            for (size_t i = 0; i < count; ++i)
+            {
+                const int64_t frame = first + static_cast<int64_t>(i);
+                if (frame < 0 || static_cast<uint64_t>(frame) >= m_TotalFrames)
+                {
+                    out[i] = 0.0f;
+                    continue;
+                }
+                const uint8_t* base = m_Pcm.data() + static_cast<size_t>(frame) * m_Format.nBlockAlign;
+                float sum = 0.0f;
+                for (size_t c = 0; c < channels; ++c)
+                {
+                    if (isFloat)
+                    {
+                        float v;
+                        std::memcpy(&v, base + c * sizeof(float), sizeof(float));
+                        sum += std::isfinite(v) ? v : 0.0f;
+                    }
+                    else
+                    {
+                        int16_t v;
+                        std::memcpy(&v, base + c * sizeof(int16_t), sizeof(int16_t));
+                        sum += static_cast<float>(v) / 32768.0f;
+                    }
+                }
+                out[i] = sum / static_cast<float>(channels);
+            }
+            return true;
+        }
+
       private:
         static bool Read(std::ifstream& f, void* bytes, size_t size)
         {
@@ -343,4 +390,5 @@ namespace LiveMusic
         bool m_Playing = false;
     };
 } // namespace LiveMusic
+
 

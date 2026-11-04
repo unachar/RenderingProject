@@ -30,6 +30,13 @@ float4 GraphPreviewPS(GraphPreviewInput input) : SV_Target
     context.WorldNormal = float3(0,0,1);
     context.CameraVector = float3(0,0,1);
     context.Time = PreviewTime;
+    context.LightDirection = normalize(float3(0.40824829,0.81649658,0.40824829));
+    context.FrontFacing = 1;
+    context.Curvature = 0;
+    context.AudioTime = PreviewTime;
+    context.SceneDepth = 100;
+    context.PixelDepth = 3;
+    context.SceneColor = float3(0.5,0.5,0.5);
     if (PreviewShape != 0)
     {
         float radius = dot(context.WorldPosition.xy,context.WorldPosition.xy);
@@ -1007,4 +1014,5 @@ namespace MaterialGraphGpu
         g_State = State{};
     }
 } // namespace MaterialGraphGpu
+
 

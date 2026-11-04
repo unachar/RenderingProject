@@ -1,3 +1,4 @@
+#define TOON_NODE_LIGHTING_DISABLED 1 // GBuffer に Toon ノードのパラメーターを持たないので、ライトごとの評価を外す（ToonNodeLighting.hlsli）
 Texture2D<float4> MaterialEmissionAO : register(t33);
 #define SHADER_POSTPROCESS
 #define SHADER_3D
@@ -548,5 +549,6 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
     MegaLightRaw[linearIndex] = result;
     return 0.0f;
 }
+
 
 

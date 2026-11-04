@@ -15,7 +15,9 @@
 #include <chrono>
 #include "materialgraph.h"
 #include "materialgraphcompiler.h"
+#include "materialgraphlower.h"
 #include "frameconstants.h"
+#include "../audio/audiospectrum.h"
 
 namespace
 {
@@ -265,13 +267,51 @@ namespace
     }
 }
 
-void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* graph)
+namespace
+{
+    // Material Function（.matfunc）を、アセットのハンドルから読む。MaterialGraphLower が展開するときに呼ぶ
+    void EnsureFunctionLoader()
+    {
+        static bool registered = false;
+        if (registered)
+        {
+            return;
+        }
+        registered = true;
+        MaterialFunctionLibrary::SetLoader([](AssetHandle handle) -> std::shared_ptr<const MaterialGraph> {
+            if (MaterialManager::Registry().TypeOf(handle) != AssetType::MaterialFunction)
+            {
+                return nullptr;
+            }
+            const auto path = MaterialManager::Registry().Resolve(handle);
+            auto graph = std::make_shared<MaterialGraph>();
+            std::string error;
+            if (path.empty() || !MaterialGraph::Load(path, *graph, error) || !graph->Settings.IsFunction)
+            {
+                return nullptr;
+            }
+            return graph;
+        });
+    }
+}
+
+void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* sourceGraph)
 {
     if (handle == 0)
     {
         return;
     }
+    EnsureFunctionLoader();
     auto& runtime = GetRuntime(handle);
+    // マテリアルインスタンスの上書き（Texture Parameter 2D）を、保存しない実行時の値としてグラフへ渡す
+    MaterialGraph instanceGraph;
+    const MaterialGraph* graph = sourceGraph;
+    if (sourceGraph)
+    {
+        instanceGraph = *sourceGraph;
+        instanceGraph.InstanceTextures = runtime.Editing.TextureOverrides;
+        graph = &instanceGraph;
+    }
     runtime.GraphChecked = true;
     if (!graph)
     {
@@ -295,6 +335,12 @@ void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* g
     runtime.GraphStatus.clear();
     runtime.GraphInstructions = program.Instructions;
     runtime.GraphRegisters = program.Registers;
+    runtime.GraphUsesSceneDepth = program.UsesSceneDepth;
+    runtime.GraphUsesSceneColor = program.UsesSceneColor;
+    runtime.GraphPerLightToon = program.PerLightToon;
+    runtime.GraphUsesDynamics = program.UsesTime || !program.Dynamics.empty();
+    runtime.GraphProgram = program;
+    runtime.GraphDynamicState = {};
     // 発光の動的ベイク（GI / 反射）用：出力レジスタ [2].x = Emissive（-1 = 未接続）
     runtime.GraphUsesView = program.UsesView;
     runtime.GraphEmissive = program.Texels.size() > 2 && program.Texels[2][0] >= 0.0f;
@@ -345,6 +391,17 @@ bool MaterialManager::GetDynamicEmissionSource(AssetHandle handle, DynamicEmissi
 void MaterialManager::UpdateGraphPrograms()
 {
     const float time = GraphTime();
+    // Material Function が保存された：保存済みグラフを読み直して、呼び出しているマテリアルのプログラムを作り直す
+    static uint64_t functionRevision = MaterialFunctionLibrary::Revision();
+    const uint64_t currentRevision = MaterialFunctionLibrary::Revision();
+    if (currentRevision != functionRevision)
+    {
+        functionRevision = currentRevision;
+        for (auto& [handle, runtimePointer] : runtimes)
+        {
+            runtimePointer->GraphChecked = false;
+        }
+    }
     for (auto& [handle, runtimePointer] : runtimes)
     {
         auto& runtime = *runtimePointer;
@@ -383,11 +440,28 @@ void MaterialManager::UpdateGraphPrograms()
             runtime.Binding.GraphProgramID = runtime.GraphProgramSrv;
             ++runtime.Revision;
         }
-        if (runtime.GraphUsesTime)
+        if (runtime.GraphUsesTime || !runtime.GraphProgram.Dynamics.empty())
         {
-            auto header = runtime.GraphHeader;
-            header[0] = time;
-            TextureManager::UpdateDataTexture(runtime.GraphProgramSrv, 0, {header});
+            // 時刻（ヘッダー）と動的テクセル（Beat Phase / Audio Spectrum / 音声クロック）を毎フレーム書く。
+            // 音声クロックは XAudio2 の再生位置（AudioMaterial::Bridge）。音声が無いときは壁時計
+            MaterialGraphVm::DynamicInputs inputs;
+            const auto audio = AudioMaterial::Bridge::Query(static_cast<double>(time));
+            inputs.AudioValid = audio.Valid;
+            inputs.AudioTime = audio.Time;
+            inputs.WallTime = static_cast<double>(time);
+            inputs.Bands = audio.Valid ? audio.Bands.data() : nullptr;
+            inputs.DeltaTime = std::clamp(time - runtime.GraphLastTime, 0.0f, 0.25f);
+            runtime.GraphLastTime = time;
+            if (runtime.GraphTexels.size() == runtime.GraphProgram.Texels.size())
+            {
+                const int count = MaterialGraphVm::UpdateDynamics(runtime.GraphProgram, runtime.GraphTexels, runtime.GraphDynamicState, inputs, time);
+                if (count > 0)
+                {
+                    TextureManager::UpdateDataTexture(
+                        runtime.GraphProgramSrv, 0,
+                        std::vector<std::array<float, 4>>(runtime.GraphTexels.begin(), runtime.GraphTexels.begin() + count));
+                }
+            }
         }
     }
 }
@@ -584,4 +658,5 @@ void MaterialManager::NotifyAssignmentsChanged()
         }
     }
 }
+
 

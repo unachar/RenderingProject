@@ -1,5 +1,6 @@
 #ifndef LIVE_TOON_LIGHTING_HLSLI
 #define LIVE_TOON_LIGHTING_HLSLI
+#include "ToonNodeLighting.hlsli"
 
 // Shared by Forward and Deferred. No material/global buffer reads here: Deferred
 // must not borrow another entity's material controls from the full-screen pass.
@@ -65,7 +66,7 @@ float3 EvaluateLiveToonLight(float3 albedo, float3 normal, float3 viewDir, float
     float rim = edge * edge * edge * edge;
     rim *= LiveToonBand(-dot(viewDir, lightDir), 0.1f, 0.3f);
     rim *= saturate(nDotL + 0.3f);
-    float rimStrength = skin ? 0.16f : 0.42f;
+    float rimStrength = (skin ? 0.16f : 0.42f) * g_ToonRimScale; // Directional Rim Light ノードが有効なら 0（二重にならない）
 
     // Every term is linear in albedo, and zero for zero radiance. Keep HDR values
     // for exposure/bloom; final display mapping belongs to the post-process pass.
@@ -78,3 +79,4 @@ float3 EvaluateLiveToonAmbient(float3 albedo, float3 environmentIrradiance, floa
     return albedo * (float3(fill, fill, fill) + environmentIrradiance * 0.25f);
 }
 #endif
+

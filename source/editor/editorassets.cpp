@@ -311,6 +311,8 @@ namespace
                 return "メッシュ";
             case AssetType::Noise:
                 return "ノイズ";
+            case AssetType::MaterialFunction:
+                return "マテリアル関数";
             default:
                 return IsCompanionFile(item.Name) ? "付属ファイル" : "ファイル";
         }
@@ -2160,7 +2162,8 @@ void ImGuiManager::BeginAssetDragSource(const filesystem::path& path, bool isDir
         const string relative = MakeRelativeAssetPath(path);
         const auto type = AssetRegistry::Classify(path);
         bool sent = false;
-        if (type == AssetType::Material || type == AssetType::Texture || type == AssetType::Noise)
+        if (type == AssetType::Material || type == AssetType::Texture || type == AssetType::Noise ||
+            type == AssetType::MaterialFunction)
         {
             string error;
             const AssetDragPayload payload{MaterialManager::Registry().Register(path, type, error), type};
@@ -2914,5 +2917,6 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
+
 
 

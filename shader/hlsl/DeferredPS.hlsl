@@ -101,6 +101,7 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
     {
         MaterialGraphVmInput graphInput;
+        MaterialGraphVmInitExt(graphInput);
         graphInput.WorldPos = In.WorldPos;
         graphInput.PixelPos = In.Position.xy;
 #ifdef SHADER_GPU_DRIVEN
@@ -116,6 +117,23 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
         graphInput.CameraPos = In.CameraPos;
         graphInput.UV = materialUv;
         graphInput.VertexColor = In.Diffuse;
+        // 追加ノード用：表裏 / メインライト / 接線（スキニング後の位置と UV の微分から）/ 曲率
+        graphInput.FrontFacing = frontFace;
+        graphInput.LightDir = LightPositionType.w < 0.5f ? SafeNormalizeCommon(LightDirection.xyz, float3(0, 1, 0))
+                                                          : SafeNormalizeCommon(LightPositionType.xyz - In.WorldPos, float3(0, 1, 0));
+#ifdef SHADER_VISIBILITY_RESOLVE
+#if GEOMETRIC_SPECULAR_AA
+        MaterialGraphVmSetFrame(graphInput, VisibilityWorldDx, VisibilityWorldDy, VisibilityUvDx, VisibilityUvDy, VisibilityNormalDx,
+                                VisibilityNormalDy);
+#else
+        // 法線の差分は GEOMETRIC_SPECULAR_AA のときだけ Visibility 解決が渡す。無ければ曲率は 0（Curvature Mask は効かない）
+        MaterialGraphVmSetFrame(graphInput, VisibilityWorldDx, VisibilityWorldDy, VisibilityUvDx, VisibilityUvDy, float3(0, 0, 0),
+                                float3(0, 0, 0));
+#endif
+#else
+        MaterialGraphVmSetFrame(graphInput, ddx(In.WorldPos), ddy(In.WorldPos), ddx(In.TexCoord), ddy(In.TexCoord),
+                                ddx(graphGeometryNormal), ddy(graphGeometryNormal));
+#endif
         materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, g_SamplerState);
         ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
                                   assetEmissionAO);
@@ -190,6 +208,16 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    // Toon Light Ramp：GBuffer に追加のチャンネルが無いので、ライトに依存しない近似（影のしきい値 / ぼかし / 強さ）だけを書く。
+    // 影色の段数 / Face SDF / Directional Rim / Hair のライトごとの評価は Forward のトゥーン経路（ToonNodeLighting.hlsli）
+    if (IsLiveToonClass(output.Material.a))
+    {
+        float nodeThreshold = output.Shadow.r;
+        float nodeSoftness = output.Shadow.g;
+        float nodeStrength = output.Shadow.b;
+        ApplyMaterialGraphToonDeferred(materialGraph, nodeThreshold, nodeSoftness, nodeStrength);
+        output.Shadow.rgb = float3(nodeThreshold, nodeSoftness, nodeStrength);
+    }
     // ライブトゥーンのマテリアルテクスチャ（Def / 顔陰影反転 / 質感ランプ）
     // Visibility 解決（コンピュート）では暗黙微分の Sample が使えないので対象外。
 #ifndef SHADER_VISIBILITY_RESOLVE
@@ -249,5 +277,6 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 #endif
+
 
 

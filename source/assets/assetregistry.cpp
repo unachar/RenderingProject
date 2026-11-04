@@ -109,6 +109,10 @@ AssetType AssetRegistry::Classify(const std::filesystem::path& path)
     {
         return AssetType::Material;
     }
+    if (extension == ".matfunc")
+    {
+        return AssetType::MaterialFunction;
+    }
     for (const char* texture : {".png", ".jpg", ".jpeg", ".dds", ".tga", ".bmp", ".tif", ".tiff", ".hdr"})
     {
         if (extension == texture)
@@ -307,3 +311,4 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::
     }
     return copy;
 }
+

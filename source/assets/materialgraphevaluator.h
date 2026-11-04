@@ -7,8 +7,10 @@
 // ============================================================================
 #include "materialgraph.h"
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -18,6 +20,15 @@ namespace MaterialGraphEval
     {
         float V[4]{};
         int N = 1; // 成分数（1〜4）
+    };
+
+    // 音声のスペクトル（Audio Spectrum ノード用）。エンジンは AudioMaterialBridge（audio/audiospectrum.h）から渡す。
+    // 渡さないプレビューでは擬似スペクトルを使う
+    struct AudioSnapshot
+    {
+        static constexpr int kBands = 32;
+        float Bands[kBands]{}; // 0〜1（対数周波数 20Hz〜20kHz を kBands に分けた大きさ）
+        double Time = 0.0;     // 音声クロック（秒）
     };
 
     // 評価コンテキスト。接空間は T = +U、B = +V（エンジンの ApplyNormalMapCommon と同じ向き）
@@ -31,6 +42,18 @@ namespace MaterialGraphEval
         float Bitangent[3]{0.0f, -1.0f, 0.0f};
         float Time = 0.0f;
         float PixelSize = 1.0f / 64.0f; // UV 上の 1 画素（DDX / DDY / Normal From Height の差分幅）
+        // ---- 2026-11 追加ノード用（無ければプレビュー用の値）
+        float LightDirection[3]{0.40824829f, 0.81649658f, 0.40824829f}; // 表面 → メインライト
+        float Curvature = 0.0f;                                         // 曲率（正 = 凸）
+        bool FrontFacing = true;                                        // 表面（Two Sided Sign）
+        float SceneDepth = 100.0f;                                      // 不透明の奥行き（ワールド単位。Scene Depth / Depth Fade）
+        float PixelDepth = 3.0f;                                        // 画素の奥行き（ワールド単位）
+        float SceneColor[3]{0.5f, 0.5f, 0.5f};
+        float NearPlane = 0.1f;
+        float FarPlane = 1000.0f;
+        bool ReverseZ = true; // 深度バッファの逆 Z（Scene Depth の「深度値」出力）
+        double AudioTime = 0.0;
+        const AudioSnapshot* Audio = nullptr;
     };
 
     // raw = true なら格納値（8 ビット画像の sRGB 線形化をしない値）を返す。未読み込みなら false
@@ -53,9 +76,13 @@ namespace MaterialGraphEval
         std::vector<uint8_t> TimeDependent;         // Time に依存する
         std::vector<uint8_t> ViewDependent;         // カメラ方向に依存する（ベイクでは正面から見た値になる）
         bool Animated = false;
+        // Material Function の呼び出し / Texture Parameter 2D を展開したグラフ（無ければ元のグラフをそのまま評価する）。
+        // ノードの添字は元のグラフと同じ（展開で増えるノードは末尾）。Evaluator はこのグラフで評価する
+        std::shared_ptr<const MaterialGraph> Lowered;
+        std::string LowerError; // 展開に失敗した理由（空 = 成功 / 不要）
     };
 
-    void BuildTopology(const MaterialGraph& graph, Topology& topology);
+    void BuildTopology(const MaterialGraph& sourceGraph, Topology& topology);
 
     // 中継ノードを飛ばして、入力ピンに実際に繋がっているノードを返す
     const MaterialGraphNode* ResolveSource(const MaterialGraph& graph, const MaterialGraphNode& node, size_t input);
@@ -84,7 +111,11 @@ namespace MaterialGraphEval
         // Material Output の入力を、指定の UV で評価する（POM / 高さの差分用）。コンテキストは元に戻らない
         Value InputAt(const MaterialGraphNode& node, size_t input, float u, float v);
 
+        // 固定の出力スロット（Packed Texture Channels / Flow Map / Beat Phase / Material Layer Blend / Thickness Map）の値
+        Value SlotValue(size_t node, int slot);
+
       private:
+        Value ComputeExt(const MaterialGraphNode& node, size_t index, int depth);
         const InputSource* Source(const MaterialGraphNode& node, size_t input) const;
         Value Compute(const MaterialGraphNode& node, int depth);
         Value Shifted(const MaterialGraphNode& node, size_t input, int axis, int depth);
@@ -96,6 +127,8 @@ namespace MaterialGraphEval
         Context m_Context;
         std::vector<Value> m_Memo;
         std::vector<uint8_t> m_Done;
+        std::vector<std::array<Value, 8>> m_Slots; // 固定出力スロットを持つグラフだけ確保する
+        bool m_HasSlots = false;
         std::unique_ptr<Evaluator> m_Child; // 差分用（UV をずらした評価）。必要になったときだけ作る
         int m_Level = 0;
     };
@@ -103,4 +136,5 @@ namespace MaterialGraphEval
     // 値ユーティリティ
     Value Promote(Value value, int count);
 } // namespace MaterialGraphEval
+
 

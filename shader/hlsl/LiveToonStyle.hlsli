@@ -104,7 +104,7 @@ float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, 
         // ステージの色ライトが輪郭に乗る強いリム（逆光側ほど強い）
         float hardRim = LiveToonBand(edge, 1.0f - rimWidth * 0.55f, 0.03f);
         hardRim *= LiveToonBand(saturate(nDotL + 0.35f), 0.25f, 0.2f);
-        additive += rimAlbedo * rimLight * visibility * hardRim * max(LiveToonStyle2.y, 0.0f) * (skin ? 0.5f : 1.0f);
+        additive += rimAlbedo * rimLight * visibility * hardRim * max(LiveToonStyle2.y, 0.0f) * (skin ? 0.5f : 1.0f) * g_ToonRimScale;
         return additive;
     }
 
@@ -151,7 +151,7 @@ float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, 
                     LiveToonBand(-dot(viewDir, lightDir), -0.1f, 0.3f);
     float3 rim = rimAlbedo * rimLight * cast *
                  (softRim * max(LiveToonStyle2.x, 0.0f) + hardRim * max(LiveToonStyle2.y, 0.0f)) *
-                 (skin ? 0.45f : 1.0f);
+                 (skin ? 0.45f : 1.0f) * g_ToonRimScale;
 
     return diffuse + specularTerm + rim;
 }
@@ -161,6 +161,19 @@ float3 EvaluateLiveToonLightStyled(float3 albedo, float3 normal, float3 viewDir,
                                    float3 visibility, float lightType, float materialClass, float roughness,
                                    float shadowThreshold, float shadowSoftness, float shadowStrength)
 {
+    // マテリアルグラフの Toon ノード（Toon Light Ramp / Face SDF / Rim / Hair）：ライト 1 灯ごとに、albedo / 影の強さ / 加算項を調整して
+    // 既存の計算（セル陰影・ランプスペキュラ・天使の輪・リム）をそのまま使う。g_ToonNode.Mask == 0 なら従来どおり
+    float3 nodeExtra = 0.0f;
+#ifndef TOON_NODE_LIGHTING_DISABLED // Deferred（GBuffer に追加のチャンネルが無い）はノードのライトごとの評価を持たない
+    [branch] if (g_ToonNode.Mask != 0u)
+    {
+        ToonNodeLightResult node = EvaluateToonNodeLight(g_ToonNode, albedo, normal, viewDir, lightDir, radiance, visibility, shadowStrength);
+        albedo = node.Albedo;
+        shadowStrength = node.ShadowStrength;
+        visibility = node.Visibility;
+        nodeExtra = node.Extra;
+    }
+#endif
     float blend = saturate(LiveToonStyle0.x);
     float3 legacy = 0.0f;
     [branch] if (blend < 0.999f)
@@ -170,11 +183,11 @@ float3 EvaluateLiveToonLightStyled(float3 albedo, float3 normal, float3 viewDir,
     }
     [branch] if (blend <= 0.001f)
     {
-        return legacy;
+        return legacy + nodeExtra;
     }
     float3 live = EvaluateLiveToonStageLight(albedo, normal, viewDir, lightDir, radiance, visibility, lightType,
                                              materialClass, roughness, shadowThreshold, shadowSoftness, shadowStrength);
-    return lerp(legacy, live, blend);
+    return lerp(legacy, live, blend) + nodeExtra;
 }
 
 // 環境スペキュラ（IBL の縁の映り込み）。environment は反射方向でサンプルした環境色。
@@ -207,3 +220,4 @@ float3 EvaluateLiveToonAmbientStyled(float3 albedo, float3 environmentIrradiance
     return lerp(legacy, tinted, blend);
 }
 #endif
+

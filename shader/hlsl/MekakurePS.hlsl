@@ -45,6 +45,10 @@ float4 main(in PSInput3D In) : SV_Target0
     clip(facing * hairTransmit - (1.0f / 255.0f));
 
     float4 premultiplied = ShadeForward(In) * (facing * hairTransmit);
+    // マテリアルグラフの Mekakure Mask ノード：既存の判定（髪の被覆 / 顔の向き）の結果に、ノードの透け具合を乗せる
+    // （透明化の処理はここだけ。ノードは係数を渡すだけで二重に実装しない）。ノードが無ければ 1
+    premultiplied *= g_MekakureGraphMask;
     clip(premultiplied.a - (1.0f / 255.0f));
     return premultiplied;
 }
+

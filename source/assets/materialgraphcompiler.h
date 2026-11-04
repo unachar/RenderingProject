@@ -54,6 +54,53 @@ namespace MaterialGraphVm
     inline constexpr int kMaxRegisters = 24; // MaterialGraphVM.hlsli の MG_VM_REGS と一致させる
     inline constexpr int kHeaderTexels = 4;
     inline constexpr int kOutputCount = 12;
+    // ---- 2026-11 追加（旧プログラムとの互換：命令の開始位置は [0].y に入っているので、ヘッダーを伸ばしても古いシェーダーは動く）
+    //   [4 .. 4 + kExtHeaderTexels)  追加の出力レジスタ（陰影ピン：ExtOutput。-1 = 未接続）
+    //   [kFixedHeaderTexels ..)      動的テクセル（毎フレーム CPU が書く：Beat Phase / Audio Spectrum）
+    inline constexpr int kExtOutputCount = 20; // MaterialGraphVM.hlsli の MG_VM_EXT_COUNT と一致させる
+    inline constexpr int kExtHeaderTexels = kExtOutputCount / 4;
+    inline constexpr int kFixedHeaderTexels = kHeaderTexels + kExtHeaderTexels;
+
+    // Material Output の追加ピンが渡すレジスタ（MaterialGraphVM.hlsli の MG_EXT_* と同じ番号）
+    enum ExtOutput : int
+    {
+        ToonRamp = 0, // (threshold, softness, steps, strength * mask)
+        ToonColor1,   // rgb = 影色 1
+        ToonColor2,   // rgb = 影色 2
+        ToonColor3,   // rgb = 影色 3（最も明るい帯）, w = wrap（素材クラス）
+        RimParams,    // (width, power, strength, directional mask)
+        RimColor,     // rgb
+        HairParams,   // (anisotropy, roughness, width, shift)
+        HairTangent,  // xyz = 接線, w = strength * mask
+        HairColor,    // rgb
+        FaceParams,   // (sdfA, sdfB, threshold, smoothness)
+        FaceForward,  // xyz = 顔の正面, w = flip
+        FaceRight,    // xyz = 顔の右, w = strength
+        FaceShadowColor, // rgb
+        Mekakure,     // scalar（0〜1。1 = 透かさない）
+        ClearCoat,    // (strength, roughness, 0, 1)
+        Subsurface,   // rgb
+        Anisotropy,   // xyz = 方向, w = 異方性
+        ExtOutputUsed
+    };
+    static_assert(ExtOutputUsed <= kExtOutputCount);
+
+    // 毎フレーム CPU が書き換えるテクセル
+    struct DynamicSlot
+    {
+        enum Kind
+        {
+            Beat,  // 1 テクセル：(phase, beat index, beat time, pulse)
+            Audio, // 8 テクセル：32 バンド（平滑化済み）
+            Clock  // 1 テクセル：x = 音声クロック（秒。Beat Phase の Time を繋いだ式が使う）
+        };
+        Kind Type = Beat;
+        int Texel = 0; // 絶対位置
+        float Bpm = 120.0f;
+        float Offset = 0.0f;
+        float Subdivision = 1.0f;
+        float Smoothing = 0.5f;
+    };
 
     // テクスチャ（AssetHandle + サンプラー）→ マテリアルのテクスチャ表の番号（0〜511、失敗は -1）
     using TextureResolver = std::function<int(AssetHandle texture, MaterialSamplerType sampler)>;
@@ -70,7 +117,35 @@ namespace MaterialGraphVm
         int Instructions = 0;
         int Registers = 0;
         uint64_t Hash = 0;
+        // ---- 2026-11 追加
+        int InstructionStart = kHeaderTexels;   // 命令の開始テクセル（ヘッダー + 追加出力 + 動的テクセルの後）
+        std::vector<DynamicSlot> Dynamics;      // 毎フレーム書き換えるテクセル
+        bool UsesSceneDepth = false;            // Scene Depth / Depth Fade（描画側が不透明の深度を読める必要がある）
+        bool UsesSceneColor = false;            // Scene Color（読み書きの競合を避けるため、描画順序の管理が要る）
+        bool UsesFrontFacing = false;
+        bool UsesCurvature = false;
+        bool UsesAudio = false;                 // 音声クロック / スペクトルが要る（AudioMaterialBridge）
+        bool UsesLight = false;                 // メインライトの方向を使う（Eye Highlight など）
+        bool PerLightToon = false;              // ライトごとの陰影（Toon Shade / Rim / Hair / Face）が接続されている
+        int ExtMask = 0;                        // 使われている ExtOutput の bit
     };
+
+    // 動的テクセルの入力（毎フレーム）
+    struct DynamicInputs
+    {
+        double AudioTime = 0.0;        // 音声クロック（秒）。無いときは AudioValid = false
+        bool AudioValid = false;
+        double WallTime = 0.0;         // 音声が無いときの代わり
+        const float* Bands = nullptr;  // 32 バンド（0〜1）。nullptr = 無音
+        float DeltaTime = 1.0f / 60.0f;
+    };
+    struct DynamicState
+    {
+        std::vector<std::array<float, 32>> Smoothed; // Audio スロットごとの平滑化の状態
+    };
+    // ヘッダー（時刻）と動的テクセルを書き換える。書いた範囲 [0, 戻り値) のテクセルを GPU へ送る（0 = 何も変えていない）
+    int UpdateDynamics(const Program& program, std::vector<std::array<float, 4>>& texels, DynamicState& state, const DynamicInputs& inputs,
+                       float time);
 
     // 時刻のテクセル（[0]）を作る
     std::array<float, 4> HeaderTexel(const Program& program, float time);
@@ -82,5 +157,6 @@ namespace MaterialGraphVm
     Program Compile(const MaterialGraph& graph, const TextureResolver& resolveTexture);
     Program Compile(const MaterialGraph& graph, const TextureResolver& resolveTexture, const Options& options);
 } // namespace MaterialGraphVm
+
 
 

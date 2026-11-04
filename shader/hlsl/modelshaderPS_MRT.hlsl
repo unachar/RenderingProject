@@ -8,7 +8,7 @@ SamplerState g_SamplerState : register(s0);
 #include "MaterialSurface.hlsli"
 #include "NormalMapDecode.hlsli"
 
-GBufferDepthOutput main(in PSInput3D In)
+GBufferDepthOutput main(in PSInput3D In, bool frontFace : SV_IsFrontFace)
 {
 #ifdef SHADER_GPU_DRIVEN
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(materialID);
@@ -39,6 +39,8 @@ GBufferDepthOutput main(in PSInput3D In)
     [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
     {
         MaterialGraphVmInput graphInput;
+        MaterialGraphVmInitExt(graphInput);
+        graphInput.FrontFacing = frontFace; // Two Sided Sign
         graphInput.WorldPos = In.WorldPos;
         graphInput.PixelPos = In.Position.xy;
         MaterialGraphSetObject(graphInput, World, ObjectBoundsCenter.xyz,
@@ -48,6 +50,8 @@ GBufferDepthOutput main(in PSInput3D In)
         graphInput.CameraPos = In.CameraPos;
         graphInput.UV = materialUv;
         graphInput.VertexColor = In.Diffuse;
+        MaterialGraphVmSetFrame(graphInput, ddx(In.WorldPos), ddy(In.WorldPos), ddx(In.TexCoord), ddy(In.TexCoord), ddx(In.Normal),
+                                ddy(In.Normal));
         materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, g_SamplerState);
         ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
                                   assetEmissionAO);
@@ -88,5 +92,6 @@ GBufferDepthOutput main(in PSInput3D In)
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     return output;
 }
+
 
 

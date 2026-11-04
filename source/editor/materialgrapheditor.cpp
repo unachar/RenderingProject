@@ -5,6 +5,9 @@
 #include <limits>
 #include <functional>
 #include "materialgrapheditor.h"
+#include "materialgraphexteditor.h"
+#include "materialgraphlower.h"
+#include "materialgraphnodes.h"
 #include "materialgraph.h"
 #include "materialgraphcompiler.h"
 #include "materialgraphshader.h"
@@ -61,6 +64,10 @@ namespace
         uint64_t ContextNode = 0;
         uint64_t ContextPin = 0; // 右クリックしたピン
         MaterialGraphProgram Program;
+        // 診断（ノードごとのエラー / 警告。グラフの内容か関数ライブラリが変わったときだけ作り直す）
+        std::unordered_map<uint64_t, std::vector<MaterialGraphLower::Diagnostic>> Diagnostics;
+        uint64_t DiagnosticsKey = ~0ull;
+        bool IsFunction = false; // Material Function のグラフ（マテリアルへは反映しない。保存先は .matfunc）
         MaterialGraphShader Shader;
         std::future<MaterialGraphShader> ShaderJob;
         uint64_t CompilingRevision = 0;
@@ -247,20 +254,26 @@ namespace
         slot = std::make_unique<GraphDocument>();
         auto& document = *slot;
         document.Material = material;
+        document.IsFunction = MaterialManager::Registry().TypeOf(material) == AssetType::MaterialFunction;
         document.Path = MaterialManager::Registry().Resolve(material);
-        document.Path += ".graph.json";
+        if (!document.IsFunction)
+        {
+            document.Path += ".graph.json"; // Material Function（.matfunc）はアセットのファイルそのものがグラフ
+        }
         document.RecoveryPath =
             std::filesystem::path("EditorCache/MaterialGraphs") / (std::to_string(material) + ".recovery.json");
-        document.Graph = MaterialGraph::FromMaterial(MaterialManager::GetRuntime(material).Editing);
+        MaterialAssetData functionDummy; // 関数にはマテリアルのアセットが無い
+        const MaterialAssetData& asset =
+            document.IsFunction ? functionDummy : MaterialManager::GetRuntime(material).Editing;
+        document.Graph = document.IsFunction ? MaterialGraph::NewFunction() : MaterialGraph::FromMaterial(asset);
         std::error_code error;
         if (std::filesystem::exists(document.Path, error))
         {
             document.LoadFailed = !ReadDocument(document.Path, document.Graph, document.Layout, document.Error);
         }
         // 旧グラフ（マテリアルモード未設定）：マテリアルの値からモードを決める（ピンの有効 / 無効に使う）
-        const auto& asset = MaterialManager::GetRuntime(material).Editing;
         const auto migrateMode = [&](MaterialGraph& graph) {
-            if (graph.Settings.Mode >= 0)
+            if (graph.Settings.Mode >= 0 || document.IsFunction)
             {
                 return;
             }
@@ -474,6 +487,51 @@ namespace
                 return {"Vector", IM_COL32(108, 78, 146, 255)};
             case Kind::Group:
                 return {"Comment", IM_COL32(80, 100, 130, 255)};
+            // ---- 2026-11 追加ノード
+            case Kind::ToonLightRamp:
+            case Kind::FaceSdfShadow:
+            case Kind::HairAnisotropicHighlight:
+            case Kind::DirectionalRimLight:
+            case Kind::MatCap:
+            case Kind::MekakureMask:
+            case Kind::EyeHighlight:
+                return {"Toon", IM_COL32(190, 86, 140, 255)};
+            case Kind::MultiColorRamp:
+            case Kind::RgbCurves:
+            case Kind::HsvAdjust:
+                return {"Color", IM_COL32(170, 70, 120, 255)};
+            case Kind::TextureParameter2D:
+            case Kind::PackedTextureChannels:
+            case Kind::FlipbookUV:
+            case Kind::FlowMap:
+            case Kind::ThicknessMap:
+                return {"Texture", IM_COL32(48, 92, 168, 255)};
+            case Kind::TwoSidedSign:
+            case Kind::CurvatureMask:
+            case Kind::DynamicSwitch:
+            case Kind::CustomHlsl:
+                return {"Utility", IM_COL32(140, 104, 40, 255)};
+            case Kind::DetailNormalBlend:
+            case Kind::TriplanarNormalCorrected:
+                return {"Normal / Height", IM_COL32(86, 96, 170, 255)};
+            case Kind::MaterialLayerBlend:
+            case Kind::ThinFilmInterference:
+            case Kind::AnisotropyDirection:
+            case Kind::ClearCoatControl:
+            case Kind::SubsurfaceColor:
+                return {"Shading", IM_COL32(150, 120, 60, 255)};
+            case Kind::SceneDepth:
+            case Kind::DepthFade:
+            case Kind::SceneColor:
+                return {"Scene", IM_COL32(60, 140, 150, 255)};
+            case Kind::AudioSpectrum:
+            case Kind::BeatPhase:
+            case Kind::CurveAtlas:
+                return {"Live", IM_COL32(200, 120, 40, 255)};
+            case Kind::MaterialFunctionCall:
+            case Kind::FunctionInput:
+            case Kind::FunctionOutput:
+                return {"Material Function", IM_COL32(110, 110, 190, 255)};
             default:
                 return {"Math", IM_COL32(64, 70, 80, 255)};
         }
@@ -1148,10 +1206,19 @@ namespace
                             const FrameInfo& frame, float nodeLeft, float width, float rowY, bool sameRow)
     {
         const uint64_t pin = node.SplitPins[component];
-        const char* name = SplitPinName(node, component);
+        const bool fixedSlot = !MaterialGraph::FixedOutputSlots(node.Kind).empty();
+        std::string slotStorage;
+        const char* slotName = fixedSlot ? MaterialGraphExtEditor::SlotLabel(node, component, slotStorage) : nullptr;
+        const char* name = fixedSlot ? (slotName ? slotName : "-") : SplitPinName(node, component);
         const int available = static_cast<int>(document.Graph.ResolveOutputType(node.Id));
-        const bool missing = node.Kind != Kind::BreakVector ? component >= static_cast<size_t>((std::max)(available, 1))
-                                                            : available > 1 && component >= static_cast<size_t>(available);
+        bool missing = node.Kind != Kind::BreakVector ? component >= static_cast<size_t>((std::max)(available, 1))
+                                                       : available > 1 && component >= static_cast<size_t>(available);
+        const MaterialGraphType slotType = fixedSlot ? document.Graph.SlotType(node, component) : MaterialGraphType::Scalar;
+        if (fixedSlot)
+        {
+            // Material Function Call：関数の出力の数だけ使える
+            missing = node.Kind == Kind::MaterialFunctionCall && !(node.Params.size() > 0 && static_cast<float>(component) < node.Params[0]);
+        }
         const float iconWidth = ImGui::GetTextLineHeight() * 0.72f;
         const float labelWidth = ImGui::CalcTextSize(name).x;
         const float right = nodeLeft + width;
@@ -1179,11 +1246,12 @@ namespace
             ImGui::TextDisabled("%s", name);
         }
         ImGui::SameLine(0.0f, 4.0f);
-        PinIcon(missing ? IM_COL32(90, 90, 96, 255) : TypeColor(MaterialGraphType::Scalar), connected);
+        PinIcon(missing ? IM_COL32(90, 90, 96, 255) : TypeColor(fixedSlot ? slotType : MaterialGraphType::Scalar), connected);
         document.PinY[pin] = PinCenterY();
         Nodes::EndPin();
-        CanvasTooltip("%s（Scalar）%s%s", name, missing ? "\n今の出力にはこの成分がありません（0 になります）" : "",
-                      node.Kind == Kind::BreakVector ? "" : "\n右クリック →「ピンを統合」で元に戻します");
+        CanvasTooltip("%s（%s）%s%s", name, TypeName(fixedSlot ? slotType : MaterialGraphType::Scalar),
+                      missing ? "\n今の出力にはこの成分がありません（0 になります）" : "",
+                      (node.Kind == Kind::BreakVector || fixedSlot) ? "" : "\n右クリック →「ピンを統合」で元に戻します");
     }
 
     // 入力ピン横の数値ボックス。ドラッグ / ダブルクリックで入力。既定に戻すのはピンの右クリックメニュー
@@ -1469,6 +1537,203 @@ namespace
             }
         };
     }
+
+    AssetHandle g_OpenFunction = 0;
+
+    // 新しい Material Function（.matfunc）を asset/MaterialFunctions に作って登録する。Function Input / Output を 1 つずつ置いておく
+    AssetHandle CreateMaterialFunctionAsset()
+    {
+        std::error_code error;
+        const auto directory = MaterialManager::Registry().Root() / "MaterialFunctions";
+        std::filesystem::create_directories(directory, error);
+        if (error)
+        {
+            return 0;
+        }
+        std::filesystem::path path;
+        for (int i = 1; i < 10000; ++i)
+        {
+            path = directory / ("NewMaterialFunction" + std::to_string(i) + ".matfunc");
+            if (!std::filesystem::exists(path, error))
+            {
+                break;
+            }
+        }
+        MaterialGraph graph = MaterialGraph::NewFunction();
+        const uint64_t input = graph.AddNode(Kind::FunctionInput, 0.0f, 0.0f);
+        const uint64_t output = graph.AddNode(Kind::FunctionOutput, 360.0f, 0.0f);
+        std::string message;
+        if (input == 0 || output == 0)
+        {
+            return 0;
+        }
+        // 入力をそのまま出力へ（空の関数が「出力が接続されていません」にならないように）
+        graph.Connect(graph.FindNode(input)->OutputPin, graph.FindNode(output)->InputPins[0], message);
+        if (!graph.Save(path, message))
+        {
+            return 0;
+        }
+        std::string registerError;
+        const AssetHandle handle = MaterialManager::Registry().Register(path, AssetType::MaterialFunction, registerError);
+        if (handle != 0)
+        {
+            MaterialFunctionLibrary::Invalidate(handle);
+        }
+        return handle;
+    }
+
+    // Texture Parameter 2D：このマテリアル（インスタンス）だけのテクスチャ上書き。グラフの既定は変えない
+    void DrawTextureParameters(GraphDocument& document, AssetHandle material)
+    {
+        std::vector<std::string> names;
+        for (const auto& node : document.Graph.Nodes)
+        {
+            if (node.Kind == Kind::TextureParameter2D && !node.Text.empty() &&
+                std::find(names.begin(), names.end(), node.Text) == names.end())
+            {
+                names.push_back(node.Text);
+            }
+        }
+        auto& runtime = MaterialManager::GetRuntime(material);
+        document.Graph.InstanceTextures = runtime.Editing.TextureOverrides; // 保存しない実行時の値（プレビューと描画が使う）
+        if (names.empty())
+        {
+            return;
+        }
+        if (!ImGui::CollapsingHeader("テクスチャパラメーター（このマテリアル）", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            return;
+        }
+        for (const auto& name : names)
+        {
+            ImGui::PushID(name.c_str());
+            AssetHandle current = 0;
+            for (const auto& [key, handle] : runtime.Editing.TextureOverrides)
+            {
+                if (key == name)
+                {
+                    current = handle;
+                }
+            }
+            const std::string file = current != 0 ? MaterialManager::Registry().Resolve(current).filename().string() : std::string("（グラフの既定）");
+            const std::string label = name + ": " + file + "###Override";
+            ImGui::Button(label.c_str(), ImVec2(-28.0f, 0.0f));
+            AssetHandle chosen = current;
+            bool changed = false;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+                {
+                    if (payload->DataSize == sizeof(AssetDragPayload))
+                    {
+                        const auto& asset = *static_cast<const AssetDragPayload*>(payload->Data);
+                        if (MaterialManager::Registry().TypeOf(asset.Handle) == AssetType::Texture)
+                        {
+                            chosen = asset.Handle;
+                            changed = chosen != current;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("×") && current != 0)
+            {
+                chosen = 0;
+                changed = true;
+            }
+            ImGui::SetItemTooltip("Content Browser のテクスチャをドロップで差し替え / × で既定に戻す");
+            if (changed)
+            {
+                auto data = runtime.Editing;
+                std::erase_if(data.TextureOverrides, [&](const auto& entry) { return entry.first == name; });
+                if (chosen != 0)
+                {
+                    data.TextureOverrides.emplace_back(name, chosen);
+                }
+                MaterialManager::SetEditing(material, data);
+                document.Graph.InstanceTextures = data.TextureOverrides;
+                MaterialManager::SetGraphProgram(material, &document.Graph);
+            }
+            ImGui::PopID();
+        }
+    }
+
+    // 追加ノードのノード内エディター（materialgraphexteditor.cpp）と GraphDocument をつなぐ
+    class DocumentHost final : public MaterialGraphExtEditor::EditHost
+    {
+      public:
+        explicit DocumentHost(GraphDocument& document) : m_Document(document) {}
+        MaterialGraph& Graph() override
+        {
+            return m_Document.Graph;
+        }
+        void BeginEdit(uint64_t node) override
+        {
+            if (!m_Document.PendingEdit)
+            {
+                m_Document.PendingEdit = m_Document.Graph; // 変更する前のグラフ（ドラッグ 1 回 = Undo 1 回）
+                m_Document.PendingValueNode = node;
+            }
+        }
+        void MarkChanged() override
+        {
+            ++m_Document.Graph.Revision;
+            ++m_Document.Graph.ParameterRevision;
+            m_Document.ValueChanged = true;
+            m_Document.Dirty = true;
+            m_Document.RecoveryDirty = true;
+        }
+        void EndEdit(uint64_t node) override
+        {
+            if (m_Document.PendingEdit && m_Document.PendingValueNode == node && !ImGui::IsAnyItemActive() &&
+                !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
+            {
+                FinishValueEdit(m_Document);
+            }
+        }
+        void Tooltip(const char* text) override
+        {
+            CanvasTooltip("%s", text);
+        }
+        float ScreenToCanvasX(float x) override
+        {
+            return Nodes::ScreenToCanvas(ImVec2(x, 0.0f)).x;
+        }
+        float ScreenToCanvasY(float y) override
+        {
+            return Nodes::ScreenToCanvas(ImVec2(0.0f, y)).y;
+        }
+        std::string AssetFileName(AssetHandle handle) override
+        {
+            return MaterialManager::Registry().Resolve(handle).filename().string();
+        }
+        bool IsAssetType(AssetHandle handle, AssetType type) override
+        {
+            return MaterialManager::Registry().TypeOf(handle) == type;
+        }
+        std::vector<AssetHandle> FunctionAssets() override
+        {
+            auto handles = MaterialManager::Registry().HandlesOfType(AssetType::MaterialFunction);
+            if (m_Document.IsFunction)
+            {
+                std::erase(handles, m_Document.Material); // 自分自身は呼べない（再帰）
+            }
+            std::sort(handles.begin(), handles.end());
+            return handles;
+        }
+        AssetHandle CreateFunctionAsset() override
+        {
+            return CreateMaterialFunctionAsset();
+        }
+        void OpenFunctionAsset(AssetHandle handle) override
+        {
+            MaterialGraphEditor::OpenFunction(handle);
+        }
+
+      private:
+        GraphDocument& m_Document;
+    };
 
     void DrawValueEditors(GraphDocument& document, MaterialGraphNode& node, float width)
     {
@@ -2015,8 +2280,14 @@ namespace
                 TrackValueEdit(document, node, before, changed);
                 break;
             }
-            default:
+            default: {
+                if (MaterialGraphNodes::IsExtKind(node.Kind))
+                {
+                    DocumentHost host(document);
+                    MaterialGraphExtEditor::DrawNodeEditor(host, node, width);
+                }
                 break;
+            }
         }
     }
 
@@ -2284,6 +2555,20 @@ namespace
         {
             CanvasTooltip("%s", definition.Name);
         }
+        // エラー / 警告の表示（Custom HLSL の式の誤り、関数の循環参照、Scene Color を不透明で使うなど）
+        if (const auto diagnostics = document.Diagnostics.find(node.Id); diagnostics != document.Diagnostics.end())
+        {
+            bool error = false;
+            std::string text;
+            for (const auto& item : diagnostics->second)
+            {
+                error |= !item.Warning;
+                text += (text.empty() ? "" : "\n") + std::string(item.Warning ? "警告: " : "エラー: ") + item.Message;
+            }
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::TextColored(error ? ImVec4(1.0f, 0.36f, 0.32f, 1.0f) : ImVec4(1.0f, 0.78f, 0.25f, 1.0f), "⚠");
+            CanvasTooltip("%s", text.c_str());
+        }
         float headerBottom = ImGui::GetItemRectMax().y;
         if (node.OutputPin && node.SplitPins.empty()) // 分割中は右側の X / Y / Z / W に置き換わる
         {
@@ -2341,19 +2626,26 @@ namespace
             PinIcon(inactiveReason ? IM_COL32(90, 90, 96, 255) : TypeColor(type), connected);
             document.PinY[pin] = PinCenterY();
             ImGui::SameLine(0.0f, 4.0f);
-            if (inactiveReason)
+            std::string customLabel;
+            const char* inputName = MaterialGraphExtEditor::PinLabel(node, i, customLabel);
+            if (!inputName)
+            {
+                inputName = definition.Inputs[i].Name;
+            }
+            const bool unusedPin = MaterialGraphExtEditor::IsPinUnused(node, i);
+            if (inactiveReason || (unusedPin && !connected))
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.45f, 1.0f));
-                ImGui::TextUnformatted(definition.Inputs[i].Name);
+                ImGui::TextUnformatted(inputName);
                 ImGui::PopStyleColor();
             }
             else if (connected)
             {
-                ImGui::TextUnformatted(definition.Inputs[i].Name);
+                ImGui::TextUnformatted(inputName);
             }
             else
             {
-                ImGui::TextDisabled("%s", definition.Inputs[i].Name);
+                ImGui::TextDisabled("%s", inputName);
             }
             Nodes::EndPin();
             if (inactiveReason)
@@ -2361,7 +2653,11 @@ namespace
                 CanvasTooltip("%s%s", inactiveReason, connected ? "\n（接続は残っていますが使われません）" : "");
             }
             // 未接続の Scalar ピン：横に数値ボックス（UE と同じ。接続すると隠れる）
-            if (!connected && MaterialGraph::IsComponentConstant(node.Kind))
+            if (!connected && unusedPin)
+            {
+                // Custom HLSL / Material Function の使っていない入力：数値ボックスを出さない
+            }
+            else if (!connected && MaterialGraph::IsComponentConstant(node.Kind))
             {
                 DrawConstantComponentBox(document, node, i); // 定数の成分（UE の Constant の値）
             }
@@ -2550,6 +2846,10 @@ namespace
             destination->Comment = source.Comment;
             destination->PinValues = source.PinValues;
             destination->PinVectors = source.PinVectors;
+            destination->Params = source.Params;
+            destination->Text = source.Text;
+            destination->PinNames = source.PinNames;
+            destination->Function = source.Function;
             if (!source.SplitPins.empty() && destination->SplitPins.empty())
             {
                 // 分割をそのまま複製する（接続前で型が決まっていなくても、同じ成分数で分ける）
@@ -2977,6 +3277,7 @@ namespace
     // ============================================================ ノード追加（UE のパレット）
     const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture",         "Coordinates", "Object", "Math",
                                           "Vector",     "Color",     "Normal / Height", "Procedural",  "Utility",
+                                          "Toon",       "Shading",   "Scene",           "Live",        "Material Function",
                                           "Comment"};
 
     uint64_t AddNodeAt(GraphDocument& document, Kind kind, ImVec2 position)
@@ -3058,6 +3359,7 @@ namespace
             for (const auto& definition : MaterialGraph::Definitions())
             {
                 if (definition.Kind == Kind::Output || definition.Kind == Kind::ConvertToNormalHeight ||
+                    !MaterialGraphExtEditor::ShowInAddMenu(definition.Kind, document.Graph) ||
                     !filter.PassFilter(label(definition)))
                 {
                     continue;
@@ -3081,7 +3383,8 @@ namespace
             }
             for (const auto& definition : MaterialGraph::Definitions())
             {
-                if (definition.Kind == Kind::Output || strcmp(Category(definition.Kind).Name, category) != 0)
+                if (definition.Kind == Kind::Output || strcmp(Category(definition.Kind).Name, category) != 0 ||
+                    !MaterialGraphExtEditor::ShowInAddMenu(definition.Kind, document.Graph))
                 {
                     continue;
                 }
@@ -3658,9 +3961,9 @@ namespace
         MaterialGraphVm::Options options;
         options.TargetNode = request.Node; // 自分自身のテクスチャは外してあるので、入力（Value）がそのまま出る
         const auto program = MaterialGraphVm::Compile(request.Graph, &MaterialManager::ResolveGraphTexture, options);
-        if (!program.Success)
+        if (!program.Success || !program.Dynamics.empty())
         {
-            return nullptr;
+            return nullptr; // 動的テクセル（Beat Phase / Audio Spectrum）は実行中の描画だけ。ベイクは CPU の評価（擬似値）
         }
         MaterialGraphGpu::BakeDesc desc;
         desc.Program = program.Texels;
@@ -3681,9 +3984,9 @@ namespace
         MaterialGraphVm::Options options;
         options.IncludeDefaults = true; // 未接続の出力も CPU のベイクと同じ既定値にする
         const auto program = MaterialGraphVm::Compile(request.Graph, &MaterialManager::ResolveGraphTexture, options);
-        if (!program.Success)
+        if (!program.Success || !program.Dynamics.empty())
         {
-            return nullptr;
+            return nullptr; // 動的テクセルを使うグラフは、ベイクを CPU で評価する
         }
         // 旧グラフの「Color サンプラーの法線マップ」（CPU のベイクと同じ判定）
         bool legacyColorNormal = false;
@@ -3817,9 +4120,9 @@ namespace
     // グラフ → マテリアルアセット（エンジンが描画に使う値）へ焼き込む
     void ApplyGraphToMaterial(AssetHandle material, GraphDocument& document, bool force)
     {
-        if (document.LoadFailed)
+        if (document.LoadFailed || document.IsFunction)
         {
-            return;
+            return; // Material Function はマテリアルへ反映しない（呼び出すマテリアルが展開する）
         }
         auto& runtime = MaterialManager::GetRuntime(material);
         if (!document.ApplyInitialized)
@@ -3974,20 +4277,34 @@ void MaterialGraphEditor::Draw(AssetHandle material)
     auto& document = Document(material);
     ImGui::PushID(FormatAssetHandle(material).c_str());
     Nodes::SetCurrentEditor(document.Context);
+    {
+        // 診断：グラフの内容 / 関数ライブラリが変わったときだけ作り直す
+        const uint64_t key = MaterialGraphPreview::ContentSignature(document.Graph);
+        if (key != document.DiagnosticsKey)
+        {
+            document.DiagnosticsKey = key;
+            document.Diagnostics.clear();
+            for (auto& item : MaterialGraphLower::Diagnose(document.Graph, document.IsFunction ? material : 0))
+            {
+                document.Diagnostics[item.Node].push_back(std::move(item));
+            }
+        }
+    }
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
     {
         focusedMaterial = material;
     }
     if (ImGui::Button("Save Graph"))
     {
-        // グラフとマテリアル（反映済みの値）を両方保存する
+        // グラフとマテリアル（反映済みの値）を両方保存する（Material Function は .matfunc だけ）
         ApplyGraphToMaterial(material, document, true);
-        if (Save(material))
+        if (Save(material) && !document.IsFunction)
         {
             MaterialManager::Save(material);
         }
     }
-    ImGui::SetItemTooltip("グラフ（.graph.json）とマテリアル（.material）を保存します");
+    ImGui::SetItemTooltip(document.IsFunction ? "Material Function（.matfunc）を保存します。呼び出しているマテリアルは自動で更新されます"
+                                              : "グラフ（.graph.json）とマテリアル（.material）を保存します");
     ContinueToolbar();
     ImGui::BeginDisabled(document.Undo.empty());
     if (ImGui::Button("Undo"))
@@ -4153,9 +4470,13 @@ void MaterialGraphEditor::DrawPreviewPanel(AssetHandle material)
     }
     ImGui::TextDisabled("ノード %zu / 接続 %zu / テクスチャ %zu", document.Graph.Nodes.size(),
                         document.Graph.Links.size(), textures);
-    if (!document.LoadFailed && ImGui::CollapsingHeader("マテリアル設定（Details）", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!document.LoadFailed && !document.IsFunction && ImGui::CollapsingHeader("マテリアル設定（Details）", ImGuiTreeNodeFlags_DefaultOpen))
     {
         DrawGraphSettings(document, material);
+    }
+    if (!document.LoadFailed && !document.IsFunction)
+    {
+        DrawTextureParameters(document, material);
     }
     ImGui::SeparatorText("マテリアルへの反映");
     if (document.ApplyNotes.empty())
@@ -4175,6 +4496,40 @@ void MaterialGraphEditor::DrawPreviewPanel(AssetHandle material)
 bool MaterialGraphEditor::HasFocus()
 {
     return focusedMaterial != 0;
+}
+
+void MaterialGraphEditor::OpenFunction(AssetHandle function)
+{
+    if (function != 0 && MaterialManager::Registry().TypeOf(function) == AssetType::MaterialFunction)
+    {
+        g_OpenFunction = function;
+    }
+}
+
+void MaterialGraphEditor::DrawFunctionWindow()
+{
+    if (g_OpenFunction == 0)
+    {
+        return;
+    }
+    const auto found = documents.find(g_OpenFunction);
+    std::string title = "Material Function: " + MaterialManager::Registry().Resolve(g_OpenFunction).filename().string();
+    if (found != documents.end() && found->second->Dirty)
+    {
+        title += " *";
+    }
+    title += "###MaterialFunctionEditor";
+    bool open = true;
+    ImGui::SetNextWindowSize(ImVec2(920, 560), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(title.c_str(), &open))
+    {
+        Draw(g_OpenFunction);
+    }
+    ImGui::End();
+    if (!open)
+    {
+        g_OpenFunction = 0; // 未保存の変更はドキュメントに残る（再度開くと続きから。回復ファイルにも保存される）
+    }
 }
 
 bool MaterialGraphEditor::HasUnsavedChanges(AssetHandle material)
@@ -4198,6 +4553,11 @@ bool MaterialGraphEditor::Save(AssetHandle material)
     }
     document.SavedGraph = document.Graph;
     document.Dirty = false;
+    if (document.IsFunction)
+    {
+        // 関数が変わった：呼び出し側（マテリアル）のキャッシュを捨てる。シグネチャが変わった呼び出しノードは「更新」で取り込む
+        MaterialFunctionLibrary::Invalidate(document.Material);
+    }
     document.RecoveryDirty = false;
     document.Status = "グラフを保存しました。";
     std::error_code ignored;
@@ -4303,6 +4663,7 @@ void MaterialGraphEditor::Shutdown()
     focusedMaterial = 0;
     nextRecoverySave = 0;
 }
+
 
 
 

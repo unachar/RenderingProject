@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
+#include <vector>
 
 using AssetHandle = uint64_t;
 enum class AssetType : uint32_t
@@ -11,7 +13,8 @@ enum class AssetType : uint32_t
     Material,
     Texture,
     Mesh,
-    Noise
+    Noise,
+    MaterialFunction // .matfunc（再利用できる関数グラフ。materialgraphlower.h）
 };
 
 struct AssetDragPayload
@@ -83,6 +86,8 @@ struct MaterialAssetData
     // 拡張シェーディングモデル: 0 標準、1 クリアコート、2 布の光沢、3 肌、4 髪、5 異方性。
     uint32_t ShadingModel = 0;
     float ShadingStrength = 1.0f;
+    // マテリアルインスタンスのテクスチャ上書き（Texture Parameter 2D の名前 → テクスチャ。無ければグラフの既定）
+    std::vector<std::pair<std::string, AssetHandle>> TextureOverrides;
     bool operator==(const MaterialAssetData&) const = default;
 };
 
@@ -96,3 +101,4 @@ class MaterialSerializer
 
 // 同じディレクトリ内でファイルをアトミックに置換する。書き込み失敗時は置換先を保持する。
 bool WriteAssetFile(const std::filesystem::path& path, const std::string& contents, std::string& error);
+

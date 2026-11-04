@@ -79,6 +79,70 @@
 #define MG_OP_DITHER 47
 #define MG_OP_EXPAND4 48
 #define MG_OP_SOLIDSTOCHASTIC 49
+// ---- 2026-11 追加（materialgraphcompiler.cpp の Op と同じ番号。scripts/check-material-node-sync.py が一致を検査する）
+#define MG_OP_KEYS 50
+#define MG_OP_RGBCURVES 51
+#define MG_OP_HSV 52
+#define MG_OP_THINFILM 53
+#define MG_OP_TOONBAND 54
+#define MG_OP_RIM 55
+#define MG_OP_HAIR 56
+#define MG_OP_FACESDF 57
+#define MG_OP_EYEHIGHLIGHT 58
+#define MG_OP_FLIPBOOK 59
+#define MG_OP_TRIPLANARNORMAL 60
+#define MG_OP_MEKAKURE 61
+#define MG_OP_DYNAMIC 62
+#define MG_OP_AUDIOBAND 63
+#define MG_OP_SCENEDEPTH 64
+#define MG_OP_SCENECOLOR 65
+#define MG_OP_ANISOTROPYDIRECTION 66
+#define MG_OP_BEAT 67
+
+// 追加の出力レジスタ（陰影ピン）。MaterialGraphVm::ExtOutput と同じ番号 / kExtOutputCount
+#define MG_VM_EXT_COUNT 20
+#define MG_EXT_TOON_RAMP 0
+#define MG_EXT_TOON_COLOR1 1
+#define MG_EXT_TOON_COLOR2 2
+#define MG_EXT_TOON_COLOR3 3
+#define MG_EXT_RIM_PARAMS 4
+#define MG_EXT_RIM_COLOR 5
+#define MG_EXT_HAIR_PARAMS 6
+#define MG_EXT_HAIR_TANGENT 7
+#define MG_EXT_HAIR_COLOR 8
+#define MG_EXT_FACE_PARAMS 9
+#define MG_EXT_FACE_FORWARD 10
+#define MG_EXT_FACE_RIGHT 11
+#define MG_EXT_FACE_SHADOW_COLOR 12
+#define MG_EXT_MEKAKURE 13
+#define MG_EXT_CLEARCOAT 14
+#define MG_EXT_SUBSURFACE 15
+#define MG_EXT_ANISOTROPY 16
+#define MG_VM_HEADER_TEXELS 4 // [4 .. 4 + MG_VM_EXT_COUNT / 4) が追加の出力レジスタ
+
+// Scene Depth / Scene Color は不透明の深度 / 色を読めるパス（Translucent / Glass）だけが定義する。
+// 既定は「何も無い」（奥行き = 十分遠い、色 = 灰色）。リソースの依存と描画順序は MaterialGraphProgram.UsesSceneDepth / UsesSceneColor で
+// 描画側へ伝える（読み書きの競合を避けるため、不透明パスの書き込みが終わった後に読む）
+//   MG_VM_SCENE_DEPTH(input, uv)       … ワールド単位の奥行き（逆 Z / MSAA / ビューポート / 解像度変更は呼び出し側の実装で吸収する）
+//   MG_VM_SCENE_COLOR(input, uv, lod)  … float3
+//   MG_VM_NEAR / MG_VM_FAR / MG_VM_REVERSED_Z … 深度バッファの値（Scene Depth の「深度値」出力）の換算
+#ifndef MG_VM_SCENE_DEPTH
+#define MG_VM_SCENE_DEPTH(input, uv) 100000.0f
+#endif
+#ifndef MG_VM_SCENE_COLOR
+#define MG_VM_SCENE_COLOR(input, uv, lod) float3(0.5f, 0.5f, 0.5f)
+#endif
+#ifndef MG_VM_NEAR
+#define MG_VM_NEAR 0.1f
+#endif
+#ifndef MG_VM_FAR
+#define MG_VM_FAR 1000.0f
+#endif
+#ifndef MG_VM_REVERSED_Z
+#define MG_VM_REVERSED_Z true
+#endif
+
+#include "MaterialGraphNodesExt.hlsli"
 
 struct MaterialGraphVmInput
 {
@@ -92,6 +156,12 @@ struct MaterialGraphVmInput
     float3 BoundsExtents;
     float InstanceRandom; // オブジェクトごとの 0〜1
     float2 PixelPos;      // 画面上の画素位置（SV_Position.xy）
+    // ---- 2026-11 追加（MaterialGraphVmInitExt で既定値を入れる。ラスター / プレビューは実値で上書きする）
+    bool FrontFacing;     // 表面（Two Sided Sign）
+    float3 LightDir;      // 表面 → メインライト（ワールド）
+    float3 Tangent;       // 接線（ワールド。変形後の位置 / UV の微分から求めるのでスキニングしても正しい）
+    float3 Bitangent;
+    float Curvature;      // 画素の曲率（正 = 凸）
 };
 
 struct MaterialGraphVmOutput
@@ -111,7 +181,46 @@ struct MaterialGraphVmOutput
     float Height;
     float NormalIntensity;
     float Transmission;
+#ifdef MG_VM_WANT_EXT
+    // 追加の陰影ピン（Toon Shade / Rim / Hair / Face SDF / Mekakure / Clear Coat / Subsurface / Anisotropy）
+    float4 Ext[MG_VM_EXT_COUNT];
+    uint ExtMask; // bit i = Ext[i] が有効
+#endif
 };
+
+// 追加フィールドの既定値（古い呼び出し側が何も入れなくても、未初期化の値を読まないようにする）
+void MaterialGraphVmInitExt(inout MaterialGraphVmInput input)
+{
+    input.FrontFacing = true;
+    input.LightDir = float3(0.40824829f, 0.81649658f, 0.40824829f);
+    input.Tangent = float3(1, 0, 0);
+    input.Bitangent = float3(0, 1, 0);
+    input.Curvature = 0.0f;
+}
+
+// 接線 / 従接線 / 曲率を、画素の微分から求める（ラスターは ddx / ddy、Visibility 解決は渡される値）
+void MaterialGraphVmSetFrame(inout MaterialGraphVmInput input, float3 worldDx, float3 worldDy, float2 uvDx, float2 uvDy,
+                             float3 normalDx, float3 normalDy)
+{
+    float3 n = normalize(input.Normal + 1e-8f);
+    float det = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
+    if (abs(det) > 1e-18f)
+    {
+        float3 t = (worldDx * uvDy.y - worldDy * uvDx.y) / det;
+        t -= n * dot(n, t);
+        float3 b = (worldDy * uvDx.x - worldDx * uvDy.x) / det;
+        if (dot(t, t) > 1e-12f && dot(b, b) > 1e-12f)
+        {
+            t = normalize(t);
+            float3 bitangent = normalize(cross(n, t));
+            input.Tangent = t;
+            input.Bitangent = dot(bitangent, b) < 0.0f ? -bitangent : bitangent;
+        }
+    }
+    // 平均曲率の近似：(dN/dx・dP/dx + dN/dy・dP/dy) / (|dP/dx|² + |dP/dy|²)（凸が正）
+    float area = dot(worldDx, worldDx) + dot(worldDy, worldDy);
+    input.Curvature = area > 1e-12f ? (dot(normalDx, worldDx) + dot(normalDy, worldDy)) / area : 0.0f;
+}
 
 #ifndef MG_VM_STANDALONE
 // マテリアルのテクスチャ表にあるプログラムの番号 + 1（0 = 描画時評価なし）。AssetTextures.w の bit 16-25
@@ -398,6 +507,14 @@ MaterialGraphVmOutput EvaluateMaterialGraphVm(uint programSlot, MaterialGraphVmI
     output.Out2 = (int4)program.Load(int3(3, MG_VM_ROW, 0));
     uint pc = (uint)max(header.y, 0.0f);
     uint end = min((uint)max(header.z, 0.0f), MG_VM_MAX_TEXELS);
+#ifdef MG_VM_WANT_EXT
+    int4 extRegs[MG_VM_EXT_COUNT / 4];
+    [unroll] for (uint e = 0u; e < MG_VM_EXT_COUNT / 4u; ++e)
+    {
+        // 旧プログラム（ヘッダーが 4 テクセル）では、このテクセルは命令なので読まない
+        extRegs[e] = pc >= MG_VM_HEADER_TEXELS + MG_VM_EXT_COUNT / 4u ? (int4)program.Load(int3(MG_VM_HEADER_TEXELS + e, MG_VM_ROW, 0)) : int4(-1, -1, -1, -1);
+    }
+#endif
 #ifdef MG_VM_TIME_OVERRIDE
     float time = MG_VM_TIME_OVERRIDE;
 #else
@@ -474,6 +591,17 @@ MaterialGraphVmOutput EvaluateMaterialGraphVm(uint programSlot, MaterialGraphVmI
 #else
                 else if (which == 21u) result = mul(float4(input.WorldPos, 1), View).z.xxxx;
 #endif
+                else if (which == 23u) result = input.FrontFacing ? 1.0f.xxxx : 0.0f.xxxx;
+                else if (which == 24u) result = float4(SafeNormalizeCommon(input.LightDir, float3(0, 1, 0)), 0);
+                else if (which == 25u) result = float4(input.Tangent, 0);
+                else if (which == 26u) result = float4(input.Bitangent, 0);
+                else if (which == 27u)
+                {
+                    // ビュー空間の法線（x = 右、y = 上、z = カメラへ向かう）。左手系のビューは +Z が奥なので z を反転する
+                    float3 viewNormal = mul(normal, (float3x3)View);
+                    result = float4(viewNormal.x, viewNormal.y, -viewNormal.z, 0);
+                }
+                else if (which == 28u) result = input.Curvature.xxxx;
                 else
                 {
                     float4 clip = mul(mul(float4(input.WorldPos, 1), View), Projection);
@@ -859,6 +987,149 @@ MaterialGraphVmOutput EvaluateMaterialGraphVm(uint programSlot, MaterialGraphVmI
                 result = saturate(lerp(-c.x, 1 + c.x, x)).xxxx;
                 break;
             }
+            // ---------------------------------------------------------------- 2026-11 追加の命令
+            case MG_OP_KEYS:
+            {
+                // imm = (kind, mode, count, channels)、続く count 個のテクセル = (x, y0, y1, y2)
+                uint count = min((uint)imm.z, MGX_MAX_KEYS);
+                float4 keys[MGX_MAX_KEYS] = (float4[MGX_MAX_KEYS])0;
+                [loop] for (uint k = 0u; k < count; ++k)
+                {
+                    keys[k] = program.Load(int3((int)(pc + 2u + argTexels + k), MG_VM_ROW, 0)); // 必要なキーだけ読む（最大 16 テクセル）
+                }
+                result = float4(MGX_EvalKeys(keys, count, (uint)imm.x, (uint)imm.y, (uint)imm.w, a.x), 0);
+                break;
+            }
+            case MG_OP_RGBCURVES:
+            {
+                // imm = (mode, nMaster, nR, nG)、次のテクセル = (nB, 0, 0, 0)、続いて Master / R / G / B のキー (x, y, 0, 0)
+                float4 imm1 = program.Load(int3((int)(pc + 2u + argTexels), MG_VM_ROW, 0));
+                uint counts[4] = {min((uint)imm.y, MGX_MAX_KEYS / 2u), min((uint)imm.z, MGX_MAX_KEYS / 2u), min((uint)imm.w, MGX_MAX_KEYS / 2u), min((uint)imm1.x, MGX_MAX_KEYS / 2u)};
+                uint mode = (uint)imm.x;
+                uint offset = pc + 3u + argTexels;
+                float4 keys[MGX_MAX_KEYS] = (float4[MGX_MAX_KEYS])0;
+                [loop] for (uint k = 0u; k < counts[0]; ++k)
+                {
+                    keys[k] = program.Load(int3((int)(offset + k), MG_VM_ROW, 0));
+                }
+                float3 master = counts[0] == 0u ? a.xyz
+                                                : float3(MGX_EvalKeys(keys, counts[0], 1u, mode, 1u, a.x).x, MGX_EvalKeys(keys, counts[0], 1u, mode, 1u, a.y).x,
+                                                         MGX_EvalKeys(keys, counts[0], 1u, mode, 1u, a.z).x);
+                offset += counts[0];
+                float3 curved = master;
+                [unroll] for (uint c = 0u; c < 3u; ++c)
+                {
+                    [loop] for (uint k2 = 0u; k2 < counts[c + 1u]; ++k2)
+                    {
+                        keys[k2] = program.Load(int3((int)(offset + k2), MG_VM_ROW, 0));
+                    }
+                    curved[c] = counts[c + 1u] == 0u ? master[c] : MGX_EvalKeys(keys, counts[c + 1u], 1u, mode, 1u, master[c]).x;
+                    offset += counts[c + 1u];
+                }
+                result = float4(curved, 0);
+                break;
+            }
+            case MG_OP_HSV:
+                result = float4(MGX_HsvAdjust(a.xyz, b.x, c.x, d.x), 0);
+                break;
+            case MG_OP_THINFILM:
+                result = float4(MGX_ThinFilm(a.x, b.x, c.x, d.x), 0);
+                break;
+            case MG_OP_TOONBAND:
+                result = MGX_ToonBand(a.x, imm.x, b.x, c.x, d.x).xxxx;
+                break;
+            case MG_OP_RIM:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = MGX_ToonRim(a.xyz, b.xyz, c.xyz, d.x, R[i1.x].x, R[i1.y].x).xxxx;
+                break;
+            }
+            case MG_OP_HAIR:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = MGX_HairHighlight(a.xyz, b.xyz, c.xyz, d.xyz, R[i1.x].x, R[i1.y].x, R[i1.z].x, R[i1.w].x).xxxx;
+                break;
+            }
+            case MG_OP_FACESDF:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = MGX_FaceSdfLit(a.x, b.x, c.xyz, d.xyz, R[i1.x].xyz, R[i1.y].x, R[i1.z].x, R[i1.w].x > 0.5f).xxxx;
+                break;
+            }
+            case MG_OP_EYEHIGHLIGHT:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = MGX_EyeHighlight(a.xy, b.xy, c.xyz, d.xyz, input.Tangent, input.Bitangent, R[i1.x].x, R[i1.y].x, R[i1.z].x).xxxx;
+                break;
+            }
+            case MG_OP_FLIPBOOK:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = float4(MGX_Flipbook(a.xy, b.x, c.x, d.x, R[i1.x].x, R[i1.y].x, (uint)imm.x), 0, 0);
+                break;
+            }
+            case MG_OP_TRIPLANARNORMAL:
+            {
+                // imm = (テクスチャ, 出力空間)。args = (位置, ワールド法線, スケール, シャープネス) + 強さ
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                uint heap = (uint)imm.x;
+                float intensity = R[i1.x].x;
+                float3 q = a.xyz * c.x;
+                float3 nWorld = SafeNormalizeCommon(b.xyz, float3(0, 0, 1));
+                float3 w = pow(abs(nWorld) + 1e-5f, max(d.x, 0.01f));
+                w /= max(dot(w, 1), 1e-6f);
+                float3 nx = MGX_DecodeNormal(MGVM_Sample(heap, q.yz, materialSampler));
+                float3 ny = MGX_DecodeNormal(MGVM_Sample(heap, q.xz, materialSampler));
+                float3 nz = MGX_DecodeNormal(MGVM_Sample(heap, q.xy, materialSampler));
+                nx.xy *= intensity;
+                ny.xy *= intensity;
+                nz.xy *= intensity;
+                float3 worldNormal = MGX_TriplanarNormalWorld(nx, ny, nz, nWorld, w);
+                result = imm.y > 0.5f ? float4(worldNormal, 0)
+                                      : float4(SafeNormalizeCommon(float3(dot(worldNormal, input.Tangent), dot(worldNormal, input.Bitangent), dot(worldNormal, nWorld)),
+                                                                   float3(0, 0, 1)), 0);
+                break;
+            }
+            case MG_OP_MEKAKURE:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = MGX_Mekakure(a.x, b.x, c.x, d.x, R[i1.x].x, R[i1.y].xyz, R[i1.z].xyz).xxxx;
+                break;
+            }
+            case MG_OP_DYNAMIC:
+                // 毎フレーム CPU が書くテクセル（Beat Phase / 音声クロック）
+                result = program.Load(int3((int)imm.x, MG_VM_ROW, 0));
+                break;
+            case MG_OP_AUDIOBAND:
+            {
+                // imm.x = 32 バンド（8 テクセル）の先頭。バンド間を線形補間する
+                float band = clamp(a.x, 0.0f, 31.0f);
+                uint b0 = (uint)floor(band);
+                uint b1 = min(b0 + 1u, 31u);
+                uint baseTexel = (uint)imm.x;
+                float m0 = program.Load(int3((int)(baseTexel + (b0 >> 2u)), MG_VM_ROW, 0))[b0 & 3u];
+                float m1 = program.Load(int3((int)(baseTexel + (b1 >> 2u)), MG_VM_ROW, 0))[b1 & 3u];
+                result = lerp(m0, m1, band - (float)b0).xxxx;
+                break;
+            }
+            case MG_OP_SCENEDEPTH:
+            {
+                float eyeDepth = MG_VM_SCENE_DEPTH(input, a.xy);
+                result = (imm.x > 0.5f ? MGX_DepthBufferValue(eyeDepth, MG_VM_NEAR, MG_VM_FAR, MG_VM_REVERSED_Z) : eyeDepth).xxxx;
+                break;
+            }
+            case MG_OP_SCENECOLOR:
+                result = float4(MG_VM_SCENE_COLOR(input, a.xy, imm.x), 0);
+                break;
+            case MG_OP_ANISOTROPYDIRECTION:
+            {
+                uint4 i1 = (uint4)clamp(program.Load(int3((int)(pc + 2u), MG_VM_ROW, 0)), 0.0f, MG_VM_REGS - 1.0f);
+                result = MGX_AnisotropyDirection(a.xyz, b.xy, c.x, d.x, R[i1.x].xyz);
+                break;
+            }
+            case MG_OP_BEAT:
+                result = MGX_Beat(d.x, a.x, b.x, c.x);
+                break;
             default:
                 result = a;
                 break;
@@ -879,6 +1150,15 @@ MaterialGraphVmOutput EvaluateMaterialGraphVm(uint programSlot, MaterialGraphVmI
     output.Height = output.Out2.x >= 0 ? R[min((uint)output.Out2.x, MG_VM_REGS - 1u)].x : 0.0f;
     output.NormalIntensity = output.Out2.y >= 0 ? R[min((uint)output.Out2.y, MG_VM_REGS - 1u)].x : 1.0f;
     output.Transmission = output.Out2.z >= 0 ? R[min((uint)output.Out2.z, MG_VM_REGS - 1u)].x : 0.0f;
+#ifdef MG_VM_WANT_EXT
+    output.ExtMask = 0u;
+    [unroll] for (uint i = 0u; i < MG_VM_EXT_COUNT; ++i)
+    {
+        int reg = extRegs[i / 4u][i % 4u];
+        output.Ext[i] = reg >= 0 ? R[min((uint)reg, MG_VM_REGS - 1u)] : float4(0, 0, 0, 0);
+        output.ExtMask |= reg >= 0 ? (1u << i) : 0u;
+    }
+#endif
     return output;
 }
 
@@ -948,5 +1228,69 @@ float3 ApplyMaterialGraphNormal(MaterialGraphVmOutput graph, AssetMaterialParame
 
 #endif // MG_VM_STANDALONE
 
+#ifdef TOON_NODE_LIGHTING_HLSLI
+// VM の出力（Ext）から画素ごとのプロファイルを作る（Forward のトゥーン経路で、ライトの評価の前に呼ぶ）
+void ApplyMaterialGraphToonProfile(MaterialGraphVmOutput graph, out ToonNodeProfile profile, out float rimScale)
+{
+    profile = (ToonNodeProfile)0;
+    rimScale = 1.0f;
+    if (!graph.Active)
+    {
+        return;
+    }
+    uint mask = graph.ExtMask;
+    if ((mask & (1u << MG_EXT_TOON_RAMP)) != 0u)
+    {
+        profile.Mask |= TOON_NODE_RAMP;
+        profile.Ramp = graph.Ext[MG_EXT_TOON_RAMP];
+        profile.RampColor1 = graph.Ext[MG_EXT_TOON_COLOR1].xyz;
+        profile.RampColor2 = graph.Ext[MG_EXT_TOON_COLOR2].xyz;
+        profile.RampColor3 = graph.Ext[MG_EXT_TOON_COLOR3].xyz;
+        profile.RampWrap = graph.Ext[MG_EXT_TOON_COLOR3].w;
+    }
+    if ((mask & (1u << MG_EXT_RIM_PARAMS)) != 0u)
+    {
+        profile.Mask |= TOON_NODE_RIM;
+        profile.RimParams = graph.Ext[MG_EXT_RIM_PARAMS];
+        profile.RimColor = graph.Ext[MG_EXT_RIM_COLOR].xyz;
+        rimScale = 0.0f; // 既存のリムを止める（ノードのリムに置き換える）
+    }
+    if ((mask & (1u << MG_EXT_HAIR_PARAMS)) != 0u)
+    {
+        profile.Mask |= TOON_NODE_HAIR;
+        profile.HairParams = graph.Ext[MG_EXT_HAIR_PARAMS];
+        profile.HairTangent = graph.Ext[MG_EXT_HAIR_TANGENT].xyz;
+        profile.HairStrength = graph.Ext[MG_EXT_HAIR_TANGENT].w;
+        profile.HairColor = graph.Ext[MG_EXT_HAIR_COLOR].xyz;
+    }
+    if ((mask & (1u << MG_EXT_FACE_PARAMS)) != 0u)
+    {
+        profile.Mask |= TOON_NODE_FACE;
+        profile.FaceParams = graph.Ext[MG_EXT_FACE_PARAMS];
+        profile.FaceForward = graph.Ext[MG_EXT_FACE_FORWARD].xyz;
+        profile.FaceFlip = graph.Ext[MG_EXT_FACE_FORWARD].w;
+        profile.FaceRight = graph.Ext[MG_EXT_FACE_RIGHT].xyz;
+        profile.FaceStrength = graph.Ext[MG_EXT_FACE_RIGHT].w;
+        profile.FaceShadowColor = graph.Ext[MG_EXT_FACE_SHADOW_COLOR].xyz;
+    }
+}
+
+// Deferred：GBuffer に追加のチャンネルが無いので、ライトに依存しない近似だけを既存の GBuffer（Shadow.r / g / b）へ書く。
+// Toon Light Ramp があれば、影のしきい値 / ぼかし / 強さをノードの値にする（影色の段数 / Face SDF / Rim / Hair は Forward のみ）
+void ApplyMaterialGraphToonDeferred(MaterialGraphVmOutput graph, inout float shadowThreshold, inout float shadowSoftness,
+                                    inout float shadowStrength)
+{
+    if (!graph.Active || (graph.ExtMask & (1u << MG_EXT_TOON_RAMP)) == 0u)
+    {
+        return;
+    }
+    float4 ramp = graph.Ext[MG_EXT_TOON_RAMP];
+    shadowThreshold = saturate(ramp.x);
+    shadowSoftness = max(ramp.y, 0.0001f);
+    shadowStrength = saturate(ramp.w);
+}
+#endif // TOON_NODE_LIGHTING_HLSLI
+
 #endif
+
 

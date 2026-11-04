@@ -14,6 +14,8 @@
 #include <filesystem>
 #include "../audio/xaudiomusicplayer.h"
 #include "../audio/livemusicclock.h"
+#include "../audio/audiospectrum.h"
+#include <chrono>
 #include <algorithm>
 
 namespace
@@ -73,6 +75,19 @@ namespace
             music.Offset = timeline.MusicOffset;
         }
         timeline.CurrentTime = clamp(static_cast<float>(music.Player.TimeSeconds()) - timeline.MusicOffset, 0.0f, end);
+        {
+            // マテリアルグラフの Audio Spectrum / Beat Phase ノードへ、音声クロック（再生位置）とスペクトルを渡す
+            static AudioMaterial::SpectrumAnalyzer analyzer(2048);
+            static std::vector<float> window(analyzer.Size());
+            float bands[AudioMaterial::kBands] = {};
+            const double audioTime = music.Player.TimeSeconds();
+            if (music.Player.CopyMonoWindow(audioTime, window.data(), window.size()))
+            {
+                analyzer.Analyze(window.data(), window.size(), static_cast<double>(music.Player.SampleRate()), bands);
+            }
+            const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            AudioMaterial::Bridge::Publish(audioTime, music.Player.IsPlaying(), bands, wall);
+        }
         if (timeline.IsPlaying && timeline.CurrentTime >= end)
         {
             music.Player.Pause();
@@ -779,4 +794,5 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
         }
     }
 }
+
 

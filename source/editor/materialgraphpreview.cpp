@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "materialgraphpreview.h"
+#include "materialgraphlower.h"
+#include "materialgraphnodes.h"
 #include "materialgraph.h"
 #include "materialgraphmath.h"
 #include "materialgraphevaluator.h"
@@ -736,6 +738,15 @@ namespace MaterialGraphPreview
                 {
                     hash = Mix(hash, FloatBits(v));
                 }
+                hash = Mix(hash, node.Function);
+                for (const float v : node.Params)
+                {
+                    hash = Mix(hash, FloatBits(v));
+                }
+                for (const unsigned char c : node.Text)
+                {
+                    hash = Mix(hash, c);
+                }
                 hash = Mix(hash, node.SplitPins.size());
                 for (size_t p = 0; p < node.PinValues.size(); ++p)
                 {
@@ -755,7 +766,7 @@ namespace MaterialGraphPreview
                         }
                     }
                 }
-                const bool table = topology.InputOffset.size() == count + 1;
+                const bool table = topology.InputOffset.size() >= count + 1; // 関数を展開したグラフは表の方が大きい
                 for (size_t p = 0; p < node.InputPins.size(); ++p)
                 {
                     if (!table)
@@ -825,7 +836,7 @@ namespace MaterialGraphPreview
                 options.IncludeDefaults = output;
                 const auto program =
                     MaterialGraphVm::Compile(graph, &MaterialManager::ResolveGraphTexture, options);
-                if (!program.Success)
+                if (!program.Success || !program.Dynamics.empty()) // 動的テクセル（拍 / 音声）は CPU プレビュー（擬似値）
                 {
                     if (key != 0)
                     {
@@ -991,6 +1002,13 @@ namespace MaterialGraphPreview
             case Kind::PixelDepth:
             case Kind::VertexColor:       // プレビューでは白
             case Kind::DistanceFade:      // プレビューでは距離一定
+            // 2026-11 追加：プレビューでは固定値になるノード / 関数の入出力（値は関数の外で決まる）
+            case Kind::TwoSidedSign:
+            case Kind::SceneDepth:
+            case Kind::DepthFade:
+            case Kind::SceneColor:
+            case Kind::FunctionInput:
+            case Kind::FunctionOutput:
                 return false;
             default:
                 return true;
@@ -1130,6 +1148,24 @@ namespace MaterialGraphPreview
             {
                 hash = Mix(hash, pin);
             }
+            // 2026-11 追加ノードの内容（ランプのキー / カーブ / Custom HLSL の式 / 関数 / パラメーター名）
+            hash = Mix(hash, node.Function);
+            for (const float v : node.Params)
+            {
+                hash = Mix(hash, FloatBits(v));
+            }
+            for (const unsigned char c : node.Text)
+            {
+                hash = Mix(hash, c);
+            }
+            for (const auto& name : node.PinNames)
+            {
+                for (const unsigned char c : name)
+                {
+                    hash = Mix(hash, c);
+                }
+                hash = Mix(hash, 0xFFu);
+            }
             for (size_t i = 0; i < node.PinValues.size(); ++i)
             {
                 if (std::isfinite(node.PinValues[i]))
@@ -1156,6 +1192,17 @@ namespace MaterialGraphPreview
             hash = Mix(hash, link.SourcePin);
             hash = Mix(hash, link.TargetPin);
         }
+        // Material Function が保存された / マテリアルインスタンスのテクスチャが変わったら作り直す
+        hash = Mix(hash, MaterialFunctionLibrary::Revision());
+        for (const auto& [name, handle] : graph.InstanceTextures)
+        {
+            hash = Mix(hash, handle);
+            for (const unsigned char c : name)
+            {
+                hash = Mix(hash, c);
+            }
+        }
+        hash = Mix(hash, graph.Settings.IsFunction ? 7u : 3u);
         const auto& settings = graph.Settings;
         hash = Mix(hash, static_cast<uint64_t>(settings.Mode + 8));
         hash = Mix(hash, static_cast<uint64_t>(settings.RuntimeEvaluation ? 3 : 5));
@@ -1865,6 +1912,7 @@ namespace MaterialGraphPreview
         g_Caches.erase(&graph);
     }
 } // namespace MaterialGraphPreview
+
 
 
 

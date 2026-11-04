@@ -1,5 +1,6 @@
 #pragma once
 #include "assetregistry.h"
+#include "materialgraphcompiler.h"
 #include "noiseasset.h"
 #include "componentmanager.h"
 #include <functional>
@@ -36,6 +37,14 @@ struct MaterialRuntime
     bool GraphUsesView = false;  // カメラ距離など、視点で値が変わる入力を使う
     bool GraphEmissive = false;  // Material Output の Emissive が繋がっている
     std::vector<std::array<float, 4>> GraphTexels; // プログラム（発光の動的ベイク用に CPU 側にも保持）
+    // ---- 2026-11 追加：動的テクセル（Beat Phase / Audio Spectrum / 音声クロック）と描画側へ伝える依存
+    MaterialGraphVm::Program GraphProgram;       // コンパイル結果（動的スロット / ヘッダーの位置。テクセルは GraphTexels と同じ）
+    MaterialGraphVm::DynamicState GraphDynamicState;
+    float GraphLastTime = 0.0f;                  // 動的テクセルの平滑化に使う前フレームの時刻
+    bool GraphUsesDynamics = false;              // 毎フレーム書き換えるテクセルがある（時刻 / 音声）
+    bool GraphUsesSceneDepth = false;            // Scene Depth / Depth Fade：描画側は不透明の深度を読める状態にする
+    bool GraphUsesSceneColor = false;            // Scene Color：不透明パスの色を読む（読み書きの競合を避ける描画順序が要る）
+    bool GraphPerLightToon = false;              // Toon の陰影ピンが接続（ライトごとの評価）
     bool GraphActive = false;    // プログラムあり（コンパイル成功）
     bool GraphPublished = false; // Binding.GraphProgramID に反映済み
     bool GraphChecked = false;   // .graph.json を読んだ / エディターから受け取った
@@ -93,4 +102,5 @@ class MaterialManager
   private:
     static void UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material);
 };
+
 

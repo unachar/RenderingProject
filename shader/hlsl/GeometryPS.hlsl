@@ -9,7 +9,7 @@ SamplerState Sampler : register(s0);
 #include "MaterialSurface.hlsli"
 #include "NormalMapDecode.hlsli"
 
-PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
+PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input, bool frontFace : SV_IsFrontFace)
 {
     PS_OUTPUT_GEOMETRY_DEPTH output;
 
@@ -43,6 +43,8 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
     [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
     {
         MaterialGraphVmInput graphInput;
+        MaterialGraphVmInitExt(graphInput);
+        graphInput.FrontFacing = frontFace; // Two Sided Sign
         graphInput.WorldPos = input.WorldPos;
         graphInput.PixelPos = input.Position.xy;
         MaterialGraphSetObject(graphInput, World, ObjectBoundsCenter.xyz,
@@ -52,6 +54,8 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
         graphInput.CameraPos = input.CameraPos;
         graphInput.UV = materialUv;
         graphInput.VertexColor = input.Diffuse;
+        MaterialGraphVmSetFrame(graphInput, ddx(input.WorldPos), ddy(input.WorldPos), ddx(input.TexCoord), ddy(input.TexCoord), ddx(input.Normal),
+                                ddy(input.Normal));
         materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, Sampler);
         ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
                                   assetEmissionAO);
@@ -91,4 +95,5 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 
     return output;
 }
+
 

@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "materialgraph.h"
+#include "materialgraphmath.h"
+#include "materialgraphnodes.h"
 #include <json/json.h>
 #include <algorithm>
 #include <cmath>
@@ -71,7 +73,16 @@ namespace
           {"Transmission Roughness", Type::Scalar, {0.02f}},
           {"Thickness", Type::Scalar, {0.1f}},
           {"Absorption", Type::Vector3},
-          {"Shading Model Strength", Type::Scalar, {1}}}},
+          {"Shading Model Strength", Type::Scalar, {1}},
+          // ---- 2026-11 追加：描画時評価（GPU）だけが使うピン。既存のピン番号 / 順序は変えず末尾へ追加
+          {"Toon Shade", Type::Vector4, {0, 0, 0, 0}},
+          {"Toon Rim", Type::Vector4, {0, 0, 0, 0}},
+          {"Toon Hair Highlight", Type::Vector4, {0, 0, 0, 0}},
+          {"Toon Face Shadow", Type::Vector4, {0, 0, 0, 0}},
+          {"Mekakure Mask", Type::Scalar, {1}},
+          {"Clear Coat", Type::Vector4, {0, 0, 0, 0}},
+          {"Subsurface Tint", Type::Vector3, {0, 0, 0, 0}},
+          {"Anisotropy Direction", Type::Vector4, {0, 0, 0, 0}}}},
         {Kind::Group, "Comment Group", Type::Numeric, {}},
         {Kind::Constant2Vector, "Constant2Vector", Type::Vector2, {{"R", Type::Scalar}, {"G", Type::Scalar}}},
         {Kind::Constant3Vector,
@@ -360,7 +371,220 @@ namespace
           {"Layer 3", Type::Scalar},
           {"Weight 3", Type::Scalar, {1}},
           {"Layer 4", Type::Scalar},
-          {"Weight 4", Type::Scalar, {1}}}}};
+          {"Weight 4", Type::Scalar, {1}}}},
+        // ================= 2026-11 追加ノード（materialgraphnodes.h にパラメーターの意味） =================
+        // ---- A. トゥーン / キャラクター（出力は V4：rgb = 色、a = 係数。ライトごとの評価は ToonNodeLighting.hlsli）
+        {Kind::ToonLightRamp,
+         "Toon Light Ramp",
+         Type::Vector4,
+         {{"Albedo", Type::Vector3, {1, 1, 1, 0}},
+          {"Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"Light Dir", Type::Vector3, {0.40824829f, 0.81649658f, 0.40824829f, 0}},
+          {"Steps", Type::Scalar, {3}},
+          {"Threshold", Type::Scalar, {0.5f}},
+          {"Smoothness", Type::Scalar, {0.04f}},
+          {"Strength", Type::Scalar, {1}},
+          {"Shade Color 1", Type::Vector3, {0.35f, 0.38f, 0.55f, 0}},
+          {"Shade Color 2", Type::Vector3, {0.72f, 0.74f, 0.88f, 0}},
+          {"Shade Color 3", Type::Vector3, {1, 1, 1, 0}},
+          {"Mask", Type::Scalar, {1}}}},
+        {Kind::FaceSdfShadow,
+         "Face SDF Shadow",
+         Type::Scalar,
+         {{"UV", Type::Vector2},
+          {"Light Dir", Type::Vector3, {0.40824829f, 0.81649658f, 0.40824829f, 0}},
+          {"Face Forward", Type::Vector3, {0, 0, 1, 0}},
+          {"Face Right", Type::Vector3, {1, 0, 0, 0}},
+          {"Threshold", Type::Scalar, {0.5f}},
+          {"Smoothness", Type::Scalar, {0.03f}},
+          {"Flip", Type::Scalar, {0}},
+          {"Shadow Color", Type::Vector3, {0.72f, 0.62f, 0.72f, 0}},
+          {"Strength", Type::Scalar, {1}}}},
+        {Kind::HairAnisotropicHighlight,
+         "Hair Anisotropic Highlight",
+         Type::Vector4,
+         {{"Tangent", Type::Vector3, {1, 0, 0, 0}},
+          {"Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"View Dir", Type::Vector3, {0, 0, 1, 0}},
+          {"Light Dir", Type::Vector3, {0.40824829f, 0.81649658f, 0.40824829f, 0}},
+          {"Anisotropy", Type::Scalar, {0.7f}},
+          {"Roughness", Type::Scalar, {0.35f}},
+          {"Highlight Width", Type::Scalar, {0.12f}},
+          {"Highlight Shift", Type::Scalar, {0}},
+          {"Highlight Strength", Type::Scalar, {1}},
+          {"Mask", Type::Scalar, {1}},
+          {"Color", Type::Vector3, {1, 1, 1, 0}}}},
+        {Kind::DirectionalRimLight,
+         "Directional Rim Light",
+         Type::Vector4,
+         {{"Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"View Dir", Type::Vector3, {0, 0, 1, 0}},
+          {"Light Dir", Type::Vector3, {0.40824829f, 0.81649658f, 0.40824829f, 0}},
+          {"Rim Color", Type::Vector3, {1, 1, 1, 0}},
+          {"Rim Width", Type::Scalar, {0.35f}},
+          {"Rim Power", Type::Scalar, {2}},
+          {"Rim Strength", Type::Scalar, {1}},
+          {"Directional Mask", Type::Scalar, {1}}}},
+        {Kind::MatCap,
+         "MatCap",
+         Type::Vector3,
+         {{"View Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"Rotation", Type::Scalar, {0}},
+          {"Strength", Type::Scalar, {1}},
+          {"Base", Type::Vector3, {1, 1, 1, 0}}}},
+        {Kind::MekakureMask,
+         "Mekakure Mask",
+         Type::Scalar,
+         {{"Hair Mask", Type::Scalar, {1}},
+          {"Eye Mask", Type::Scalar, {1}},
+          {"Opacity", Type::Scalar, {0.6f}},
+          {"Fade Width", Type::Scalar, {0.25f}},
+          {"Camera Dependence", Type::Scalar, {1}},
+          {"Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"View Dir", Type::Vector3, {0, 0, 1, 0}}}},
+        {Kind::MultiColorRamp, "Multi Color Ramp", Type::Vector3, {{"T", Type::Scalar, {0.5f}}}},
+        {Kind::EyeHighlight,
+         "Eye Highlight",
+         Type::Vector4,
+         {{"UV", Type::Vector2},
+          {"View Dir", Type::Vector3, {0, 0, 1, 0}},
+          {"Light Dir", Type::Vector3, {0.40824829f, 0.81649658f, 0.40824829f, 0}},
+          {"Center", Type::Vector2, {0.55f, 0.4f}},
+          {"Highlight Size", Type::Scalar, {0.12f}},
+          {"Highlight Shape", Type::Scalar, {0}},
+          {"Highlight Strength", Type::Scalar, {1}},
+          {"Mask", Type::Scalar, {1}},
+          {"Color", Type::Vector3, {1, 1, 1, 0}},
+          {"Light Shift", Type::Scalar, {0.12f}}}},
+        {Kind::MaterialFunctionCall,
+         "Material Function Call",
+         Type::Numeric,
+         {{"In 0", Type::Numeric}, {"In 1", Type::Numeric}, {"In 2", Type::Numeric}, {"In 3", Type::Numeric},
+          {"In 4", Type::Numeric}, {"In 5", Type::Numeric}, {"In 6", Type::Numeric}, {"In 7", Type::Numeric}}},
+        {Kind::TextureParameter2D, "Texture Parameter 2D", Type::Vector4, {{"UV", Type::Vector2}}},
+        // ---- B. 汎用 / PBR
+        {Kind::TwoSidedSign, "Two Sided Sign", Type::Scalar, {}},
+        {Kind::FlipbookUV,
+         "Flipbook UV",
+         Type::Vector2,
+         {{"UV", Type::Vector2},
+          {"Rows", Type::Scalar, {4}},
+          {"Columns", Type::Scalar, {4}},
+          {"Frame", Type::Scalar, {0}},
+          {"FPS", Type::Scalar, {12}},
+          {"Time", Type::Scalar}}},
+        {Kind::FlowMap,
+         "Flow Map",
+         Type::Vector2,
+         {{"UV", Type::Vector2},
+          {"Time", Type::Scalar},
+          {"Speed", Type::Scalar, {0.25f}},
+          {"Strength", Type::Scalar, {0.1f}},
+          {"Flow", Type::Vector2, {0, 0, 0, 0}}}},
+        {Kind::RgbCurves, "RGB Curves", Type::Vector3, {{"Color", Type::Vector3, {0.5f, 0.5f, 0.5f, 0}}, {"Strength", Type::Scalar, {1}}}},
+        {Kind::HsvAdjust,
+         "HSV Adjust",
+         Type::Vector3,
+         {{"Color", Type::Vector3, {0.8f, 0.4f, 0.2f, 0}}, {"Hue", Type::Scalar, {0}}, {"Saturation", Type::Scalar, {1}}, {"Value", Type::Scalar, {1}}}},
+        {Kind::PackedTextureChannels, "Packed Texture Channels", Type::Vector4, {{"UV", Type::Vector2}}},
+        {Kind::DetailNormalBlend,
+         "Detail Normal Blend",
+         Type::Vector3,
+         {{"Base Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"Detail Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"Intensity", Type::Scalar, {1}},
+          {"Mask", Type::Scalar, {1}}}},
+        {Kind::TriplanarNormalCorrected,
+         "Triplanar Normal Corrected",
+         Type::Vector3,
+         {{"Position", Type::Vector3},
+          {"World Normal", Type::Vector3, {0, 0, 1, 0}},
+          {"Scale", Type::Scalar, {1}},
+          {"Sharpness", Type::Scalar, {4}},
+          {"Intensity", Type::Scalar, {1}}}},
+        {Kind::CurvatureMask,
+         "Curvature Mask",
+         Type::Scalar,
+         {{"Curvature", Type::Scalar, {0}}, {"Threshold", Type::Scalar, {0.1f}}, {"Softness", Type::Scalar, {0.1f}}}},
+        {Kind::MaterialLayerBlend,
+         "Material Layer Blend",
+         Type::Vector3,
+         {{"A Base Color", Type::Vector3, {0.5f, 0.5f, 0.5f, 0}}, {"A Metallic", Type::Scalar, {0}}, {"A Roughness", Type::Scalar, {0.5f}},
+          {"A Normal", Type::Vector3, {0, 0, 1, 0}}, {"A AO", Type::Scalar, {1}}, {"A Emissive", Type::Vector3, {0, 0, 0, 0}},
+          {"A Opacity", Type::Scalar, {1}}, {"A Height", Type::Scalar, {0.5f}},
+          {"B Base Color", Type::Vector3, {0.5f, 0.5f, 0.5f, 0}}, {"B Metallic", Type::Scalar, {0}}, {"B Roughness", Type::Scalar, {0.5f}},
+          {"B Normal", Type::Vector3, {0, 0, 1, 0}}, {"B AO", Type::Scalar, {1}}, {"B Emissive", Type::Vector3, {0, 0, 0, 0}},
+          {"B Opacity", Type::Scalar, {1}}, {"B Height", Type::Scalar, {0.5f}},
+          {"Blend Mask", Type::Scalar, {0.5f}}}},
+        {Kind::ThinFilmInterference,
+         "Thin Film Interference",
+         Type::Vector3,
+         {{"Film Thickness", Type::Scalar, {420}},
+          {"IOR", Type::Scalar, {1.33f}},
+          {"View Angle", Type::Scalar, {1}},
+          {"Strength", Type::Scalar, {1}}}},
+        {Kind::AnisotropyDirection,
+         "Anisotropy Direction",
+         Type::Vector4,
+         {{"Tangent", Type::Vector3, {1, 0, 0, 0}},
+          {"Direction", Type::Vector2, {1, 0, 0, 0}},
+          {"Anisotropy", Type::Scalar, {0.5f}},
+          {"Rotation", Type::Scalar, {0}},
+          {"Normal", Type::Vector3, {0, 0, 1, 0}}}},
+        {Kind::ClearCoatControl,
+         "Clear Coat Control",
+         Type::Vector4,
+         {{"Strength", Type::Scalar, {1}}, {"Roughness", Type::Scalar, {0.05f}}, {"Mask", Type::Scalar, {1}}}},
+        {Kind::SubsurfaceColor,
+         "Subsurface Color",
+         Type::Vector3,
+         {{"Color", Type::Vector3, {1, 0.4f, 0.3f, 0}},
+          {"Radius", Type::Scalar, {0.5f}},
+          {"Strength", Type::Scalar, {1}},
+          {"Mask", Type::Scalar, {1}}}},
+        {Kind::ThicknessMap,
+         "Thickness Map",
+         Type::Scalar,
+         {{"UV", Type::Vector2},
+          {"Scale", Type::Scalar, {1}},
+          {"Bias", Type::Scalar, {0}},
+          {"Min", Type::Scalar, {0}},
+          {"Max", Type::Scalar, {1}},
+          {"Transmission", Type::Scalar, {1}}}},
+        // ---- C. エフェクト / ライブ
+        {Kind::SceneDepth, "Scene Depth", Type::Scalar, {{"UV", Type::Vector2}}},
+        {Kind::DepthFade, "Depth Fade", Type::Scalar, {{"Opacity", Type::Scalar, {1}}, {"Fade Distance", Type::Scalar, {100}}}},
+        {Kind::SceneColor, "Scene Color", Type::Vector3, {{"UV", Type::Vector2}, {"Offset", Type::Vector2, {0, 0, 0, 0}}}},
+        {Kind::CustomHlsl,
+         "Custom HLSL",
+         Type::Numeric,
+         {{"a", Type::Numeric}, {"b", Type::Numeric}, {"c", Type::Numeric}, {"d", Type::Numeric}}},
+        {Kind::DynamicSwitch,
+         "Dynamic Switch",
+         Type::Numeric,
+         {{"Condition", Type::Scalar, {0}}, {"True", Type::Numeric, {1, 1, 1, 1}}, {"False", Type::Numeric}}},
+        {Kind::AudioSpectrum,
+         "Audio Spectrum",
+         Type::Scalar,
+         {{"Frequency Band", Type::Scalar, {4}}, {"Smoothing", Type::Scalar, {0.5f}}, {"Gain", Type::Scalar, {1}}}},
+        {Kind::BeatPhase,
+         "Beat Phase",
+         Type::Vector4,
+         {{"BPM", Type::Scalar, {120}}, {"Offset", Type::Scalar, {0}}, {"Subdivision", Type::Scalar, {1}}, {"Time", Type::Scalar}}},
+        {Kind::CurveAtlas, "Curve Atlas", Type::Scalar, {{"Time", Type::Scalar, {0}}, {"Row", Type::Scalar, {0}}}},
+        {Kind::FunctionInput, "Function Input", Type::Numeric, {}},
+        {Kind::FunctionOutput, "Function Output", Type::Numeric, {{"Result", Type::Numeric}}}};
+
+    // 固定の出力スロット（Break Vector と同じく SplitPins として常に存在する）
+    using Slot = MaterialGraph::OutputSlot;
+    const Slot LayerSlots[] = {{"Base Color", Type::Vector3}, {"Metallic", Type::Scalar}, {"Roughness", Type::Scalar},
+                               {"Normal", Type::Vector3},     {"AO", Type::Scalar},       {"Emissive", Type::Vector3},
+                               {"Opacity", Type::Scalar},     {"Height", Type::Scalar}};
+    const Slot PackedSlots[] = {{"R", Type::Scalar}, {"G", Type::Scalar}, {"B", Type::Scalar}, {"A", Type::Scalar}};
+    const Slot BeatSlots[] = {{"Phase", Type::Scalar}, {"Beat Index", Type::Scalar}, {"Beat Time", Type::Scalar}, {"Pulse", Type::Scalar}};
+    const Slot FlowSlots[] = {{"UV A", Type::Vector2}, {"UV B", Type::Vector2}, {"Blend", Type::Scalar}};
+    const Slot ThicknessSlots[] = {{"Thickness", Type::Scalar}, {"Transmission", Type::Scalar}};
+    const Slot FunctionSlots[] = {{"Out 0", Type::Numeric}, {"Out 1", Type::Numeric}, {"Out 2", Type::Numeric}, {"Out 3", Type::Numeric}};
 
     int Dimensions(Type type)
     {
@@ -391,6 +615,54 @@ const MaterialNodeDefinition& MaterialGraph::Definition(MaterialNodeKind kind)
         }
     }
     return NodeDefinitions.front();
+}
+
+MaterialGraph MaterialGraph::NewFunction()
+{
+    MaterialGraph graph;
+    graph.Settings.IsFunction = true;
+    return graph;
+}
+
+std::span<const MaterialGraph::OutputSlot> MaterialGraph::FixedOutputSlots(MaterialNodeKind kind)
+{
+    switch (kind)
+    {
+        case Kind::MaterialLayerBlend:
+            return LayerSlots;
+        case Kind::PackedTextureChannels:
+            return PackedSlots;
+        case Kind::BeatPhase:
+            return BeatSlots;
+        case Kind::FlowMap:
+            return FlowSlots;
+        case Kind::ThicknessMap:
+            return ThicknessSlots;
+        case Kind::MaterialFunctionCall:
+            return FunctionSlots;
+        default:
+            return {};
+    }
+}
+
+bool MaterialGraph::HasFixedOutputs(MaterialNodeKind kind)
+{
+    return kind == Kind::BreakVector || !FixedOutputSlots(kind).empty();
+}
+
+MaterialGraphType MaterialGraph::SlotType(const MaterialGraphNode& node, size_t slot) const
+{
+    if (node.Kind == Kind::MaterialFunctionCall)
+    {
+        // 関数のシグネチャ（呼び出しノードに保存してある）から。無ければ Numeric（接続先の型に合わせる）
+        if (slot < 4 && node.Params.size() > 1 + slot && node.Params[0] > static_cast<float>(slot))
+        {
+            return static_cast<Type>(std::clamp(static_cast<int>(node.Params[1 + slot]), 1, 4));
+        }
+        return Type::Scalar;
+    }
+    const auto slots = FixedOutputSlots(node.Kind);
+    return slot < slots.size() ? slots[slot].Type : Type::Scalar;
 }
 
 MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
@@ -583,11 +855,15 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
     {
         return 0;
     }
-    if (kind == Kind::Output && std::any_of(Nodes.begin(), Nodes.end(), [](const auto& node) {
+    if (kind == Kind::Output && (Settings.IsFunction || std::any_of(Nodes.begin(), Nodes.end(), [](const auto& node) {
             return node.Kind == Kind::Output;
-        }))
+        })))
     {
         return 0;
+    }
+    if ((kind == Kind::FunctionInput || kind == Kind::FunctionOutput) && !Settings.IsFunction)
+    {
+        return 0; // Function Input / Output は Material Function のグラフだけ
     }
     const auto& definition = Definition(kind);
     MaterialGraphNode node;
@@ -652,11 +928,12 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
         default:
             break;
     }
+    MaterialGraphNodes::InitNode(node);
     for (size_t i = 0; i < definition.Inputs.size(); ++i)
     {
         node.InputPins.push_back(m_NextId++);
     }
-    if (kind != Kind::Output && kind != Kind::Group)
+    if (kind != Kind::Output && kind != Kind::Group && kind != Kind::FunctionOutput)
     {
         node.OutputPin = m_NextId++;
     }
@@ -666,6 +943,10 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
         {
             node.SplitPins.push_back(m_NextId++);
         }
+    }
+    for (size_t slot = 0; slot < FixedOutputSlots(kind).size(); ++slot)
+    {
+        node.SplitPins.push_back(m_NextId++);
     }
     const auto id = node.Id;
     Nodes.push_back(std::move(node));
@@ -990,6 +1271,18 @@ MaterialGraphType MaterialGraph::OutputType(uint64_t id, std::vector<uint64_t>& 
     {
         return node->Value[0] > 0.5f ? Type::Vector3 : Type::Scalar;
     }
+    if (node->Kind == Kind::MaterialFunctionCall)
+    {
+        return SlotType(*node, 0);
+    }
+    if (node->Kind == Kind::CustomHlsl || node->Kind == Kind::FunctionInput)
+    {
+        return static_cast<Type>(std::clamp(static_cast<int>(node->Value[node->Kind == Kind::CustomHlsl ? 1 : 0]), 1, 4));
+    }
+    if (node->Kind == Kind::FunctionOutput)
+    {
+        return Type::Numeric;
+    }
     if (node->Kind == Kind::StaticSwitch)
     {
         visiting.push_back(id);
@@ -1046,7 +1339,7 @@ MaterialGraphType MaterialGraph::SourcePinType(uint64_t pin, std::vector<uint64_
     }
     if (index > 0)
     {
-        return Type::Scalar; // 分割した成分
+        return SlotType(*node, index - 1); // 分割した成分は Scalar、固定スロットはスロットの型
     }
     return OutputType(node->Id, visiting);
 }
@@ -1069,7 +1362,7 @@ bool MaterialGraph::CanSplitOutput(uint64_t id) const
 {
     const auto* node = FindNode(id);
     if (!node || !node->SplitPins.empty() || node->OutputPin == 0 || node->Kind == Kind::Reroute ||
-        node->Kind == Kind::Output || node->Kind == Kind::Group)
+        node->Kind == Kind::Output || node->Kind == Kind::Group || HasFixedOutputs(node->Kind))
     {
         return false;
     }
@@ -1109,7 +1402,7 @@ bool MaterialGraph::SplitOutput(uint64_t id, std::string& error, int forcedCount
 bool MaterialGraph::RecombineOutput(uint64_t id)
 {
     auto* node = FindNode(id);
-    if (!node || node->SplitPins.empty() || node->Kind == Kind::BreakVector)
+    if (!node || node->SplitPins.empty() || HasFixedOutputs(node->Kind))
     {
         return false;
     }
@@ -1135,8 +1428,17 @@ bool MaterialGraph::IsPinValueEditable(MaterialNodeKind kind, size_t input)
     {
         return false;
     }
+    if (kind == Kind::Output && input >= static_cast<size_t>(MaterialOutputPin::ToonShade))
+    {
+        return false; // 追加の陰影ピン：ノードを繋いだときだけ有効（直値は持たない）
+    }
     const auto type = definition.Inputs[input].Type;
     if (type != Type::Scalar && type != Type::Numeric)
+    {
+        return false;
+    }
+    // 追加ノード：UV / 時刻 / 法線 / 視線などを既定で使うピンには出さない。Custom HLSL / Function の入力も直値を持てる
+    if (MaterialGraphMath::DefaultInput(kind, input) != MaterialGraphMath::SpecialInput::None)
     {
         return false;
     }
@@ -1188,6 +1490,10 @@ bool MaterialGraph::IsPinVectorEditable(MaterialNodeKind kind, size_t input)
     if (input >= definition.Inputs.size())
     {
         return false;
+    }
+    if (input >= static_cast<size_t>(MaterialOutputPin::ToonShade))
+    {
+        return false; // 追加の陰影ピンは直値を持たない（ノードを繋いだときだけ有効）
     }
     const auto type = definition.Inputs[input].Type;
     return type == Type::Vector2 || type == Type::Vector3 || type == Type::Vector4;
@@ -1327,6 +1633,20 @@ bool MaterialGraph::Connect(uint64_t source, uint64_t target, std::string& error
     return true;
 }
 
+bool MaterialGraph::ConnectUnchecked(uint64_t source, uint64_t target)
+{
+    if (Links.size() >= MaxLinks || m_NextId >= MaxIdentity || !FindPinNode(source) || !FindPinNode(target))
+    {
+        return false;
+    }
+    std::erase_if(Links, [&](const auto& link) {
+        return link.TargetPin == target;
+    });
+    Links.push_back({m_NextId++, source, target});
+    ++Revision;
+    return true;
+}
+
 bool MaterialGraph::Validate(std::string& error) const
 {
     error.clear();
@@ -1347,7 +1667,12 @@ bool MaterialGraph::Validate(std::string& error) const
         {
             ++outputs;
         }
-        if ((node.Kind == Kind::Output || node.Kind == Kind::Group) && node.OutputPin != 0)
+        if ((node.Kind == Kind::FunctionInput || node.Kind == Kind::FunctionOutput) != false && !Settings.IsFunction)
+        {
+            error = "Function Input / Function Output can only be used inside a Material Function.";
+            return false;
+        }
+        if ((node.Kind == Kind::Output || node.Kind == Kind::Group || node.Kind == Kind::FunctionOutput) && node.OutputPin != 0)
         {
             error = "Material Output and comment groups cannot have output pins.";
             return false;
@@ -1360,13 +1685,15 @@ bool MaterialGraph::Validate(std::string& error) const
                 return false;
             }
         }
-        if (node.Kind != Kind::Output && node.Kind != Kind::Group && !unique(node.OutputPin))
+        if (node.Kind != Kind::Output && node.Kind != Kind::Group && node.Kind != Kind::FunctionOutput && !unique(node.OutputPin))
         {
             error = "Invalid output pin identity.";
             return false;
         }
-        if (node.SplitPins.size() > 4 || ((node.Kind == Kind::Output || node.Kind == Kind::Group ||
-                                           node.Kind == Kind::Reroute) && !node.SplitPins.empty()))
+        if (node.SplitPins.size() > 8 || ((node.Kind == Kind::Output || node.Kind == Kind::Group ||
+                                           node.Kind == Kind::Reroute) && !node.SplitPins.empty()) ||
+            (!HasFixedOutputs(node.Kind) && node.SplitPins.size() > 4) ||
+            (!FixedOutputSlots(node.Kind).empty() && node.SplitPins.size() != FixedOutputSlots(node.Kind).size()))
         {
             error = "Invalid split output pins.";
             return false;
@@ -1404,9 +1731,10 @@ bool MaterialGraph::Validate(std::string& error) const
             }
         }
     }
-    if (outputs != 1)
+    if (outputs != (Settings.IsFunction ? 0u : 1u))
     {
-        error = "A material graph must have exactly one Material Output.";
+        error = Settings.IsFunction ? "A Material Function must not contain a Material Output."
+                                    : "A material graph must have exactly one Material Output.";
         return false;
     }
     std::unordered_set<uint64_t> targets;
@@ -1445,7 +1773,8 @@ bool MaterialGraph::Validate(std::string& error) const
     {
         if (Definition(node.Kind).OutputType != Type::Numeric || node.Kind == Kind::Output ||
             node.Kind == Kind::AppendVector || node.Kind == Kind::ComponentMask ||
-            IsConvertTextureNode(node.Kind))
+            IsConvertTextureNode(node.Kind) || node.Kind == Kind::MaterialFunctionCall ||
+            node.Kind == Kind::CustomHlsl || node.Kind == Kind::FunctionInput || node.Kind == Kind::FunctionOutput)
         {
             continue;
         }
@@ -1518,6 +1847,30 @@ std::string MaterialGraph::Serialize() const
         {
             value["comment"] = node.Comment;
         }
+        if (!node.Params.empty())
+        {
+            value["params"] = Json::Value(Json::arrayValue);
+            for (const float component : node.Params)
+            {
+                value["params"].append(std::isfinite(component) ? component : 0.0f);
+            }
+        }
+        if (!node.Text.empty())
+        {
+            value["text"] = node.Text;
+        }
+        if (!node.PinNames.empty())
+        {
+            value["pinNames"] = Json::Value(Json::arrayValue);
+            for (const auto& name : node.PinNames)
+            {
+                value["pinNames"].append(name);
+            }
+        }
+        if (node.Function != 0)
+        {
+            value["function"] = FormatAssetHandle(node.Function);
+        }
         if (!node.SplitPins.empty())
         {
             value["split"] = Json::Value(Json::arrayValue);
@@ -1589,6 +1942,10 @@ std::string MaterialGraph::Serialize() const
         settings["solidSpace"] = Settings.SolidSpace;
         settings["liveResolution"] = Settings.LiveResolution;
         settings["liveRate"] = Settings.LiveRate;
+        if (Settings.IsFunction)
+        {
+            settings["isFunction"] = true;
+        }
         document["settings"] = std::move(settings);
     }
     Json::StreamWriterBuilder writer;
@@ -1678,6 +2035,37 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         if (value.isMember("comment") && value["comment"].isString())
         {
             node.Comment = value["comment"].asString();
+        }
+        // 2026-11 追加の項目（旧ファイルには無い）
+        if (value.isMember("params") && value["params"].isArray() && value["params"].size() <= 1024)
+        {
+            for (const auto& component : value["params"])
+            {
+                if (!component.isNumeric() || !std::isfinite(component.asFloat()))
+                {
+                    error = "Malformed node parameters.";
+                    return false;
+                }
+                node.Params.push_back(component.asFloat());
+            }
+        }
+        if (value.isMember("text") && value["text"].isString() && value["text"].asString().size() <= 16384)
+        {
+            node.Text = value["text"].asString();
+        }
+        if (value.isMember("pinNames") && value["pinNames"].isArray() && value["pinNames"].size() <= 16)
+        {
+            for (const auto& name : value["pinNames"])
+            {
+                if (name.isString() && name.asString().size() <= 64)
+                {
+                    node.PinNames.push_back(name.asString());
+                }
+            }
+        }
+        if (value.isMember("function") && value["function"].isString())
+        {
+            node.Function = ParseAssetHandle(value["function"].asString());
         }
         if (value.isMember("split") && value["split"].isArray())
         {
@@ -1806,6 +2194,10 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         {
             loaded.Settings.AutoBake = settings["autoBake"].asBool();
         }
+        if (settings["isFunction"].isBool())
+        {
+            loaded.Settings.IsFunction = settings["isFunction"].asBool();
+        }
     }
     uint64_t highest = 0;
     for (const auto& node : loaded.Nodes)
@@ -1835,6 +2227,11 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         while (node.Kind == Kind::BreakVector && node.SplitPins.size() < 4 && highest + 1 < MaxIdentity)
         {
             node.SplitPins.push_back(++highest); // Break Vector は常に 4 成分
+        }
+        // 固定の出力スロットを持つノード（Packed Texture Channels / Beat Phase / Flow Map / ...）は常にスロット分のピンを持つ
+        while (node.SplitPins.size() < FixedOutputSlots(node.Kind).size() && highest + 1 < MaxIdentity)
+        {
+            node.SplitPins.push_back(++highest);
         }
     }
     if (!loaded.Validate(error))
@@ -1870,6 +2267,7 @@ bool MaterialGraph::Load(const std::filesystem::path& path, MaterialGraph& graph
     }
     return Deserialize(contents.str(), graph, error);
 }
+
 
 
 

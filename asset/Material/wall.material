@@ -25,6 +25,8 @@
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 0.57300001382827759,
+    "parallaxDepth" : 0.0,
+    "parallaxSteps" : 32.0,
     "roughness" : 1.0,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
@@ -36,7 +38,7 @@
   {
     "alphaCutoff" : 0.5,
     "cullMode" : "Back",
-    "depthWrite" : true,
+    "depthWrite" : false,
     "shadowCutoff" : 0.5,
     "shadowMode" : "Opaque"
   },
@@ -47,6 +49,7 @@
     "ao" : "guid:0000000000000000",
     "baseColor" : "guid:0000000000000000",
     "emissive" : "guid:0000000000000000",
+    "height" : "guid:0000000000000000",
     "metallicRoughness" : "guid:0000000000000000",
     "normal" : "guid:0000000000000000"
   },

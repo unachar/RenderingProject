@@ -23,6 +23,12 @@ float3 SampleEnvironmentLatLong(float3 dir, float roughness)
     return EnvironmentTexture.SampleLevel(g_SamplerState, uv, roughness * 8.0f).rgb;
 }
 
+// マテリアルグラフの Scene Depth / Depth Fade / Scene Color（Translucent / Glass）：このシェーダーが持つ不透明シーンの深度 / 色を読む。
+// 定義は DepthTexture / ReconstructForwardWorld の後（前方宣言）。読み取り専用の SRV なので、不透明パスの書き込みとは競合しない
+float MaterialGraphSceneDepthForward(float2 uv);
+float3 MaterialGraphSceneColorForward(float2 uv, float lod);
+#define MG_VM_SCENE_DEPTH(input, uv) MaterialGraphSceneDepthForward(uv)
+#define MG_VM_SCENE_COLOR(input, uv, lod) MaterialGraphSceneColorForward(uv, lod)
 #include "MaterialSurface.hlsli"
 #include "SkyAtmosphere.hlsli"
 #include "CloudMedium.hlsli"
@@ -90,6 +96,24 @@ float3 ReconstructForwardWorld(float2 uv, float depth)
         }
     }
     return world.xyz / safeW;
+}
+
+// Scene Depth：不透明シーンのビュー空間の奥行き（ワールド単位）。ジオメトリが無い画素は十分遠い値（Depth Fade が 1 になる）
+// 逆 Z / ビューポートは ReconstructForwardWorld（既存のガラスと同じ復元）に任せる。解像度が変わっても uv（0〜1）で読む
+float MaterialGraphSceneDepthForward(float2 uv)
+{
+    uv = saturate(uv);
+    float rawDepth = DepthTexture.SampleLevel(g_SamplerState, uv, 0);
+    if (rawDepth <= 0.0f)
+    {
+        return 100000.0f;
+    }
+    return mul(float4(ReconstructForwardWorld(uv, rawDepth), 1.0f), View).z;
+}
+
+float3 MaterialGraphSceneColorForward(float2 uv, float lod)
+{
+    return SceneColorTexture.SampleLevel(g_SamplerState, saturate(uv), clamp(lod, 0.0f, 8.0f)).rgb;
 }
 
 // 深度で検証する画面空間のフォールバック。不透明シーンのコピーは、
@@ -285,6 +309,8 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 #include "LiveToonMaterial.hlsli"
 
 static float g_PomForwardDepth = 0.0f;
+static bool g_ForwardFrontFacing = true; // main が SV_IsFrontFace を入れる（Two Sided Sign）
+static float g_MekakureGraphMask = 1.0f; // マテリアルグラフの Mekakure Mask ノードの出力（無ければ 1）。MekakurePS が乗算する
 
 float4 ShadeForward(in PSInput3D In)
 {
@@ -335,6 +361,7 @@ float4 ShadeForward(in PSInput3D In)
     [branch] if (MaterialGraphProgramSlot(assetMaterial) != 0u)
     {
         MaterialGraphVmInput graphInput;
+        MaterialGraphVmInitExt(graphInput);
         graphInput.WorldPos = In.WorldPos;
         graphInput.PixelPos = In.Position.xy;
         MaterialGraphSetObject(graphInput, World, ObjectBoundsCenter.xyz,
@@ -344,7 +371,13 @@ float4 ShadeForward(in PSInput3D In)
         graphInput.CameraPos = In.CameraPos;
         graphInput.UV = materialUv;
         graphInput.VertexColor = In.Diffuse;
+        graphInput.FrontFacing = g_ForwardFrontFacing;
+        graphInput.LightDir = LightPositionType.w < 0.5f ? SafeNormalizeCommon(LightDirection.xyz, float3(0, 1, 0))
+                                                          : SafeNormalizeCommon(LightPositionType.xyz - In.WorldPos, float3(0, 1, 0));
+        MaterialGraphVmSetFrame(graphInput, ddx(In.WorldPos), ddy(In.WorldPos), ddx(In.TexCoord), ddy(In.TexCoord),
+                                ddx(graphGeometryNormal), ddy(graphGeometryNormal));
         materialGraph = EvaluateMaterialGraphVm(MaterialGraphProgramSlot(assetMaterial), graphInput, g_SamplerState);
+        g_MekakureGraphMask = (materialGraph.ExtMask & (1u << MG_EXT_MEKAKURE)) != 0u ? saturate(materialGraph.Ext[MG_EXT_MEKAKURE].x) : 1.0f;
         ApplyMaterialGraphSurface(materialGraph, assetMaterial, baseColor, assetMetallic, assetRoughness,
                                   assetEmissionAO);
     }
@@ -419,6 +452,9 @@ float4 ShadeForward(in PSInput3D In)
         g_MLCellIndex = MLCellIndexFromWorld(In.WorldPos);
         g_LiveToonClass = shaderClass;
         g_LiveToonShadow = float2(shadowThreshold, shadowStrength);
+        // マテリアルグラフの Toon ノード（Toon Light Ramp / Face SDF / Rim / Hair）：画素ごとのパラメーターを渡し、ライトごとの評価は
+        // EvaluateLiveToonLightStyled が行う（Directional Rim Light があれば既存のリムは止まる）
+        ApplyMaterialGraphToonProfile(materialGraph, g_ToonNode, g_ToonRimScale);
         ResolveSurfaceLightAggregateShadowed(
             In.WorldPos, ddx(In.WorldPos), ddy(In.WorldPos), surfaceNormal, In.Position.xy,
             clamp((int)round(VirtualShadowGlobal.z), 0, 3), false, toonView, baseColor.rgb,
@@ -658,8 +694,9 @@ struct ForwardOutput
 
 // MODEL_SHADER_NO_ENTRY：ShadeForward だけを再利用するシェーダー（MekakurePS など）用。
 #if !defined(IMPOSTOR_FORWARD) && !defined(MODEL_SHADER_NO_ENTRY)
-ForwardOutput main(in PSInput3D In)
+ForwardOutput main(in PSInput3D In, bool frontFace : SV_IsFrontFace)
 {
+    g_ForwardFrontFacing = frontFace;
     float4 premultiplied = ShadeForward(In);
     ForwardOutput output;
     output.Color = premultiplied;
@@ -673,6 +710,7 @@ ForwardOutput main(in PSInput3D In)
     return output;
 }
 #endif
+
 
 
 

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 enum class MaterialGraphType
@@ -145,8 +146,52 @@ enum class MaterialNodeKind
     ScreenPosition,    // 画面上の 0〜1 座標
     DitherOpacity,     // ディザ（4x4）で不透明度を 0 / 1 にする（Masked のフェード）
     DistanceFade,      // カメラ距離で 0（Start）→ 1（End）
-    HeightGradient     // 高さで 0（Start）→ 1（End）。Value[0] = 0 ワールド Y / 1 ローカル Y / 2 範囲内 0〜1
+    HeightGradient,    // 高さで 0（Start）→ 1（End）。Value[0] = 0 ワールド Y / 1 ローカル Y / 2 範囲内 0〜1
+    // ---- 2026-11 追加：マテリアルノード 33 種 + Function 用の入出力 2 種（シリアライズは名前なので末尾に追加する）
+    //      各ノードのパラメーターの意味は materialgraphext.h の MaterialGraphExt を参照
+    // A. トゥーン / キャラクター
+    ToonLightRamp,            // ライト方向の段階ランプ（ライトごとの評価は ToonNodeLighting.hlsli）
+    FaceSdfShadow,            // 顔専用の SDF 陰影
+    HairAnisotropicHighlight, // 髪の異方性ハイライト（Kajiya-Kay）
+    DirectionalRimLight,      // 光源方向を考慮したリムライト（既存のリムと二重にならない）
+    MatCap,                   // MatCap テクスチャ
+    MekakureMask,             // 既存メカクレ処理に渡すマスク
+    MultiColorRamp,           // 4〜16 キーのカラーランプ（Three Color Ramp は互換のまま残る）
+    EyeHighlight,             // アニメ調の瞳ハイライト
+    MaterialFunctionCall,     // Material Function 呼び出し（コンパイル時にインライン展開する）
+    TextureParameter2D,       // マテリアルインスタンスで差し替えられるテクスチャ
+    // B. 汎用 / PBR
+    TwoSidedSign,             // 表 +1 / 裏 -1
+    FlipbookUV,               // スプライトシートの UV
+    FlowMap,                  // フローマップによる UV 移動（2 位相）
+    RgbCurves,                // RGB 独立カーブ
+    HsvAdjust,                // Hue / Saturation / Value
+    PackedTextureChannels,    // ORM などのチャンネル分離（R / G / B / A の 4 出力）
+    DetailNormalBlend,        // ベース法線 + ディテール法線
+    TriplanarNormalCorrected, // Triplanar 法線（接空間へ正しく変換）
+    CurvatureMask,            // 曲率マスク
+    MaterialLayerBlend,       // マテリアル属性のレイヤー合成（8 出力）
+    ThinFilmInterference,     // 薄膜干渉
+    AnisotropyDirection,      // 異方性の方向
+    ClearCoatControl,         // クリアコートの強度 / 粗さ / マスク
+    SubsurfaceColor,          // 内部散乱色
+    ThicknessMap,             // 厚みマップ（Thickness / Transmission の 2 出力）
+    // C. エフェクト / ライブ
+    SceneDepth,               // シーン深度
+    DepthFade,                // ジオメトリ交差のフェード
+    SceneColor,               // シーンカラー
+    CustomHlsl,               // ユーザー定義の HLSL 式
+    DynamicSwitch,            // 実行時条件の切り替え
+    AudioSpectrum,            // 音声スペクトル
+    BeatPhase,                // BPM 同期（4 出力）
+    CurveAtlas,               // カーブの参照
+    // Material Function の入出力（関数グラフの中だけで使う）
+    FunctionInput,
+    FunctionOutput
 };
+
+// 追加ノードの個数（IMPLEMENTATION_STATUS.md と tests が数える）
+inline constexpr int kMaterialExtNodeCount = 33;
 
 // Convert To Solid の方式（node.Value[0]）
 enum class MaterialSolidConvertMethod : int
@@ -240,6 +285,15 @@ enum class MaterialOutputPin : size_t
     Thickness,
     Absorption,
     ShadingStrength,
+    // ---- 2026-11 追加（既存のピン番号 / 順序は変えない。追加は末尾）。描画時評価（GPU）だけが使うピン
+    ToonShade,       // Toon Light Ramp の出力を繋ぐ。ライトごとの陰影ランプとして ToonLighting へ渡る
+    ToonRim,         // Directional Rim Light
+    ToonHair,        // Hair Anisotropic Highlight
+    ToonFaceShadow,  // Face SDF Shadow
+    MekakureMaskOut, // Mekakure Mask（既存メカクレのマスク描画が参照する）
+    ClearCoat,       // Clear Coat Control（x = 強度, y = 粗さ）
+    SubsurfaceTint,  // Subsurface Color
+    AnisotropyDir,   // Anisotropy Direction（xyz = 方向, w = 異方性）
     Count
 };
 
@@ -291,6 +345,8 @@ struct MaterialGraphSettings
     // ソリッドテクスチャ / ノイズが UV に依存せず継ぎ目なく貼られる。対応外のノードがあるとベイクに戻る
     bool RuntimeEvaluation = true;
     int SolidSpace = 0; // ソリッドテクスチャ / ノイズの既定の座標：0 オブジェクト空間 / 1 ワールド空間
+    // Material Function（関数グラフ）：Material Output を持たず、Function Input / Function Output で入出力を定義する
+    bool IsFunction = false;
     bool operator==(const MaterialGraphSettings&) const = default;
 };
 
@@ -331,6 +387,11 @@ struct MaterialGraphNode
     // 未接続のベクトル入力ピンの直値（Material Output の Base Color / Normal / Emissive / Absorption）。
     // 添字 = 入力ピン。[0] が NaN = 未設定（定義の既定値 / マテリアルアセットの値を使う）
     std::vector<std::array<float, 4>> PinVectors;
+    // ---- 2026-11 追加（旧ファイルには無い。無ければ空 = 既定値）
+    std::vector<float> Params;           // 可変長のパラメーター（ランプのキー / カーブの制御点 / 関数のシグネチャなど）
+    std::string Text;                    // 文字列（Texture Parameter の名前 / Custom HLSL の式 / 関数ピンの名前）
+    std::vector<std::string> PinNames;   // ユーザー定義のピン名（Custom HLSL の入力 / Function Input・Output）
+    AssetHandle Function = 0;            // Material Function のアセット
 
     // pin がこのノードの出力（まとめた出力 / 分割した成分）か
     bool OwnsOutput(uint64_t pin) const
@@ -375,6 +436,21 @@ class MaterialGraph
     static std::span<const MaterialNodeDefinition> Definitions();
     static const MaterialNodeDefinition& Definition(MaterialNodeKind kind);
     static MaterialGraph FromMaterial(const MaterialAssetData& material);
+    // Material Function 用の空のグラフ（Material Output を持たない）
+    static MaterialGraph NewFunction();
+    // ---- 複数出力（固定の出力スロット）。Break Vector と同じく、スロットは SplitPins として常に存在する
+    struct OutputSlot
+    {
+        const char* Name;
+        MaterialGraphType Type;
+    };
+    // 固定スロットを持つノードのスロット表（持たなければ空）。Break Vector は従来どおり別扱い
+    static std::span<const OutputSlot> FixedOutputSlots(MaterialNodeKind kind);
+    static bool HasFixedOutputs(MaterialNodeKind kind);
+    // 呼び出し側が登録するマテリアルインスタンス側の上書き（Texture Parameter 2D）。保存しない実行時の値
+    std::vector<std::pair<std::string, AssetHandle>> InstanceTextures;
+    // 出力ピンの型を、ノードのスロット表 / 関数のシグネチャまで含めて返す（分割成分は Scalar）
+    MaterialGraphType SlotType(const MaterialGraphNode& node, size_t slot) const;
     // マテリアルアセットの値からマテリアルモードを決める（Transmission > 0 = Glass）
     static MaterialGraphMode ModeFromMaterial(const MaterialAssetData& material);
     // ---- 入力ピン横の数値ボックス（UE と同じ）
@@ -419,6 +495,8 @@ class MaterialGraph
     // エディターでの新規接続用：CanConnect に加えて、マテリアルモードで使えないピンを拒否する
     bool CanConnectActive(uint64_t source, uint64_t target, std::string& error) const;
     bool Connect(uint64_t source, uint64_t target, std::string& error);
+    // 検証せずに接続する（Material Function の展開用。呼び出し側が最後に Validate する。既存の接続は置き換える）
+    bool ConnectUnchecked(uint64_t source, uint64_t target);
     bool RemoveLink(uint64_t link);
     MaterialGraphNode* FindNode(uint64_t node);
     const MaterialGraphNode* FindNode(uint64_t node) const;
@@ -442,6 +520,7 @@ class MaterialGraph
     MaterialGraphType OutputType(uint64_t node, std::vector<uint64_t>& visiting) const;
     MaterialGraphType SourcePinType(uint64_t pin, std::vector<uint64_t>& visiting) const;
 };
+
 
 
 

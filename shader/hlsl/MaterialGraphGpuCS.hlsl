@@ -102,6 +102,7 @@ struct PreviewPoint
 MaterialGraphVmInput MakeInput(float3 position, float3 normal, float2 uv, float2 pixel)
 {
     MaterialGraphVmInput input;
+    MaterialGraphVmInitExt(input);
     input.WorldPos = position;
     input.Normal = normal;
     input.CameraPos = position + float3(0, 0, -3);
@@ -330,4 +331,5 @@ void main(uint3 id : SV_DispatchThreadID)
         BakeOutput[uint3(p, 5)] = float4(h, h, h, 1);
     }
 }
+
 

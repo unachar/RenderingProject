@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "materialgraphevaluator.h"
+#include "materialgraphext.h"
+#include "materialgraphlower.h"
 #include "materialgraphmath.h"
+#include "materialgraphnodes.h"
 #include "procedural/noise.h"
 #include "procedural/proceduralstudio.h"
 #include <algorithm>
@@ -116,8 +119,19 @@ namespace MaterialGraphEval
         return source;
     }
 
-    void BuildTopology(const MaterialGraph& graph, Topology& topology)
+    void BuildTopology(const MaterialGraph& sourceGraph, Topology& topology)
     {
+        topology.Lowered.reset();
+        topology.LowerError.clear();
+        if (MaterialGraphLower::NeedsLowering(sourceGraph))
+        {
+            auto lowered = std::make_shared<MaterialGraph>();
+            if (MaterialGraphLower::Lower(sourceGraph, *lowered, topology.LowerError))
+            {
+                topology.Lowered = std::move(lowered);
+            }
+        }
+        const MaterialGraph& graph = topology.Lowered ? *topology.Lowered : sourceGraph;
         topology.Index.clear();
         topology.Index.reserve(graph.Nodes.size());
         for (size_t i = 0; i < graph.Nodes.size(); ++i)
@@ -219,6 +233,30 @@ namespace MaterialGraphEval
                 case Kind::Time:
                     value |= 2;
                     break;
+                // ---- 2026-11 追加ノード：空間 / 視線 / 時間に依存するもの
+                case Kind::ToonLightRamp:
+                case Kind::FaceSdfShadow:
+                case Kind::CurvatureMask:
+                case Kind::AnisotropyDirection:
+                case Kind::TwoSidedSign:
+                case Kind::TriplanarNormalCorrected:
+                    value |= 1;
+                    break;
+                case Kind::HairAnisotropicHighlight:
+                case Kind::DirectionalRimLight:
+                case Kind::MatCap:
+                case Kind::MekakureMask:
+                case Kind::EyeHighlight:
+                case Kind::ThinFilmInterference:
+                case Kind::SceneDepth:
+                case Kind::DepthFade:
+                case Kind::SceneColor:
+                    value |= 1 | 4;
+                    break;
+                case Kind::AudioSpectrum:
+                case Kind::BeatPhase:
+                    value |= 2;
+                    break;
                 default:
                     break;
             }
@@ -253,6 +291,15 @@ namespace MaterialGraphEval
                     const auto special = GraphMath::DefaultInput(node.Kind, i);
                     value |= special == GraphMath::SpecialInput::WorldPosition ? 1 : 0;
                     value |= special == GraphMath::SpecialInput::Time ? 2 : 0;
+                    value |= special == GraphMath::SpecialInput::AudioTime ? 2 : 0;
+                    value |= (special == GraphMath::SpecialInput::WorldNormal || special == GraphMath::SpecialInput::LightDirection ||
+                              special == GraphMath::SpecialInput::Tangent || special == GraphMath::SpecialInput::Curvature)
+                                 ? 1
+                                 : 0;
+                    value |= (special == GraphMath::SpecialInput::CameraVector || special == GraphMath::SpecialInput::ViewNormal ||
+                              special == GraphMath::SpecialInput::NdotV)
+                                 ? (1 | 4)
+                                 : 0;
                 }
             }
             flags[index] = value;
@@ -274,10 +321,22 @@ namespace MaterialGraphEval
     }
 
     Evaluator::Evaluator(const MaterialGraph& graph, const Topology& topology, TextureSampler sampler)
-        : m_Graph(graph), m_Topology(topology), m_Sampler(std::move(sampler))
+        : m_Graph(topology.Lowered ? *topology.Lowered : graph), m_Topology(topology), m_Sampler(std::move(sampler))
     {
-        m_Memo.resize(graph.Nodes.size());
-        m_Done.resize(graph.Nodes.size());
+        m_Memo.resize(m_Graph.Nodes.size());
+        m_Done.resize(m_Graph.Nodes.size());
+        for (const auto& node : m_Graph.Nodes)
+        {
+            if (!MaterialGraph::FixedOutputSlots(node.Kind).empty())
+            {
+                m_HasSlots = true;
+                break;
+            }
+        }
+        if (m_HasSlots)
+        {
+            m_Slots.resize(graph.Nodes.size());
+        }
     }
 
     Evaluator::~Evaluator() = default;
@@ -324,11 +383,21 @@ namespace MaterialGraphEval
             return nullptr;
         }
         const auto* first = m_Graph.Nodes.data();
+        size_t index = 0;
         if (&node < first || &node >= first + m_Graph.Nodes.size())
         {
-            return nullptr; // このグラフのノードではない
+            // 元のグラフのノード（展開後のグラフで評価しているとき）：ID で探す
+            const auto found = m_Topology.Index.find(node.Id);
+            if (found == m_Topology.Index.end() || found->second >= m_Graph.Nodes.size())
+            {
+                return nullptr;
+            }
+            index = found->second;
         }
-        const size_t index = static_cast<size_t>(&node - first);
+        else
+        {
+            index = static_cast<size_t>(&node - first);
+        }
         const uint32_t begin = m_Topology.InputOffset[index];
         const uint32_t end = m_Topology.InputOffset[index + 1];
         if (end - begin != node.InputPins.size() || input >= node.InputPins.size())
@@ -354,6 +423,11 @@ namespace MaterialGraphEval
             if (source->Node >= 0)
             {
                 Value value = Node(static_cast<size_t>(source->Node), depth + 1);
+                if (source->Output > 0 && m_HasSlots &&
+                    !MaterialGraph::FixedOutputSlots(m_Graph.Nodes[static_cast<size_t>(source->Node)].Kind).empty())
+                {
+                    return SlotValue(static_cast<size_t>(source->Node), source->Output - 1);
+                }
                 if (source->Output > 0)
                 {
                     const int component = source->Output - 1;
@@ -376,6 +450,10 @@ namespace MaterialGraphEval
                     if (found != m_Topology.Index.end())
                     {
                         Value value = Node(found->second, depth + 1);
+                        if (outputIndex > 0 && m_HasSlots && !MaterialGraph::FixedOutputSlots(source->Kind).empty())
+                        {
+                            return SlotValue(found->second, static_cast<int>(outputIndex) - 1);
+                        }
                         if (outputIndex > 0)
                         {
                             // 分割した出力（X / Y / Z / W）：成分を取り出す。無い成分は 0（スカラーは全成分同じ）
@@ -400,6 +478,40 @@ namespace MaterialGraphEval
                 return Make(&m_Context.Time, 1);
             case GraphMath::SpecialInput::WorldPosition:
                 return Make(m_Context.Position, 3);
+            case GraphMath::SpecialInput::WorldNormal:
+                return Make(m_Context.Normal, 3);
+            case GraphMath::SpecialInput::CameraVector:
+                return Make(m_Context.Camera, 3);
+            case GraphMath::SpecialInput::LightDirection:
+                return Make(m_Context.LightDirection, 3);
+            case GraphMath::SpecialInput::Tangent:
+                return Make(m_Context.Tangent, 3);
+            case GraphMath::SpecialInput::ViewNormal: {
+                // カメラを向いた基底（z = 視線）。エンジンはビュー行列で変換する（MG_IN_VIEW_NORMAL）
+                float z[3] = {m_Context.Camera[0], m_Context.Camera[1], m_Context.Camera[2]};
+                const float zFallback[3] = {0.0f, 0.0f, 1.0f};
+                Normalize3(z, zFallback);
+                const float worldUp[3] = {0.0f, 1.0f, 0.0f};
+                // x = cross(z, up)：カメラの右（エンジンの左手系ビュー：視線 +Z、右 +X）。z はカメラへ向かう
+                float x[3] = {z[1] * worldUp[2] - z[2] * worldUp[1], z[2] * worldUp[0] - z[0] * worldUp[2],
+                              z[0] * worldUp[1] - z[1] * worldUp[0]};
+                const float xFallback[3] = {1.0f, 0.0f, 0.0f};
+                Normalize3(x, xFallback);
+                const float y[3] = {x[1] * z[2] - x[2] * z[1], x[2] * z[0] - x[0] * z[2], x[0] * z[1] - x[1] * z[0]}; // cross(x, z)
+                return Make3(Dot3(m_Context.Normal, x), Dot3(m_Context.Normal, y), Dot3(m_Context.Normal, z));
+            }
+            case GraphMath::SpecialInput::NdotV: {
+                const float d = Dot3(m_Context.Normal, m_Context.Camera);
+                return Make(&d, 1);
+            }
+            case GraphMath::SpecialInput::ScreenUV:
+                return Make(m_Context.UV, 2);
+            case GraphMath::SpecialInput::Curvature:
+                return Make(&m_Context.Curvature, 1);
+            case GraphMath::SpecialInput::AudioTime: {
+                const float t = static_cast<float>(m_Context.AudioTime != 0.0 ? m_Context.AudioTime : static_cast<double>(m_Context.Time));
+                return Make(&t, 1);
+            }
             default:
                 break;
         }
@@ -1414,10 +1526,57 @@ namespace MaterialGraphEval
                 return result;
             }
             default:
+                if (MaterialGraphNodes::IsExtKind(kind))
+                {
+                    return ComputeExt(node, static_cast<size_t>(&node - m_Graph.Nodes.data()), depth);
+                }
                 return result;
         }
     }
+
+    Value Evaluator::SlotValue(size_t node, int slot)
+    {
+        if (node >= m_Slots.size() || slot < 0 || slot >= 8)
+        {
+            return {};
+        }
+        return m_Slots[node][static_cast<size_t>(slot)];
+    }
+
+    Value Evaluator::ComputeExt(const MaterialGraphNode& node, size_t index, int depth)
+    {
+        constexpr size_t kMaxInputs = 24;
+        Value inputs[kMaxInputs];
+        const size_t count = (std::min)(node.InputPins.size(), kMaxInputs);
+        uint32_t linked = 0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            inputs[i] = Input(node, i, depth);
+            if (Linked(node, i))
+            {
+                linked |= 1u << i;
+            }
+        }
+        MaterialGraphExt::Result result;
+        MaterialGraphExt::Evaluate(node, m_Context, m_Sampler, inputs, count, linked, result);
+        if (m_HasSlots && index < m_Slots.size())
+        {
+            for (int s = 0; s < result.SlotCount && s < 8; ++s)
+            {
+                for (float& v : result.Slots[s].V)
+                {
+                    if (!std::isfinite(v))
+                    {
+                        v = 0.0f;
+                    }
+                }
+                m_Slots[index][static_cast<size_t>(s)] = result.Slots[s];
+            }
+        }
+        return result.Primary;
+    }
 } // namespace MaterialGraphEval
+
 
 
 

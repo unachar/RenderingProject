@@ -36,7 +36,17 @@ namespace MaterialGraphMath
         None,
         UV,
         Time,
-        WorldPosition
+        WorldPosition,
+        // ---- 2026-11 追加ノードの既定入力（未接続のとき、定数ではなく画素 / ライトの値を使うピン）
+        WorldNormal,    // ジオメトリの法線（ワールド）
+        CameraVector,   // 表面 → カメラ（ワールド）
+        LightDirection, // 表面 → メインライト（ワールド）
+        Tangent,        // 接線（ワールド。スキニング後の位置 / UV の微分から求めるので変形後も正しい）
+        ViewNormal,     // ビュー空間の法線（MatCap）
+        NdotV,          // dot(法線, 視線)
+        ScreenUV,       // 画面上の 0〜1 座標
+        Curvature,      // 画素の曲率（正 = 凸）
+        AudioTime       // 音声クロック（秒）。Beat Phase の既定
     };
 
     // 未接続の入力が「定数」ではなく、ピクセル / 時間の値を使うピン（UE と同じ挙動）
@@ -89,7 +99,53 @@ namespace MaterialGraphMath
         {
             return SpecialInput::WorldPosition;
         }
-        return SpecialInput::None;
+        switch (kind)
+        {
+            // ---- 2026-11 追加ノード
+            case Kind::ToonLightRamp:
+                return input == 1 ? SpecialInput::WorldNormal : input == 2 ? SpecialInput::LightDirection : SpecialInput::None;
+            case Kind::FaceSdfShadow:
+                return input == 0 ? SpecialInput::UV : input == 1 ? SpecialInput::LightDirection : SpecialInput::None;
+            case Kind::HairAnisotropicHighlight:
+                return input == 0   ? SpecialInput::Tangent
+                       : input == 1 ? SpecialInput::WorldNormal
+                       : input == 2 ? SpecialInput::CameraVector
+                       : input == 3 ? SpecialInput::LightDirection
+                                    : SpecialInput::None;
+            case Kind::DirectionalRimLight:
+                return input == 0 ? SpecialInput::WorldNormal : input == 1 ? SpecialInput::CameraVector
+                       : input == 2 ? SpecialInput::LightDirection : SpecialInput::None;
+            case Kind::MatCap:
+                return input == 0 ? SpecialInput::ViewNormal : SpecialInput::None;
+            case Kind::MekakureMask:
+                return input == 5 ? SpecialInput::WorldNormal : input == 6 ? SpecialInput::CameraVector : SpecialInput::None;
+            case Kind::EyeHighlight:
+                return input == 0 ? SpecialInput::UV : input == 1 ? SpecialInput::CameraVector
+                       : input == 2 ? SpecialInput::LightDirection : SpecialInput::None;
+            case Kind::TextureParameter2D:
+            case Kind::PackedTextureChannels:
+            case Kind::ThicknessMap:
+                return input == 0 ? SpecialInput::UV : SpecialInput::None;
+            case Kind::FlipbookUV:
+                return input == 0 ? SpecialInput::UV : input == 5 ? SpecialInput::Time : SpecialInput::None;
+            case Kind::FlowMap:
+                return input == 0 ? SpecialInput::UV : input == 1 ? SpecialInput::Time : SpecialInput::None;
+            case Kind::TriplanarNormalCorrected:
+                return input == 0 ? SpecialInput::WorldPosition : input == 1 ? SpecialInput::WorldNormal : SpecialInput::None;
+            case Kind::CurvatureMask:
+                return input == 0 ? SpecialInput::Curvature : SpecialInput::None;
+            case Kind::ThinFilmInterference:
+                return input == 2 ? SpecialInput::NdotV : SpecialInput::None;
+            case Kind::AnisotropyDirection:
+                return input == 0 ? SpecialInput::Tangent : input == 4 ? SpecialInput::WorldNormal : SpecialInput::None;
+            case Kind::SceneDepth:
+            case Kind::SceneColor:
+                return input == 0 ? SpecialInput::ScreenUV : SpecialInput::None;
+            case Kind::BeatPhase:
+                return input == 3 ? SpecialInput::AudioTime : SpecialInput::None;
+            default:
+                return SpecialInput::None;
+        }
     }
 
     // ---- プロシージャルスタジオのノイズ（名前は ProcStudio::Basis / FractalType の並び）
@@ -710,6 +766,7 @@ namespace MaterialGraphMath
                "float4 MG_UnpackNormal(float4 v) { float3 n = v.xyz * 2 - 1; if (v.z <= 0) n.z = sqrt(saturate(1 - dot(n.xy,n.xy))); return float4(n, 1); }\n";
     }
 } // namespace MaterialGraphMath
+
 
 
 

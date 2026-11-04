@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -1498,5 +1498,21 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\editor\materialgraphbake.cpp" />
     <ClInclude Include="source\editor\materialgraphbake.h" />
     <ClInclude Include="source\assets\materialgraphmath.h" />
+  </ItemGroup>
+  <!-- 2026-11 マテリアルノード 33 種の追加（ソース / ヘッダー / シェーダーの登録）。シェーダーの .hlsli は他の .hlsli と同じ <None> で登録する -->
+  <ItemGroup Label="MaterialNodesExt">
+    <ClCompile Include="source\assets\materialgraphnodes.cpp" />
+    <ClInclude Include="source\assets\materialgraphnodes.h" />
+    <ClCompile Include="source\assets\materialgraphext.cpp" />
+    <ClInclude Include="source\assets\materialgraphext.h" />
+    <ClCompile Include="source\assets\materialgraphlower.cpp" />
+    <ClInclude Include="source\assets\materialgraphlower.h" />
+    <ClCompile Include="source\assets\materialgraphcustomhlsl.cpp" />
+    <ClInclude Include="source\assets\materialgraphcustomhlsl.h" />
+    <ClCompile Include="source\editor\materialgraphexteditor.cpp" />
+    <ClInclude Include="source\editor\materialgraphexteditor.h" />
+    <ClInclude Include="source\audio\audiospectrum.h" />
+    <None Include="shader\hlsl\MaterialGraphNodesExt.hlsli" />
+    <None Include="shader\hlsl\ToonNodeLighting.hlsli" />
   </ItemGroup>
 </Project>

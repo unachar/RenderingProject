@@ -225,6 +225,23 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
     {
         return false;
     }
+    // マテリアルインスタンスのテクスチャ上書き（旧ファイルには無い）
+    if (root.isMember("textureOverrides") && root["textureOverrides"].isObject())
+    {
+        const auto& overrides = root["textureOverrides"];
+        for (const auto& name : overrides.getMemberNames())
+        {
+            if (name.empty() || name.size() > 64 || !overrides[name].isString() || result.TextureOverrides.size() >= 64)
+            {
+                continue;
+            }
+            const AssetHandle handle = ParseAssetHandle(overrides[name].asString());
+            if (handle != 0)
+            {
+                result.TextureOverrides.emplace_back(name, handle);
+            }
+        }
+    }
     if (parameters.isMember("shadingModel"))
     {
         if (!parameters["shadingModel"].isUInt() || parameters["shadingModel"].asUInt() > 5u)
@@ -391,7 +408,15 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     {
         root["textures"][textureNames[slot]] = FormatAssetHandle(material.Textures[slot]);
     }
+    for (const auto& [name, handle] : material.TextureOverrides)
+    {
+        if (!name.empty() && handle != 0)
+        {
+            root["textureOverrides"][name] = FormatAssetHandle(handle);
+        }
+    }
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "  ";
     return WriteAssetFile(path, Json::writeString(writer, root), error);
 }
+

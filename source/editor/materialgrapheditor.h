@@ -16,4 +16,8 @@ class MaterialGraphEditor
     static void Undo(bool redo);
     static void SaveRecovery();
     static void Shutdown();
+    // Material Function（.matfunc）の編集ウィンドウ。OpenFunction で開き、DrawFunctionWindow を毎フレーム呼ぶ
+    static void OpenFunction(AssetHandle function);
+    static void DrawFunctionWindow();
 };
+

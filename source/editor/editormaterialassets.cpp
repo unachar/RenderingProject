@@ -205,6 +205,7 @@ void ImGuiManager::MaterialEditorUndo(bool redo)
 
 void ImGuiManager::DrawMaterialEditorWindow()
 {
+    MaterialGraphEditor::DrawFunctionWindow(); // Material Function の編集ウィンドウ（開いているときだけ）
     if (openMaterial == 0)
     {
         DrawLegacyMaterialEditorWindow();
@@ -788,4 +789,5 @@ void ImGuiManager::DrawMaterialDropTarget()
         ImGui::EndPopup();
     }
 }
+
 
