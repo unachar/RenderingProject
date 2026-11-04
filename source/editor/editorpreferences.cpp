@@ -943,8 +943,8 @@ namespace EditorPreferences
             {
                 ImGui::Checkbox("メインツールバー", &s.ShowToolbar);
                 ImGui::Checkbox("ステータスバー", &s.ShowStatusBar);
-                ImGui::Checkbox("パネルヘッダー（エディタータイプ切替 / 最大化）", &s.ShowAreaHeaders);
-                ImGui::SetItemTooltip("オフでも、タブの右クリックでエディタータイプの切り替えと最大化ができます");
+                ImGui::Checkbox("パネルヘッダー（エディタータイプ切替）", &s.ShowAreaHeaders);
+                ImGui::SetItemTooltip("オフでも、タブの右クリックでエディタータイプを切り替えられます。最大化ボタンはタブバー右端に常に表示されます");
                 ImGui::Checkbox("通知トースト", &s.ShowToasts);
                 ImGui::BeginDisabled(!s.ShowToasts);
                 ImGui::Indent();
@@ -1005,4 +1005,3 @@ namespace EditorPreferences
         }
     }
 } // namespace EditorPreferences
-

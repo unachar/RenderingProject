@@ -17,6 +17,86 @@ namespace
     {
         return std::find(values.begin(), values.end(), value) != values.end();
     }
+
+    // 最大化 / 元に戻すボタン。専用の行は作らず、既存のタブバー（ドッキング時）または
+    // タイトルバー（フローティング / 最大化時）の右端に重ねて描く。常に表示する。
+    // 戻り値: このフレームでクリックされたら true
+    bool DrawMaximizeButtonOnTitle(ImGuiWindow* window, bool maximized)
+    {
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        ImGuiWindow* host = window;
+        ImRect bar = window->TitleBarRect();
+        float rightInset = g.Style.FramePadding.x + g.FontSize + g.Style.ItemInnerSpacing.x; // タイトルバーの閉じるボタンの左
+        if (window->DockNode && window->DockNode->HostWindow)
+        {
+            // ドッキング中：ホストウィンドウのタブバー。右端の空き領域に置く
+            host = window->DockNode->HostWindow;
+            ImGuiDockNode* node = window->DockNode;
+            if (node->TabBar && !node->IsHiddenTabBar())
+            {
+                bar = node->TabBar->BarRect;
+            }
+            else
+            {
+                bar = host->TitleBarRect();
+            }
+            rightInset = g.Style.FramePadding.x;
+        }
+        const float height = bar.GetHeight();
+        if (height <= 0.0f || bar.GetWidth() < height * 2.0f)
+        {
+            return false;
+        }
+        const float size = height - 2.0f;
+        const ImVec2 topLeft(bar.Max.x - rightInset - size, bar.Min.y + 1.0f);
+        const ImRect rect(topLeft, ImVec2(topLeft.x + size, topLeft.y + size));
+
+        const ImGuiIO& io = g.IO;
+        const bool windowHovered = g.HoveredWindow == host || g.HoveredWindow == window;
+        const bool hovered = windowHovered && rect.Contains(io.MousePos);
+        const bool pressedInside = rect.Contains(io.MouseClickedPos[0]);
+        const bool held = hovered && pressedInside && io.MouseDown[0];
+
+        ImDrawList* draw = host->DrawList;
+        draw->PushClipRect(bar.Min, bar.Max, false);
+        if (held || hovered)
+        {
+            draw->AddRectFilled(rect.Min, rect.Max,
+                                ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered),
+                                g.Style.FrameRounding);
+        }
+        const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text, hovered ? 1.0f : 0.75f);
+        const ImVec2 center((rect.Min.x + rect.Max.x) * 0.5f, (rect.Min.y + rect.Max.y) * 0.5f);
+        const float half = ImFloor(size * 0.22f);
+        const float thickness = (std::max)(1.0f, ImFloor(size / 14.0f));
+        if (!maximized)
+        {
+            draw->AddRect(ImVec2(center.x - half, center.y - half), ImVec2(center.x + half, center.y + half), color,
+                          0.0f, 0, thickness);
+        }
+        else
+        {
+            // 重なった 2 枚の四角で「元に戻す」を表す
+            const float inner = ImFloor(half * 0.8f);
+            const float shift = ImFloor(half * 0.45f);
+            draw->AddRect(ImVec2(center.x - inner + shift, center.y - inner - shift),
+                          ImVec2(center.x + inner + shift, center.y + inner - shift), color, 0.0f, 0, thickness);
+            draw->AddRectFilled(ImVec2(center.x - inner - shift, center.y - inner + shift),
+                                ImVec2(center.x + inner - shift, center.y + inner + shift),
+                                ImGui::GetColorU32(hovered ? ImGuiCol_ButtonHovered : ImGuiCol_TitleBgActive));
+            draw->AddRect(ImVec2(center.x - inner - shift, center.y - inner + shift),
+                          ImVec2(center.x + inner - shift, center.y + inner + shift), color, 0.0f, 0, thickness);
+        }
+        draw->PopClipRect();
+
+        if (hovered && !io.MouseDown[0])
+        {
+            ImGui::SetTooltip("%s", maximized ? "元の配置に戻す (Ctrl+Space)" : "この領域を最大化 (Ctrl+Space)");
+        }
+        // 押した場所が同じボタン内で、ほとんど動かさずに離したときだけクリック扱い（タブのドラッグ操作と衝突させない）
+        const ImVec2 moved(io.MousePos.x - io.MouseClickedPos[0].x, io.MousePos.y - io.MouseClickedPos[0].y);
+        return hovered && pressedInside && io.MouseReleased[0] && (moved.x * moved.x + moved.y * moved.y) < 16.0f;
+    }
 }
 
 void EditorWindowRegistry::RegisterWindow(EditorWindowDefinition definition)
@@ -246,26 +326,20 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     {
         workspaces.RequestMaximize(area->Id);
     }
-    if (!EditorPreferences::Get().ShowAreaHeaders && !workspaces.IsMaximized(area->Id))
+    // 最大化ボタンは常にタブバー / タイトルバーの右端に表示する（専用ヘッダー行は使わない）
+    if (DrawMaximizeButtonOnTitle(window, workspaces.IsMaximized(area->Id)))
     {
-        // ヘッダー非表示（既定）：タブの右クリックで切り替え / 最大化。Ctrl+Space も有効
+        workspaces.RequestMaximize(area->Id);
+    }
+    if (!EditorPreferences::Get().ShowAreaHeaders)
+    {
+        // ヘッダー非表示（既定）：タブの右クリックでエディタータイプを切り替え。Ctrl+Space / 右上のボタンで最大化
         return true;
     }
-    // Blender のエリアヘッダーのように、1 行・小さめのフレームで表示する
+    // Blender のエリアヘッダーのように、1 行・小さめのフレームで表示する（エディタータイプ切替のみ）
     const float uiScale = EditorPreferences::Get().UiScale;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * uiScale, 1.0f * uiScale));
-    const bool maximized = workspaces.IsMaximized(area->Id);
-    const char* maximizeLabel = maximized ? "⤡##AreaMaximize" : "⤢##AreaMaximize";
-    const float availableWidth = ImGui::GetContentRegionAvail().x;
-    const float maximizeWidth =
-        ImGui::CalcTextSize(maximizeLabel, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const bool controlsFitOnOneRow = availableWidth >= 80.0f + maximizeWidth + ImGui::GetStyle().ItemSpacing.x;
-    float selectorWidth = availableWidth;
-    if (controlsFitOnOneRow)
-    {
-        selectorWidth -= maximizeWidth + ImGui::GetStyle().ItemSpacing.x;
-    }
-    ImGui::SetNextItemWidth((std::max)(1.0f, (std::min)(200.0f * uiScale, selectorWidth)));
+    ImGui::SetNextItemWidth((std::max)(1.0f, (std::min)(200.0f * uiScale, ImGui::GetContentRegionAvail().x)));
     const auto selected = registry.m_AreaTypes.find(area->Id);
     const auto& typeId = selected == registry.m_AreaTypes.end() ? area->Id : selected->second;
     if (ImGui::BeginCombo("##EditorType", label.substr(0, label.find("###")).c_str(), ImGuiComboFlags_HeightLarge))
@@ -284,15 +358,6 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
         ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Editor Type: 配置とサイズを維持して、この領域の機能を切り替えます");
-    if (controlsFitOnOneRow)
-    {
-        ImGui::SameLine(ImGui::GetCursorPosX() + availableWidth - maximizeWidth);
-    }
-    if (ImGui::SmallButton(maximizeLabel))
-    {
-        workspaces.RequestMaximize(area->Id);
-    }
-    ImGui::SetItemTooltip(maximized ? "元の配置に戻す (Ctrl+Space)" : "この領域を最大化 (Ctrl+Space)");
     ImGui::PopStyleVar();
     ImGui::Separator();
     return true;
@@ -647,7 +712,10 @@ void EditorWorkspaceManager::DrawTabBar()
 
 void EditorWorkspaceManager::DrawTabs(float reserveRight)
 {
-    // DrawTabBar（ツールバー下の専用バー）から呼ぶ。
+    // メインメニューバー内（ヘルプの右隣）でも、通常のウィンドウ内でも使える。
+    // メニューバー内ではメニュー項目と同じ高さ・同じ縦位置に揃える。
+    const bool inMenuBar = ImGui::GetCurrentWindow()->DC.MenuBarAppending;
+    const float tabHeight = inMenuBar ? ImGui::GetTextLineHeight() : ImGui::GetFrameHeight();
     const float uiScale = EditorPreferences::Get().UiScale;
     const ImVec4 accent = EditorPreferences::Accent();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f * uiScale, ImGui::GetStyle().ItemSpacing.y));
@@ -674,14 +742,14 @@ void EditorWorkspaceManager::DrawTabs(float reserveRight)
             ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         }
-        if (ImGui::Selectable((workspace.Name + "###WorkspaceTab").c_str(), active, 0,
-                              ImVec2(width, ImGui::GetFrameHeight())))
+        if (ImGui::Selectable((workspace.Name + "###WorkspaceTab").c_str(), active, 0, ImVec2(width, tabHeight)))
         {
             Queue(Action::Switch, workspace.Id);
         }
         if (active)
         {
             ImGui::PopStyleColor(2);
+            // 下線はバー（メニューバー / 専用バー）の下端に合わせる
             ImGui::GetWindowDrawList()->AddRectFilled(
                 ImVec2(start.x, start.y + ImGui::GetFrameHeight() - 2.0f * uiScale),
                 ImVec2(start.x + width, start.y + ImGui::GetFrameHeight()), ImGui::GetColorU32(accent));
@@ -755,7 +823,7 @@ void EditorWorkspaceManager::DrawTabs(float reserveRight)
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(m_Workspaces.size() >= MaxWorkspaces);
-    if (ImGui::Selectable("+##AddWorkspace", false, 0, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight())))
+    if (ImGui::Selectable("+##AddWorkspace", false, 0, ImVec2(ImGui::GetFrameHeight(), tabHeight)))
     {
         Queue(Action::Add, {});
     }
@@ -1089,5 +1157,3 @@ void EditorWorkspaceManager::Shutdown()
     m_MaximizedLayout.clear();
     m_LastSaved.clear();
 }
-
-

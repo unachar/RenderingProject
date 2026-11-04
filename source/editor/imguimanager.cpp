@@ -356,8 +356,7 @@ void ImGuiManager::Update()
     DrawEditorMainMenu();
     // メインツールバー / ステータスバーはドックスペースより先に作り、作業領域から差し引く
     EditorShell::DrawToolbar();
-    // Workspace タブはツールバーの下（ドッキング領域の直上）に専用バーとして置く
-    EditorWorkspaceManager::Get().DrawTabBar();
+    // Workspace タブはメインメニューバーの「ヘルプ」の右隣に描く（DrawEditorMainMenu）
     EditorShell::DrawStatusBar();
     DrawDockSpace();
     m_IsSceneViewHovered = false;
@@ -441,7 +440,6 @@ void ImGuiManager::DrawDockSpace()
     ImGui::Begin("EditorDockSpace", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
-    // Workspace タブはツールバー下の専用バー（EditorWorkspaceManager::DrawTabBar）に描く
     auto& workspaces = EditorWorkspaceManager::Get();
     if (m_ResetEditorLayout)
     {
@@ -565,7 +563,16 @@ void ImGuiManager::DrawEditorMainMenu()
         ImGui::EndMenu();
     }
 
-    // Workspace タブはメニューバーから、ツールバー下の専用バー（DrawTabBar）へ移動した
+    // Workspace タブ：「ヘルプ」の右隣に置く。右端のシーン名 / 検索ボタンの分だけ幅を空ける
+    {
+        const float scale = preferences.UiScale;
+        const string scene = GetSceneDisplayName();
+        const float rightReserve = ImGui::CalcTextSize(scene.c_str()).x + ImGui::CalcTextSize(" ●").x +
+                                   ImGui::CalcTextSize("⌕ 検索  F3").x + ImGui::GetStyle().FramePadding.x * 2.0f +
+                                   18.0f * scale + 24.0f * scale;
+        ImGui::SameLine(0.0f, 16.0f * scale);
+        EditorWorkspaceManager::Get().DrawTabs(rightReserve);
+    }
     if (!preferences.ShowToolbar)
     {
         // ツールバー非表示時の再生ボタン
@@ -829,5 +836,3 @@ void ImGuiManager::DrawAdjustmentPanel()
         ImGui::End();
     }
 }
-
-
