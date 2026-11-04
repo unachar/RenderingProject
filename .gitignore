@@ -145,6 +145,7 @@ imgui.ini
 *.dxil
 
 # Editor personal configuration
+/Save
 /Save/editor_layout.cfg
 /Save/editor_preferences.cfg
 /Save/editor_workspaces.json
@@ -163,3 +164,8 @@ imgui.ini
 # Local testing
 /Testing/
 
+# Script
+bundle_render.ps1
+render_bundle.txt
+/docs
+/tests
