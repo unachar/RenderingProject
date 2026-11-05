@@ -1,5 +1,5 @@
 {
-  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":744,\"y\":28}},\"node:10\":{\"location\":{\"x\":40,\"y\":20}},\"node:13\":{\"location\":{\"x\":35,\"y\":289}},\"node:16\":{\"location\":{\"x\":259,\"y\":353}},\"node:19\":{\"location\":{\"x\":339,\"y\":81}}},\"selection\":[\"node:19\"],\"view\":{\"scroll\":{\"x\":-24,\"y\":-137.999984741210938},\"visible_rect\":{\"max\":{\"x\":641.33343505859375,\"y\":824.0001220703125},\"min\":{\"x\":-32.0000038146972656,\"y\":-184.000015258789062}},\"zoom\":0.749999940395355225}}",
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":744,\"y\":28}},\"node:10\":{\"location\":{\"x\":40,\"y\":20}},\"node:13\":{\"location\":{\"x\":35,\"y\":289}},\"node:16\":{\"location\":{\"x\":259,\"y\":353}},\"node:19\":{\"location\":{\"x\":339,\"y\":81}}},\"selection\":[\"node:19\"],\"view\":{\"scroll\":{\"x\":-90.999969482421875,\"y\":-115.999969482421875},\"visible_rect\":{\"max\":{\"x\":304,\"y\":174.400009155273438},\"min\":{\"x\":-72.8000030517578125,\"y\":-92}},\"zoom\":1.25}}",
   "links" : 
   [
     {
@@ -16,13 +16,9 @@
       "id" : 18,
       "source" : 17,
       "target" : 4
-    },
-    {
-      "id" : 21,
-      "source" : 20,
-      "target" : 6
     }
   ],
+  "nodeNames" : 2,
   "nodes" : 
   [
     {
@@ -36,7 +32,17 @@
         6,
         7,
         8,
-        9
+        9,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
       ],
       "kind" : "Material Output",
       "name" : "Material Output",
@@ -79,8 +85,8 @@
       "texture" : "guid:0000000000000000",
       "value" : 
       [
-        0.0,
         1.0,
+        0.8928571343421936,
         0.0,
         1.0
       ]
@@ -161,5 +167,22 @@
       ]
     }
   ],
+  "settings" : 
+  {
+    "alphaCutoff" : -1.0,
+    "autoBake" : true,
+    "bakeResolution" : 512,
+    "bakeTime" : 0.0,
+    "cull" : -1,
+    "liveRate" : 30.0,
+    "liveResolution" : 256,
+    "liveUpdate" : true,
+    "materialMode" : 0,
+    "runtimeEvaluation" : true,
+    "shadingModel" : -1,
+    "shadowMode" : -1,
+    "solidSpace" : 0,
+    "surface" : -1
+  },
   "version" : 1
 }

@@ -1,0 +1,196 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":720,\"y\":40}},\"node:23\":{\"location\":{\"x\":40,\"y\":150}},\"node:25\":{\"location\":{\"x\":40,\"y\":250}},\"node:29\":{\"location\":{\"x\":40,\"y\":350}},\"node:32\":{\"location\":{\"x\":40,\"y\":-120}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-136.5,\"y\":-317.5},\"visible_rect\":{\"max\":{\"x\":1172.8001708984375,\"y\":434.40008544921875},\"min\":{\"x\":-108.800018310546875,\"y\":-253.60003662109375}},\"zoom\":1.2499997615814209}}",
+  "links" : 
+  [
+    {
+      "id" : 27,
+      "source" : 24,
+      "target" : 3
+    },
+    {
+      "id" : 28,
+      "source" : 26,
+      "target" : 4
+    },
+    {
+      "id" : 31,
+      "source" : 30,
+      "target" : 6
+    },
+    {
+      "id" : 35,
+      "source" : 34,
+      "target" : 2
+    }
+  ],
+  "nodeNames" : 2,
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        720.0,
+        40.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 23,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 24,
+      "position" : 
+      [
+        40.0,
+        150.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 25,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 26,
+      "position" : 
+      [
+        40.0,
+        250.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.5,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 29,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 30,
+      "position" : 
+      [
+        40.0,
+        350.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 32,
+      "inputs" : 
+      [
+        33
+      ],
+      "kind" : "Texture Sample",
+      "name" : "Texture Sample",
+      "output" : 34,
+      "position" : 
+      [
+        40.0,
+        -120.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:c10f984bc75ee1f5",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "settings" : 
+  {
+    "alphaCutoff" : -1.0,
+    "autoBake" : true,
+    "bakeResolution" : 512,
+    "bakeTime" : 0.0,
+    "cull" : 0,
+    "liveRate" : 30.0,
+    "liveResolution" : 256,
+    "liveUpdate" : true,
+    "materialMode" : 0,
+    "runtimeEvaluation" : true,
+    "shadingModel" : 0,
+    "shadowMode" : 4,
+    "solidSpace" : 0,
+    "surface" : 0
+  },
+  "version" : 1
+}

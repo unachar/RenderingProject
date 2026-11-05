@@ -11,23 +11,23 @@
     "baseColor" : 
     [
       1.0,
-      1.0,
+      0.8928571343421936,
       0.0,
       1.0
     ],
     "emissiveColor" : 
     [
-      0.0,
-      0.0,
-      0.0
+      0.17599999904632568,
+      0.51200002431869507,
+      1.0
     ],
     "emissiveIntensity" : 0.0,
     "ior" : 1.5,
-    "metallic" : 0.0,
+    "metallic" : 0.31400001049041748,
     "normalScale" : 1.0,
     "parallaxDepth" : 0.0,
     "parallaxSteps" : 32.0,
-    "roughness" : 0.5,
+    "roughness" : 0.32400000095367432,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
