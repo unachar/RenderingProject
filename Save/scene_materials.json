@@ -2,7 +2,7 @@
 	"entities" : 
 	[
 		{
-			"entity" : 4,
+			"entity" : 3,
 			"identity" : "guid:79d386f2cf8f47fd",
 			"materialSlots" : 
 			[
@@ -540,7 +540,7 @@
 			]
 		},
 		{
-			"entity" : 9,
+			"entity" : 4,
 			"identity" : "guid:b4d8e68a207d7956",
 			"materialSlots" : 
 			[
