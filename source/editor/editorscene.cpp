@@ -48,6 +48,7 @@
 #include <functional>
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
+#include "scenedepth.h"
 #include "virtualgeometry/virtualgeometrydebug.h"
 
 using namespace EditorWidgets;
@@ -403,7 +404,7 @@ void ImGuiManager::DrawTransformGizmo()
     const ImGuizmo::MODE mode = (m_GizmoLocalSpace || operation == ImGuizmo::SCALE) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
 
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::SetOrthographic(SceneDepth::IsOrthographic(projectionMatrix));
     ImGuizmo::SetRect(m_SceneViewPos.x, m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y);
 
     // パイメニュー表示中はギズモに入力を渡さない。
@@ -971,6 +972,7 @@ void ImGuiManager::DrawHierarchyWindow()
                 applyRowState(entity, false, !locked);
             }
             ImGui::SetCursorScreenPos(restore);
+            ImGui::Dummy(ImVec2(0.0f, 0.0f)); // 最後の行でもカーソル復元後の境界を確定する。
         }
         if (m_RenamingEntity == entity)
         {

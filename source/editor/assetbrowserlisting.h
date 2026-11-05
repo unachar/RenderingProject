@@ -32,19 +32,21 @@ class AssetBrowserListing
     bool Update(const std::filesystem::path& directory, bool force, double now)
     {
         bool changed = false;
-        if (directory != m_Directory)
+        if (directory != m_Directory || force)
         {
             m_Directory = directory;
             m_Items.clear();
             m_Error.clear();
             m_Dirty = true;
+            // 変更前に開始したスキャンで古い名前を再表示しない。
+            m_DiscardPending = m_Pending.valid();
             changed = true;
         }
         m_Dirty = m_Dirty || force;
         if (m_Pending.valid() && m_Pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
             auto result = m_Pending.get();
-            if (result.Directory == m_Directory)
+            if (!m_DiscardPending && result.Directory == m_Directory)
             {
                 if (m_Items != result.Items || m_Error != result.Error)
                 {
@@ -54,6 +56,7 @@ class AssetBrowserListing
                 m_Error = result.Error;
                 m_NextScan = now + 0.5;
             }
+            m_DiscardPending = false;
         }
         if (!m_Pending.valid() && (m_Dirty || now >= m_NextScan))
         {
@@ -169,4 +172,5 @@ class AssetBrowserListing
     std::future<Result> m_Pending;
     double m_NextScan = 0.0;
     bool m_Dirty = false;
+    bool m_DiscardPending = false;
 };

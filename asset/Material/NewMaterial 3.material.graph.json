@@ -1,0 +1,237 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":152,\"y\":108}},\"node:32\":{\"location\":{\"x\":-920,\"y\":99}},\"node:35\":{\"location\":{\"x\":-408,\"y\":259}},\"node:44\":{\"location\":{\"x\":-184,\"y\":56}},\"node:55\":{\"location\":{\"x\":-1176,\"y\":200}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-1832,\"y\":-41},\"visible_rect\":{\"max\":{\"x\":-230,\"y\":799},\"min\":{\"x\":-1832,\"y\":-41}},\"zoom\":1}}",
+  "links" : 
+  [
+    {
+      "id" : 43,
+      "source" : 41,
+      "target" : 36
+    },
+    {
+      "id" : 49,
+      "source" : 37,
+      "target" : 47
+    },
+    {
+      "id" : 50,
+      "source" : 40,
+      "target" : 46
+    },
+    {
+      "id" : 51,
+      "source" : 39,
+      "target" : 45
+    },
+    {
+      "id" : 52,
+      "source" : 41,
+      "target" : 3
+    },
+    {
+      "id" : 53,
+      "source" : 48,
+      "target" : 2
+    },
+    {
+      "id" : 54,
+      "source" : 37,
+      "target" : 4
+    },
+    {
+      "id" : 60,
+      "source" : 59,
+      "target" : 33
+    }
+  ],
+  "nodeNames" : 2,
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        152.0,
+        108.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 32,
+      "inputs" : 
+      [
+        33
+      ],
+      "kind" : "Texture Sample",
+      "name" : "Texture Sample",
+      "output" : 34,
+      "position" : 
+      [
+        -920.0,
+        99.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "split" : 
+      [
+        39,
+        40,
+        41,
+        42
+      ],
+      "texture" : "guid:c30c4a1531407454",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "width" : 383.99993896484375
+    },
+    {
+      "id" : 35,
+      "inputs" : 
+      [
+        36
+      ],
+      "kind" : "OneMinus",
+      "name" : "OneMinus",
+      "output" : 37,
+      "position" : 
+      [
+        -408.0,
+        259.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 44,
+      "inputs" : 
+      [
+        45,
+        46,
+        47
+      ],
+      "kind" : "Constant3Vector",
+      "name" : "Constant3Vector",
+      "output" : 48,
+      "position" : 
+      [
+        -184.0,
+        56.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 55,
+      "inputs" : 
+      [
+        56,
+        57,
+        58
+      ],
+      "kind" : "Panner",
+      "name" : "Panner",
+      "output" : 59,
+      "position" : 
+      [
+        -1176.0,
+        200.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "settings" : 
+  {
+    "alphaCutoff" : -1.0,
+    "autoBake" : true,
+    "bakeResolution" : 512,
+    "bakeTime" : 0.0,
+    "cull" : 0,
+    "liveRate" : 30.0,
+    "liveResolution" : 256,
+    "liveUpdate" : true,
+    "materialMode" : 0,
+    "runtimeEvaluation" : true,
+    "shadingModel" : 0,
+    "shadowMode" : 4,
+    "solidSpace" : 0,
+    "surface" : 0
+  },
+  "version" : 1
+}

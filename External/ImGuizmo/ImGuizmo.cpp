@@ -793,6 +793,13 @@ namespace IMGUIZMO_NAMESPACE
    static MOVETYPE GetRotateType(OPERATION op);
    static MOVETYPE GetScaleType(OPERATION op);
 
+   static bool IsGizmoBehindCamera()
+   {
+      // Perspective clip W is the forward distance for both LH and RH cameras.
+      // Clip Z cannot identify the camera side with an infinite reverse-Z projection.
+      return !gContext.mIsOrthographic && gContext.mMVP.v.position.w < 0.001f;
+   }
+
    Style& GetStyle()
    {
       return gContext.mStyle;
@@ -1024,6 +1031,10 @@ namespace IMGUIZMO_NAMESPACE
 
    bool IsOver()
    {
+      if (IsGizmoBehindCamera() && !IsUsing())
+      {
+         return false;
+      }
       return (Intersects(gContext.mOperation, TRANSLATE) && GetMoveType(gContext.mOperation, NULL) != MT_NONE) ||
          (Intersects(gContext.mOperation, ROTATE) && GetRotateType(gContext.mOperation) != MT_NONE) ||
          (Intersects(gContext.mOperation, SCALE) && GetScaleType(gContext.mOperation) != MT_NONE) || IsUsing();
@@ -1034,6 +1045,10 @@ namespace IMGUIZMO_NAMESPACE
       if(IsUsing())
       {
          return true;
+      }
+      if (IsGizmoBehindCamera())
+      {
+         return false;
       }
       if(Intersects(op, SCALE) && GetScaleType(op) != MT_NONE)
       {
@@ -1353,7 +1368,7 @@ namespace IMGUIZMO_NAMESPACE
          }
          if (!gContext.mbUsing || usingAxis)
          {
-            drawList->AddPolyline(circlePos, circleMul* halfCircleSegmentCount + 1, colors[3 - axis], gContext.mStyle.RotationLineThickness, 0);
+            drawList->AddPolyline(circlePos, circleMul* halfCircleSegmentCount + 1, colors[3 - axis], 0, gContext.mStyle.RotationLineThickness);
          }
 
          float radiusAxis = sqrtf((ImLengthSqr(worldToPos(gContext.mModel.v.position, gContext.mViewProjection) - circlePos[0])));
@@ -1383,7 +1398,7 @@ namespace IMGUIZMO_NAMESPACE
             circlePos[i] = worldToPos(pos + gContext.mModel.v.position, gContext.mViewProjection);
          }
          drawList->AddConvexPolyFilled(circlePos, halfCircleSegmentCount + 1, GetColorU32(ROTATION_USING_FILL));
-         drawList->AddPolyline(circlePos, halfCircleSegmentCount + 1, GetColorU32(ROTATION_USING_BORDER), gContext.mStyle.RotationLineThickness, ImDrawFlags_Closed);
+         drawList->AddPolyline(circlePos, halfCircleSegmentCount + 1, GetColorU32(ROTATION_USING_BORDER), ImDrawFlags_Closed, gContext.mStyle.RotationLineThickness);
 
          ImVec2 destinationPosOnScreen = circlePos[1];
          char tmps[512];
@@ -1646,7 +1661,7 @@ namespace IMGUIZMO_NAMESPACE
                   vec_t cornerWorldPos = (dirPlaneX * quadUV[j * 2] + dirPlaneY * quadUV[j * 2 + 1]) * gContext.mScreenFactor;
                   screenQuadPts[j] = worldToPos(cornerWorldPos, gContext.mMVP);
                }
-               drawList->AddPolyline(screenQuadPts, 4, GetColorU32(DIRECTION_X + i), 1.0f, ImDrawFlags_Closed);
+               drawList->AddPolyline(screenQuadPts, 4, GetColorU32(DIRECTION_X + i), ImDrawFlags_Closed, 1.0f);
                drawList->AddConvexPolyFilled(screenQuadPts, 4, colors[i + 4]);
             }
          }
@@ -2745,11 +2760,10 @@ namespace IMGUIZMO_NAMESPACE
          ((matrix_t*)deltaMatrix)->SetToIdentity();
       }
 
-      // behind camera
-      vec_t camSpacePosition;
-      camSpacePosition.TransformPoint(makeVect(0.f, 0.f, 0.f), gContext.mMVP);
-      if (!gContext.mIsOrthographic && camSpacePosition.z < 0.001f && !gContext.mbUsing)
+      // Do not draw or start interacting with a perspective gizmo behind the camera.
+      if (IsGizmoBehindCamera() && !gContext.mbUsing)
       {
+         gContext.mDrawList->PopClipRect();
          return false;
       }
 

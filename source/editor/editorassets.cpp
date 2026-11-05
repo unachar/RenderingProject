@@ -960,6 +960,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
             found->second = MaterialManager::Registry().Register(path, type, error);
             if (found->second == 0)
             {
+                // 非同期の一覧には、移動・削除前の項目が残っていることがある。
+                error_code statusError;
+                if (!filesystem::exists(path, statusError) && !statusError)
+                {
+                    m_AssetBrowserRescan = true;
+                    return AssetHandle{0};
+                }
                 AddLog("アセットの登録に失敗: %s (%s)", PathToUtf8(path).c_str(), error.c_str());
             }
         }
@@ -2509,6 +2516,7 @@ void ImGuiManager::DrawAssetRenameField(const filesystem::path& path, bool isDir
     const bool deactivated = ImGui::IsItemDeactivated();
     const bool cancelled = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     ImGui::SetCursorScreenPos(restore);
+    ImGui::Dummy(ImVec2(0.0f, 0.0f)); // 復元した位置までレイアウト境界を確定する。
     ++m_AssetRenameFrames;
 
     if (cancelled)

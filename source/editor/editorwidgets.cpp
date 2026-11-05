@@ -234,6 +234,8 @@ namespace EditorWidgets
 
     void DrawInspectorFilterBar()
     {
+        // カテゴリ名は後続の見出しにも使うため、ボタンの ID を分離する。
+        ImGui::PushID("InspectorFilterBar");
         static const char* const kNames[] = {"すべて", "トランスフォーム", "マテリアル", "レンダリング", "物理", "その他"};
         DrawSearchField("InspectorSearch", "プロパティのセクションを検索...", g_InspectorFilter);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
@@ -263,6 +265,7 @@ namespace EditorWidgets
             }
         }
         ImGui::PopStyleVar();
+        ImGui::PopID();
     }
 
     bool InspectorSection(const char* label, ImGuiTreeNodeFlags flags)
