@@ -44,11 +44,18 @@ class EditorWindowRegistry
         return m_Windows;
     }
 
+    bool IsDrawingContentDrawer() const
+    {
+        return m_DrawingContentDrawer;
+    }
+
   private:
     std::vector<EditorWindowDefinition> m_Windows;
     std::unordered_map<std::string, std::string> m_AreaTypes;
     std::unordered_map<std::string, std::string> m_PendingTypes;
     const EditorWindowDefinition* m_DrawingArea = nullptr;
+    bool m_ContentDrawerOpen = false;
+    bool m_DrawingContentDrawer = false;
 };
 
 class EditorWorkspaceManager

@@ -433,7 +433,7 @@ namespace
 
 void ImGuiManager::DrawAssetBrowserWindow()
 {
-    if (m_AssetBrowserStandalone)
+    if (m_AssetBrowserStandalone && !EditorWorkspaceManager::Get().Registry().IsDrawingContentDrawer())
     {
         ImGui::SetNextWindowFocus();
         ImGui::SetNextWindowDockID(0, ImGuiCond_Always);

@@ -33,10 +33,13 @@ struct MaterialRuntime
     uint64_t GraphProgramHash = 0;      // 書き込み済みのプログラム
     std::array<float, 4> GraphHeader{}; // [0] テクセル（毎フレーム時刻を書き換える）
     bool GraphUsesTime = false;
-    bool GraphUsesView = false;  // カメラ距離など、視点で値が変わる入力を使う
-    bool GraphEmissive = false;  // Material Output の Emissive が繋がっている
-    std::vector<std::array<float, 4>> GraphTexels; // プログラム（発光の動的ベイク用に CPU 側にも保持）
-    bool GraphActive = false;    // プログラムあり（コンパイル成功）
+    bool GraphUsesView = false; // グラフ全体が視点で変わる
+    bool GraphEmissionUsesView = false;
+    bool GraphEmissionUsesTime = false;
+    uint64_t GraphEmissionHash = 0;
+    bool GraphEmissive = false;                    // Material Output の Emissive が繋がっている
+    std::vector<std::array<float, 4>> GraphTexels; // 発光だけを評価する動的ベイク用プログラム
+    bool GraphActive = false;                      // プログラムあり（コンパイル成功）
     bool GraphPublished = false; // Binding.GraphProgramID に反映済み
     bool GraphChecked = false;   // .graph.json を読んだ / エディターから受け取った
     int GraphInstructions = 0;

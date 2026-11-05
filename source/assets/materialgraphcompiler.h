@@ -78,6 +78,7 @@ namespace MaterialGraphVm
     {
         uint64_t TargetNode = 0;      // 0 = Material Output。それ以外はそのノードの出力を Base Color（Out0.x）に入れる
         bool IncludeDefaults = false; // 未接続の Material Output のピンも既定値で出力する（ベイク用）
+        bool EmissiveOnly = false;    // 動的発光用：Emissive とその入力だけを評価する
     };
     Program Compile(const MaterialGraph& graph, const TextureResolver& resolveTexture);
     Program Compile(const MaterialGraph& graph, const TextureResolver& resolveTexture, const Options& options);

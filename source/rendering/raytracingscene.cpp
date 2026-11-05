@@ -60,8 +60,6 @@ namespace
             return;
         }
         const auto& view = g_DynamicEmissionView;
-        // オブジェクトの基準点 = ワールド行列の平行移動（オブジェクトの原点）
-        const XMVECTOR center = XMVectorSet(geometry.World._41, geometry.World._42, geometry.World._43, 1.0f);
         MaterialGraphGpu::DynamicEmissionRequest request;
         request.Key = (static_cast<uint64_t>(entity) << 32) | static_cast<uint64_t>(slot & 0xFFFFFFFFu);
         request.Program = emission.Program;
@@ -69,9 +67,14 @@ namespace
         request.UsesTime = emission.UsesTime;
         request.UsesView = emission.UsesView;
         request.Time = view.Time;
-        request.Camera = {view.Camera.x, view.Camera.y, view.Camera.z};
-        request.Distance = XMVectorGetX(XMVector3Length(center - XMLoadFloat3(&view.Camera)));
-        request.Depth = XMVectorGetZ(XMVector3TransformCoord(center, XMLoadFloat4x4(&view.View)));
+        if (emission.UsesView)
+        {
+            // オブジェクトの基準点 = ワールド行列の平行移動（オブジェクトの原点）
+            const XMVECTOR center = XMVectorSet(geometry.World._41, geometry.World._42, geometry.World._43, 1.0f);
+            request.Camera = {view.Camera.x, view.Camera.y, view.Camera.z};
+            request.Distance = XMVectorGetX(XMVector3Length(center - XMLoadFloat3(&view.Camera)));
+            request.Depth = XMVectorGetZ(XMVector3TransformCoord(center, XMLoadFloat4x4(&view.View)));
+        }
         MaterialGraphGpu::DynamicEmissionTexture texture;
         if (!MaterialGraphGpu::RequestDynamicEmission(request, texture) || !texture.Texture)
         {

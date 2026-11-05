@@ -255,6 +255,9 @@ namespace
         runtime.GraphProgramHash = 0;
         runtime.GraphTexels.clear();
         runtime.GraphUsesView = false;
+        runtime.GraphEmissionUsesView = false;
+        runtime.GraphEmissionUsesTime = false;
+        runtime.GraphEmissionHash = 0;
         runtime.GraphEmissive = false;
         if (runtime.GraphPublished)
         {
@@ -295,13 +298,32 @@ void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* g
     runtime.GraphStatus.clear();
     runtime.GraphInstructions = program.Instructions;
     runtime.GraphRegisters = program.Registers;
-    // 発光の動的ベイク（GI / 反射）用：出力レジスタ [2].x = Emissive（-1 = 未接続）
-    runtime.GraphUsesView = program.UsesView;
-    runtime.GraphEmissive = program.Texels.size() > 2 && program.Texels[2][0] >= 0.0f;
-    runtime.GraphTexels = program.Texels;
     if (runtime.GraphActive && runtime.GraphProgramHash == program.Hash)
     {
         return;
+    }
+    // 発光の依存先だけを辿り、表面の色・法線・粗さの命令と更新要因を除く。
+    runtime.GraphEmissive = program.Texels.size() > 2 && program.Texels[2][0] >= 0.0f;
+    runtime.GraphTexels.clear();
+    runtime.GraphUsesView = program.UsesView;
+    runtime.GraphEmissionUsesView = false;
+    runtime.GraphEmissionUsesTime = false;
+    runtime.GraphEmissionHash = 0;
+    if (runtime.GraphEmissive && (program.UsesTime || program.UsesView))
+    {
+        MaterialGraphVm::Options options;
+        options.EmissiveOnly = true;
+        options.IncludeDefaults = true;
+        auto emission = MaterialGraphVm::Compile(*graph, &MaterialManager::ResolveGraphTexture, options);
+        // 専用プログラムを作れない場合も、従来の評価結果を維持する。
+        if (!emission.Success)
+        {
+            emission = program;
+        }
+        runtime.GraphTexels = std::move(emission.Texels);
+        runtime.GraphEmissionUsesView = emission.UsesView;
+        runtime.GraphEmissionUsesTime = emission.UsesTime;
+        runtime.GraphEmissionHash = emission.Hash;
     }
     if (runtime.GraphProgramSrv < 0)
     {
@@ -336,9 +358,9 @@ bool MaterialManager::GetDynamicEmissionSource(AssetHandle handle, DynamicEmissi
         return false;
     }
     source.Program = &runtime->GraphTexels;
-    source.Hash = runtime->GraphProgramHash;
-    source.UsesTime = runtime->GraphUsesTime;
-    source.UsesView = runtime->GraphUsesView;
+    source.Hash = runtime->GraphEmissionHash;
+    source.UsesTime = runtime->GraphEmissionUsesTime;
+    source.UsesView = runtime->GraphEmissionUsesView;
     return true;
 }
 

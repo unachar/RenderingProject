@@ -481,6 +481,8 @@ void MaterialPreview::DrawImage(AssetHandle material)
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
     ImGui::ImageButton("##PreviewOrbit", static_cast<ImTextureID>(preview.GpuSrv().ptr), ImVec2(side, side),
                        ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0));
+    // プレビューがホイールを受け取り、親の設定パネルへスクロールを渡さない。
+    ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
     ImGui::PopStyleVar();
     const auto imageMinimum = ImGui::GetItemRectMin();
     const auto imageMaximum = ImGui::GetItemRectMax();

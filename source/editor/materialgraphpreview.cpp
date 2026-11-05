@@ -1019,14 +1019,19 @@ namespace MaterialGraphPreview
         {
             return;
         }
-        GraphCache& cache = Prepare(graph);
-        if (cache.Collapsed.contains(node.Id))
+        if (IsNodePreviewCollapsed(graph, node.Id))
         {
             return;
         }
         const float areaWidth = (std::max)(width, 16.0f);
         const float areaHeight = height > 0.0f ? (std::max)(height, 16.0f) : areaWidth;
         ImGui::Dummy(ImVec2(areaWidth, areaHeight));
+        // レイアウトは維持し、画面外の画像は描画・アップロード・GPU 更新を要求しない。
+        if (!ImGui::IsItemVisible())
+        {
+            return;
+        }
+        GraphCache& cache = Prepare(graph);
         const ImVec2 areaMin = ImGui::GetItemRectMin();
         // 縦横比 1:1 のまま、確保した領域の中央に置く
         const float size = (std::min)(areaWidth, areaHeight);

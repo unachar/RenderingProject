@@ -162,6 +162,31 @@ void EditorWindowRegistry::ShowEditorType(const std::string& id)
 
 void EditorWindowRegistry::DrawVisibleWindows()
 {
+    auto& workspaces = EditorWorkspaceManager::Get();
+    const bool materialMaximized = std::any_of(m_Windows.begin(), m_Windows.end(), [&](const auto& area) {
+        const auto selected = m_AreaTypes.find(area.Id);
+        const auto& typeId = selected == m_AreaTypes.end() ? area.Id : selected->second;
+        return *area.Visible && workspaces.IsMaximized(area.Id) && typeId == "material";
+    });
+    const auto& io = ImGui::GetIO();
+    bool focusDrawer = false;
+    if (!materialMaximized)
+    {
+        m_ContentDrawerOpen = false;
+    }
+    else if (!io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && io.KeyShift &&
+             !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
+             ImGui::IsKeyPressed(ImGuiKey_C, false))
+    {
+        m_ContentDrawerOpen = !m_ContentDrawerOpen;
+        focusDrawer = m_ContentDrawerOpen;
+    }
+    if (m_ContentDrawerOpen && !io.WantTextInput && !ImGui::GetDragDropPayload() &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        m_ContentDrawerOpen = false;
+    }
     for (const auto& area : m_Windows)
     {
         if (!*area.Visible || !area.Draw || !EditorWorkspaceManager::Get().IsAreaDrawn(area.Id))
@@ -189,6 +214,23 @@ void EditorWindowRegistry::DrawVisibleWindows()
             area.Draw();
         }
         m_DrawingArea = nullptr;
+    }
+    if (m_ContentDrawerOpen)
+    {
+        const auto browser = std::find_if(m_Windows.begin(), m_Windows.end(), [](const auto& window) {
+            return window.Id == "assets";
+        });
+        if (browser != m_Windows.end() && browser->Draw)
+        {
+            if (focusDrawer)
+            {
+                ImGui::SetNextWindowFocus();
+            }
+            // 通常のブラウザの表示設定・ドッキング配置を変更せず、同じ内容を一時表示する。
+            m_DrawingContentDrawer = true;
+            browser->Draw();
+            m_DrawingContentDrawer = false;
+        }
     }
 }
 
@@ -245,6 +287,21 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
 {
     auto& registry = EditorWorkspaceManager::Get().Registry();
     const auto* area = registry.m_DrawingArea;
+    if (registry.m_DrawingContentDrawer)
+    {
+        auto& workspaces = EditorWorkspaceManager::Get();
+        const ImVec2 position = workspaces.AreaWorkPosition();
+        const ImVec2 size = workspaces.AreaWorkSize();
+        const float height = (std::min)(size.y, (std::max)(160.0f, size.y * 0.35f));
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+        ImGui::SetNextWindowPos(ImVec2(position.x, position.y + size.y - height));
+        ImGui::SetNextWindowSize(ImVec2((std::max)(size.x, 1.0f), (std::max)(height, 1.0f)));
+        flags &= ~ImGuiWindowFlags_AlwaysAutoResize;
+        flags |= ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
+        return ImGui::Begin("Content Browser (Shift+C)###MaterialContentDrawer", &registry.m_ContentDrawerOpen, flags);
+    }
     if (!area)
     {
         return ImGui::Begin(title, open, flags);
@@ -257,6 +314,11 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
         ImGui::SetNextWindowSize(workspaces.AreaWorkSize());
         flags &= ~ImGuiWindowFlags_AlwaysAutoResize;
         flags |= ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+        if (registry.m_ContentDrawerOpen)
+        {
+            // グラフへ戻っても、下部ブラウザを最大化ウィンドウの後ろへ隠さない。
+            flags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
+        }
     }
     const auto label = registry.AreaTitle(*area);
     // Area owns visibility. Changing editor type does not close its source editor's other areas.

@@ -1579,6 +1579,10 @@ namespace MaterialGraphVm
                     bool any = false;
                     for (int i = 0; i < 11; ++i)
                     {
+                        if (options.EmissiveOnly && pins[i].Pin != MaterialOutputPin::Emissive)
+                        {
+                            continue;
+                        }
                         const size_t index = static_cast<size_t>(pins[i].Pin);
                         const bool linked = index < output->InputPins.size() && m_Graph.InputLink(output->InputPins[index]);
                         // 直値（ピン横のボックス）が入った未接続のピンも、描画時評価の出力に含める
@@ -1793,7 +1797,8 @@ namespace MaterialGraphVm
                 {
                     m_UsesTime = true;
                 }
-                if (which == InCameraDistance || which == InCameraPosition || which == InPixelDepth)
+                if (which == InCameraDistance || which == InCameraPosition || which == InPixelDepth ||
+                    which == InCameraVector || which == InReflection)
                 {
                     m_UsesView = true; // 発光の動的ベイク（GI / 反射用）を毎フレーム更新する対象
                 }
@@ -2444,6 +2449,7 @@ namespace MaterialGraphVm
                     case Kind::Dot:
                         return Emit(OpDot3, S, {In(node, 0, V3).Reg, In(node, 1, V3).Reg});
                     case Kind::Fresnel:
+                        m_UsesView = true;
                         return Emit(OpFresnel, S, {In(node, 0, S).Reg});
                     case Kind::UV:
                         return Special(InUV, V2);

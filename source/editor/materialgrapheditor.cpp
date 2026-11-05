@@ -35,6 +35,17 @@ namespace
     namespace Nodes = ax::NodeEditor;
     using Kind = MaterialNodeKind;
 
+    struct FrameInfo
+    {
+        std::unordered_map<uint64_t, const MaterialGraphNode*> PinOwner;
+        std::unordered_map<uint64_t, uint64_t> InputSource;
+        std::unordered_set<uint64_t> ConnectedPins;
+        std::unordered_map<uint64_t, MaterialGraphType> OutputTypes;
+        std::unordered_map<uint64_t, MaterialGraphType> PinTypes;
+        std::unordered_set<uint64_t> Selected;
+        uint64_t Hovered = 0;
+    };
+
     struct GraphDocument
     {
         MaterialGraph Graph;
@@ -43,6 +54,11 @@ namespace
         std::vector<MaterialGraph> Redo;
         std::optional<MaterialGraph> PendingEdit;
         std::optional<MaterialGraph> PendingMove;
+        ImVec2 ResizeStartMouse{};
+        ImVec2 ResizeStartSize{};
+        FrameInfo CanvasFrame;
+        uint64_t CanvasSignature = ~0ull;
+        const MaterialGraphNode* CanvasNodeStorage = nullptr;
         std::filesystem::path Path;
         std::filesystem::path RecoveryPath;
         Nodes::EditorContext* Context = nullptr;
@@ -521,11 +537,46 @@ namespace
         }
     }
 
+    const char* ComponentName(size_t component)
+    {
+        static const char* names[] = {"X (R)", "Y (G)", "Z (B)", "W (A)"};
+        return names[(std::min)(component, size_t{3})];
+    }
+
+    ImVec4 ComponentColor(size_t component)
+    {
+        static const ImVec4 colors[] = {{0.96f, 0.32f, 0.28f, 1.0f}, {0.35f, 0.85f, 0.38f, 1.0f},
+                                        {0.35f, 0.60f, 1.0f, 1.0f}, {0.85f, 0.85f, 0.88f, 1.0f}};
+        return colors[(std::min)(component, size_t{3})];
+    }
+
+    // 数字は読みやすい明度を保ち、背景と枠で成分を区別する。
+    void PushComponentFieldStyle(size_t component)
+    {
+        const ImVec4 color = ComponentColor(component);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(color.x * 0.18f, color.y * 0.18f, color.z * 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(color.x * 0.30f, color.y * 0.30f, color.z * 0.30f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(color.x * 0.42f, color.y * 0.42f, color.z * 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, color);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    }
+
+    void PopComponentFieldStyle()
+    {
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+    }
+
     float NodeWidth(const MaterialGraphNode& node)
     {
         if (node.Width > 0.0f)
         {
             return std::clamp(node.Width, 96.0f, 512.0f);
+        }
+        if (node.Kind == Kind::ComponentMask || node.Kind == Kind::VectorParameter ||
+            (MaterialGraph::IsComponentConstant(node.Kind) && node.Kind != Kind::Constant))
+        {
+            return 176.0f;
         }
         return node.Kind == Kind::Output ? 168.0f : 128.0f;
     }
@@ -537,17 +588,6 @@ namespace
     }
 
     // 1 フレーム分の描画情報（接続状態・型・強調）
-    struct FrameInfo
-    {
-        std::unordered_map<uint64_t, const MaterialGraphNode*> PinOwner;
-        std::unordered_map<uint64_t, uint64_t> InputSource; // 入力ピン → 接続元のピン
-        std::unordered_set<uint64_t> ConnectedPins;
-        std::unordered_map<uint64_t, MaterialGraphType> OutputTypes;
-        std::unordered_map<uint64_t, MaterialGraphType> PinTypes; // 出力ピン → 型（分割した成分は Scalar）
-        std::unordered_set<uint64_t> Selected;
-        uint64_t Hovered = 0;
-    };
-
     FrameInfo BuildFrameInfo(const MaterialGraph& graph)
     {
         FrameInfo info;
@@ -576,6 +616,12 @@ namespace
             info.ConnectedPins.insert(link.TargetPin);
             info.InputSource[link.TargetPin] = link.SourcePin;
         }
+        return info;
+    }
+
+    void UpdateFrameSelection(FrameInfo& info)
+    {
+        info.Selected.clear();
         const int selectedCount = Nodes::GetSelectedObjectCount();
         if (selectedCount > 0)
         {
@@ -587,7 +633,6 @@ namespace
             }
         }
         info.Hovered = static_cast<uint64_t>(Nodes::GetHoveredNode().Get());
-        return info;
     }
 
     // UE と同じ：未接続は中抜きの円、接続済みは塗りつぶしの円
@@ -1133,22 +1178,12 @@ namespace
         }
     }
 
-    // 分割した出力ピンの名前（色を出すノードは R / G / B / A、それ以外は X / Y / Z / W）
-    const char* SplitPinName(const MaterialGraphNode& node, size_t component)
-    {
-        static const char* xyzw[] = {"X", "Y", "Z", "W"};
-        static const char* rgba[] = {"R", "G", "B", "A"};
-        const bool color = node.Kind == Kind::TextureSample || node.Kind == Kind::ColorParameter ||
-                           node.Kind == Kind::BlackBody || node.Kind == Kind::HueShift || node.Kind == Kind::Blend;
-        return (color ? rgba : xyzw)[(std::min)(component, size_t{3})];
-    }
-
     // 分割した出力ピン 1 行分（右寄せ：「名前 ○」）。sameRow = 入力ピンと同じ行に置く
     void DrawSplitOutputPin(GraphDocument& document, const MaterialGraphNode& node, size_t component,
                             const FrameInfo& frame, float nodeLeft, float width, float rowY, bool sameRow)
     {
         const uint64_t pin = node.SplitPins[component];
-        const char* name = SplitPinName(node, component);
+        const char* name = ComponentName(component);
         const int available = static_cast<int>(document.Graph.ResolveOutputType(node.Id));
         const bool missing = node.Kind != Kind::BreakVector ? component >= static_cast<size_t>((std::max)(available, 1))
                                                             : available > 1 && component >= static_cast<size_t>(available);
@@ -1170,16 +1205,12 @@ namespace
         {
             ImGui::TextDisabled("%s", name);
         }
-        else if (connected)
-        {
-            ImGui::TextUnformatted(name);
-        }
         else
         {
-            ImGui::TextDisabled("%s", name);
+            ImGui::TextColored(ComponentColor(component), "%s", name);
         }
         ImGui::SameLine(0.0f, 4.0f);
-        PinIcon(missing ? IM_COL32(90, 90, 96, 255) : TypeColor(MaterialGraphType::Scalar), connected);
+        PinIcon(missing ? IM_COL32(90, 90, 96, 255) : ImGui::ColorConvertFloat4ToU32(ComponentColor(component)), connected);
         document.PinY[pin] = PinCenterY();
         Nodes::EndPin();
         CanvasTooltip("%s（Scalar）%s%s", name, missing ? "\n今の出力にはこの成分がありません（0 になります）" : "",
@@ -1311,8 +1342,8 @@ namespace
         };
     }
 
-    // 定数ノードの成分ピン横の数値ボックス（未接続のときだけ）。値は node.Value[i]（UE の Constant と同じ値）
-    void DrawConstantComponentBox(GraphDocument& document, MaterialGraphNode& node, size_t input)
+    // 定数入力と Vector Parameter に共通の成分編集。値と Undo は node.Value を使う。
+    void DrawComponentValueBox(GraphDocument& document, MaterialGraphNode& node, size_t input)
     {
         if (input >= node.Value.size())
         {
@@ -1323,7 +1354,16 @@ namespace
         ImGui::PushID(static_cast<int>(input) + 1000);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.2f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 0.0f));
+        const bool vectorComponent = node.Kind != Kind::Constant;
+        if (vectorComponent)
+        {
+            PushComponentFieldStyle(input);
+        }
         bool changed = ImGui::DragFloat("##Component", &node.Value[input], 0.01f, 0.0f, 0.0f, "%.3f");
+        if (vectorComponent)
+        {
+            PopComponentFieldStyle();
+        }
         ImGui::PopStyleVar();
         if (!std::isfinite(node.Value[input]))
         {
@@ -1331,7 +1371,14 @@ namespace
             changed = false;
         }
         TrackValueEdit(document, node, before, changed);
-        CanvasTooltip("未接続のときの値\nドラッグ / ダブルクリックで入力。ノードを繋ぐとその値を使います");
+        if (node.Kind == Kind::VectorParameter)
+        {
+            CanvasTooltip("%s の値\nドラッグ / ダブルクリックで入力。", ComponentName(input));
+        }
+        else
+        {
+            CanvasTooltip("未接続のときの値\nドラッグ / ダブルクリックで入力。ノードを繋ぐとその値を使います");
+        }
         ImGui::PopID();
     }
 
@@ -1391,8 +1438,17 @@ namespace
             bool changed = false;
             if (normal)
             {
-                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
-                changed |= ImGui::DragFloat3("XYZ", value.data(), 0.005f, -1.0f, 1.0f, "%.3f");
+                for (size_t component = 0; component < 3; ++component)
+                {
+                    ImGui::PushID(static_cast<int>(component));
+                    ImGui::TextColored(ComponentColor(component), "%s", ComponentName(component));
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+                    PushComponentFieldStyle(component);
+                    changed |= ImGui::DragFloat("##NormalComponent", &value[component], 0.005f, -1.0f, 1.0f, "%.3f");
+                    PopComponentFieldStyle();
+                    ImGui::PopID();
+                }
                 if (ImGui::Button("正規化"))
                 {
                     const float length = sqrtf(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
@@ -1483,10 +1539,13 @@ namespace
                 break;
             case Kind::Constant:
             case Kind::Constant2Vector:
-                break; // 値は成分ピン（Value / R / G）の横のボックスで編集する
+                break; // 値は成分ピンの横のボックスで編集する
             case Kind::VectorParameter:
-                changed = ImGui::DragFloat3("##Vector", node.Value.data(), 0.01f);
-                TrackValueEdit(document, node, before, changed);
+                for (size_t component = 0; component < 3; ++component)
+                {
+                    ImGui::TextColored(ComponentColor(component), "%s", ComponentName(component));
+                    DrawComponentValueBox(document, node, component);
+                }
                 break;
             // 色：ボタンだけノード内に描き、ピッカーは画面座標のポップアップで開く（NodeColorButton）
             case Kind::Constant3Vector:
@@ -1503,15 +1562,18 @@ namespace
                 TrackValueEdit(document, node, before, changed);
                 break;
             case Kind::ComponentMask: {
-                static const char* labels[] = {"R", "G", "B", "A"};
                 for (int i = 0; i < 4; ++i)
                 {
-                    if (i > 0)
+                    if (i % 2 != 0)
                     {
                         ImGui::SameLine(0.0f, 2.0f);
                     }
                     bool enabled = node.Value[i] > 0.5f;
-                    if (ImGui::Checkbox(labels[i], &enabled))
+                    ImGui::PushStyleColor(ImGuiCol_CheckMark, ComponentColor(i));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ComponentColor(i));
+                    const bool toggled = ImGui::Checkbox(ComponentName(i), &enabled);
+                    ImGui::PopStyleColor(2);
+                    if (toggled)
                     {
                         PushHistory(document, document.Graph);
                         node.Value[i] = enabled ? 1.0f : 0.0f;
@@ -2025,120 +2087,62 @@ namespace
         return node.Height > 0.0f ? std::clamp(node.Height, 48.0f, 2048.0f) : 0.0f;
     }
 
-    // ノードのサイズ変更：右端 = 幅のみ、下端 = 高さのみ、右下の角 = 両方（UE / Blender と同じ）
-    //  ダブルクリックでその方向を既定（自動）に戻す
+    // 右下の斜めグリップで、幅と高さを独立に変更する。
     void DrawResizeHandles(GraphDocument& document, MaterialGraphNode& node, ImVec2 contentMin, float contentBottom)
     {
-        enum Axis
-        {
-            Horizontal = 1,
-            Vertical = 2,
-        };
-        const float edge = 6.0f;
         const float corner = 12.0f;
         const float width = NodeWidth(node);
-        const float headerSkip = ImGui::GetFrameHeight(); // 右上の出力ピンと重ならないように
         const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
-
-        struct Handle
+        const ImVec2 max(contentMin.x + width, contentBottom);
+        ImGui::SetCursorScreenPos(ImVec2(max.x - corner, max.y - corner));
+        ImGui::InvisibleButton("##ResizeCorner", ImVec2(corner, corner));
+        const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+        if (hot)
         {
-            const char* Id;
-            ImVec2 Min;
-            ImVec2 Size;
-            int Axes;
-            ImGuiMouseCursor Cursor;
-            const char* Tooltip;
-        };
-        const Handle handles[] = {
-            {"##ResizeRight", ImVec2(contentMin.x + width - edge, contentMin.y + headerSkip),
-             ImVec2(edge, (std::max)(contentBottom - contentMin.y - headerSkip - corner, 1.0f)), Horizontal,
-             ImGuiMouseCursor_ResizeEW, "ドラッグ: 幅を変更 / ダブルクリック: 既定の幅"},
-            {"##ResizeBottom", ImVec2(contentMin.x, contentBottom - edge),
-             ImVec2((std::max)(width - corner, 1.0f), edge), Vertical, ImGuiMouseCursor_ResizeNS,
-             "ドラッグ: 高さを変更 / ダブルクリック: 内容に合わせる"},
-            {"##ResizeCorner", ImVec2(contentMin.x + width - corner, contentBottom - corner), ImVec2(corner, corner),
-             Horizontal | Vertical, ImGuiMouseCursor_ResizeNWSE,
-             "ドラッグ: 幅と高さを変更 / ダブルクリック: 既定のサイズ"},
-        };
-        bool cornerHot = false;
-        for (const auto& handle : handles)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+        if (ImGui::IsItemActivated())
         {
-            ImGui::SetCursorScreenPos(handle.Min);
-            ImGui::InvisibleButton(handle.Id, handle.Size);
-            const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
-            if (hot)
-            {
-                ImGui::SetMouseCursor(handle.Cursor);
-            }
-            if (handle.Axes == (Horizontal | Vertical))
-            {
-                cornerHot = hot;
-            }
-            if (ImGui::IsItemActivated() && !document.PendingMove)
+            if (!document.PendingMove)
             {
                 document.PendingMove = document.Graph;
-                // 高さが自動のときは、現在の見た目の高さから変更を始める
-                if ((handle.Axes & Vertical) && node.Height <= 0.0f)
-                {
-                    node.Height = contentBottom - contentMin.y;
-                }
             }
-            if (ImGui::IsItemActive())
+            document.ResizeStartMouse = ImGui::GetMousePos();
+            document.ResizeStartSize = ImVec2(width, contentBottom - contentMin.y);
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        {
+            node.Width = 0.0f;
+            node.Height = 0.0f;
+            document.Dirty = true;
+            document.RecoveryDirty = true;
+        }
+        else if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        {
+            // 掴んだ位置からの移動量を使い、押した瞬間のサイズの跳ねを防ぐ。
+            const ImVec2 mouse = ImGui::GetMousePos();
+            const float newWidth =
+                std::clamp(document.ResizeStartSize.x + mouse.x - document.ResizeStartMouse.x, 96.0f, 512.0f);
+            const float newHeight =
+                std::clamp(document.ResizeStartSize.y + mouse.y - document.ResizeStartMouse.y, 48.0f, 2048.0f);
+            if (fabsf(newWidth - NodeWidth(node)) > 0.5f || fabsf(newHeight - NodeHeight(node)) > 0.5f)
             {
-                const ImVec2 mouse = ImGui::GetMousePos();
-                if (handle.Axes & Horizontal)
-                {
-                    const float newWidth = std::clamp(mouse.x - contentMin.x, 96.0f, 512.0f);
-                    if (fabsf(newWidth - node.Width) > 0.5f)
-                    {
-                        node.Width = newWidth;
-                        document.Dirty = true;
-                        document.RecoveryDirty = true;
-                    }
-                }
-                if (handle.Axes & Vertical)
-                {
-                    const float newHeight = std::clamp(mouse.y - contentMin.y, 48.0f, 2048.0f);
-                    if (fabsf(newHeight - node.Height) > 0.5f)
-                    {
-                        node.Height = newHeight;
-                        document.Dirty = true;
-                        document.RecoveryDirty = true;
-                    }
-                }
-            }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-            {
-                PushHistory(document, document.Graph);
-                if (handle.Axes & Horizontal)
-                {
-                    node.Width = 0.0f;
-                }
-                if (handle.Axes & Vertical)
-                {
-                    node.Height = 0.0f;
-                }
-            }
-            CanvasTooltip("%s", handle.Tooltip);
-            if (hot && handle.Axes != (Horizontal | Vertical))
-            {
-                // 辺のハイライト
-                ImGui::GetWindowDrawList()->AddRectFilled(
-                    handle.Axes == Horizontal ? ImVec2(handle.Min.x + edge - 2.0f, handle.Min.y) : ImVec2(handle.Min.x, handle.Min.y + edge - 2.0f),
-                    ImVec2(handle.Min.x + handle.Size.x, handle.Min.y + handle.Size.y), IM_COL32(255, 190, 60, 200));
+                node.Width = newWidth;
+                node.Height = newHeight;
+                document.Dirty = true;
+                document.RecoveryDirty = true;
             }
         }
-        // 右下のグリップ表示
+        CanvasTooltip("ドラッグ: 幅と高さを変更 / ダブルクリック: 既定のサイズ");
         ImDrawList* draw = ImGui::GetWindowDrawList();
-        const ImVec2 max(contentMin.x + width, contentBottom);
-        const ImU32 color = cornerHot ? IM_COL32(255, 190, 60, 255) : IM_COL32(150, 150, 150, 160);
+        const ImU32 color = hot ? IM_COL32(255, 190, 60, 255) : IM_COL32(150, 150, 150, 160);
         for (int i = 1; i <= 3; ++i)
         {
             const float offset = i * 3.5f;
             draw->AddLine(ImVec2(max.x - offset, max.y - 1.0f), ImVec2(max.x - 1.0f, max.y - offset), color, 1.2f);
         }
         ImGui::SetCursorScreenPos(savedCursor);
-        ImGui::Dummy(ImVec2(0.0f, 0.0f)); // カーソル移動の後にアイテムを置いて境界を確定（ImGui 1.92 の検証対策）
+        ImGui::Dummy(ImVec2(0.0f, 0.0f)); // カーソル復帰後にレイアウトの境界を確定する。
     }
 
     void DrawNodeComment(const MaterialGraphNode& node)
@@ -2338,14 +2342,21 @@ namespace
             Nodes::BeginPin(Nodes::PinId(pin), Nodes::PinKind::Input);
             Nodes::PinPivotAlignment(ImVec2(0.0f, 0.5f));
             Nodes::PinPivotSize(ImVec2(0, 0));
-            PinIcon(inactiveReason ? IM_COL32(90, 90, 96, 255) : TypeColor(type), connected);
+            const bool componentInput = MaterialGraph::IsComponentConstant(node.Kind) && node.Kind != Kind::Constant;
+            const char* inputName = componentInput ? ComponentName(i) : definition.Inputs[i].Name;
+            const ImU32 inputColor = componentInput ? ImGui::ColorConvertFloat4ToU32(ComponentColor(i)) : TypeColor(type);
+            PinIcon(inactiveReason ? IM_COL32(90, 90, 96, 255) : inputColor, connected);
             document.PinY[pin] = PinCenterY();
             ImGui::SameLine(0.0f, 4.0f);
             if (inactiveReason)
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.45f, 1.0f));
-                ImGui::TextUnformatted(definition.Inputs[i].Name);
+                ImGui::TextUnformatted(inputName);
                 ImGui::PopStyleColor();
+            }
+            else if (componentInput)
+            {
+                ImGui::TextColored(ComponentColor(i), "%s", inputName);
             }
             else if (connected)
             {
@@ -2363,7 +2374,7 @@ namespace
             // 未接続の Scalar ピン：横に数値ボックス（UE と同じ。接続すると隠れる）
             if (!connected && MaterialGraph::IsComponentConstant(node.Kind))
             {
-                DrawConstantComponentBox(document, node, i); // 定数の成分（UE の Constant の値）
+                DrawComponentValueBox(document, node, i); // 定数の成分（UE の Constant の値）
             }
             else if (!connected && !inactiveReason && MaterialGraph::IsPinVectorEditable(node.Kind, i))
             {
@@ -3038,6 +3049,87 @@ namespace
         return id;
     }
 
+    const char* NodeSearchAliases(Kind kind)
+    {
+        switch (kind)
+        {
+            case Kind::Add:
+                return "plus addition 加算 足す";
+            case Kind::Subtract:
+                return "sub minus subtraction 減算 引く";
+            case Kind::Multiply:
+                return "mul mult times multiplication 乗算 掛ける";
+            case Kind::Divide:
+                return "div division 除算 割る";
+            case Kind::Power:
+                return "pow exponent 累乗";
+            case Kind::Fmod:
+                return "mod modulo remainder 余り 剰余";
+            case Kind::OneMinus:
+                return "oneminus invert inverse 反転";
+            case Kind::Lerp:
+                return "mix interpolate interpolation 補間";
+            case Kind::TextureSample:
+                return "tex texture sample テクスチャ";
+            case Kind::TextureCoordinate:
+                return "uv texcoord texture coordinate テクスチャ座標";
+            case Kind::Constant:
+                return "const float value 定数";
+            case Kind::Constant2Vector:
+                return "vec2 float2 constant2 vector2";
+            case Kind::Constant3Vector:
+                return "vec3 float3 constant3 vector3 rgb";
+            case Kind::Constant4Vector:
+                return "vec4 float4 constant4 vector4 rgba";
+            case Kind::ScalarParameter:
+                return "sp scalarparam scalar parameter スカラー パラメータ";
+            case Kind::VectorParameter:
+                return "vp vectorparam vector parameter ベクトル パラメータ";
+            case Kind::ComponentMask:
+                return "mask swizzle component チャンネル マスク";
+            case Kind::AppendVector:
+                return "append combine join 結合";
+            case Kind::BreakVector:
+                return "split break separate 分割";
+            case Kind::Normalize:
+                return "norm normalize 正規化";
+            case Kind::Dot:
+                return "dot 内積";
+            case Kind::CrossProduct:
+                return "cross 外積";
+            case Kind::Group:
+                return "comment group コメント グループ";
+            default:
+                return "";
+        }
+    }
+
+    std::optional<Kind> SymbolSearchKind(const char* text)
+    {
+        std::string query(text);
+        const size_t first = query.find_first_not_of(" \t");
+        if (first == std::string::npos)
+        {
+            return std::nullopt;
+        }
+        query = query.substr(first, query.find_last_not_of(" \t") - first + 1);
+        // 「-」は ImGuiTextFilter では除外条件になるため、記号の完全一致を先に扱う。
+        static const std::pair<const char*, Kind> symbols[] = {
+            {"+", Kind::Add}, {"-", Kind::Subtract}, {"−", Kind::Subtract},
+            {"*", Kind::Multiply}, {"×", Kind::Multiply}, {"/", Kind::Divide}, {"÷", Kind::Divide},
+            {"^", Kind::Power}, {"**", Kind::Power}, {"%", Kind::Fmod}, {"1-x", Kind::OneMinus},
+            {"1", Kind::Constant}, {"2", Kind::Constant2Vector},
+            {"3", Kind::Constant3Vector}, {"4", Kind::Constant4Vector}};
+        for (const auto& [symbol, kind] : symbols)
+        {
+            if (query == symbol)
+            {
+                return kind;
+            }
+        }
+        return std::nullopt;
+    }
+
     void DrawAddNodeMenu(GraphDocument& document)
     {
         if (ImGui::IsWindowAppearing())
@@ -3045,9 +3137,10 @@ namespace
             ImGui::SetKeyboardFocusHere();
         }
         ImGui::SetNextItemWidth(240.0f);
-        const bool enter = ImGui::InputTextWithHint("##Search", "ノードを検索（例: lerp, uv, noise）", document.Search,
+        const bool enter = ImGui::InputTextWithHint("##Search", "ノードを検索（例: +, mul, tex, uv）", document.Search,
                                                     sizeof(document.Search), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGuiTextFilter filter(document.Search);
+        const auto symbolKind = SymbolSearchKind(document.Search);
         const auto label = [](const MaterialNodeDefinition& definition) {
             return definition.Kind == Kind::Group ? "Comment" : definition.Name;
         };
@@ -3057,8 +3150,13 @@ namespace
             bool first = true;
             for (const auto& definition : MaterialGraph::Definitions())
             {
-                if (definition.Kind == Kind::Output || definition.Kind == Kind::ConvertToNormalHeight ||
-                    !filter.PassFilter(label(definition)))
+                if (definition.Kind == Kind::Output || definition.Kind == Kind::ConvertToNormalHeight)
+                {
+                    continue;
+                }
+                const std::string searchText = std::string(label(definition)) + " " + NodeSearchAliases(definition.Kind);
+                const bool matches = symbolKind ? definition.Kind == *symbolKind : filter.PassFilter(searchText.c_str());
+                if (!matches)
                 {
                     continue;
                 }
@@ -3189,7 +3287,17 @@ namespace
         {
             RestorePositions(document);
         }
-        const FrameInfo frame = BuildFrameInfo(document.Graph);
+        // 型の解決は上流ノードも辿るため、内容が変わったときだけ行う。
+        // Undo / 読み直しでノード配列が置き換わった場合も、ポインターを作り直す。
+        const uint64_t canvasSignature = MaterialGraphPreview::ContentSignature(document.Graph);
+        if (document.CanvasSignature != canvasSignature || document.CanvasNodeStorage != document.Graph.Nodes.data())
+        {
+            document.CanvasFrame = BuildFrameInfo(document.Graph);
+            document.CanvasSignature = canvasSignature;
+            document.CanvasNodeStorage = document.Graph.Nodes.data();
+        }
+        auto& frame = document.CanvasFrame;
+        UpdateFrameSelection(frame);
         document.PinY.clear();
         // コメントを先に描く（ノードの後ろに来るように）
         for (auto& node : document.Graph.Nodes)
@@ -3237,7 +3345,17 @@ namespace
             const bool highlight = frame.Selected.contains(sourceNode) || frame.Selected.contains(targetNode) ||
                                    (frame.Hovered != 0 && (frame.Hovered == sourceNode || frame.Hovered == targetNode));
             const bool dim = !frame.Selected.empty() && !highlight;
-            const ImVec4 color = ImGui::ColorConvertU32ToFloat4(TypeColor(type, dim ? 0.35f : (highlight ? 1.0f : 0.85f)));
+            ImVec4 color = ImGui::ColorConvertU32ToFloat4(TypeColor(type));
+            if (source != frame.PinOwner.end())
+            {
+                const auto& components = source->second->SplitPins;
+                const auto component = std::find(components.begin(), components.end(), link.SourcePin);
+                if (component != components.end())
+                {
+                    color = ComponentColor(static_cast<size_t>(component - components.begin()));
+                }
+            }
+            color.w = dim ? 0.35f : (highlight ? 1.0f : 0.85f);
             Nodes::Link(Nodes::LinkId(link.Id), Nodes::PinId(link.SourcePin), Nodes::PinId(link.TargetPin), color,
                         highlight ? 3.5f : 2.0f);
             if (selectionChanged && highlight && !frame.Selected.empty())
@@ -3350,18 +3468,7 @@ namespace
         }
         Nodes::EndShortcut();
 
-        // ---- キー + クリックでノード配置 / 線のダブルクリックで中継点 / コメントのダブルクリックで名前変更
-        if (Nodes::IsBackgroundClicked() &&
-            (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseReleased(ImGuiMouseButton_Left)) &&
-            !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt)
-        {
-            bool found = false;
-            const Kind kind = PlacementKind(found);
-            if (found)
-            {
-                AddNodeAt(document, kind, Nodes::ScreenToCanvas(ImGui::GetMousePos()));
-            }
-        }
+        // ---- 線のダブルクリックで中継点 / コメントのダブルクリックで名前変更
         if (const auto doubleLink = Nodes::GetDoubleClickedLink())
         {
             const auto it = std::find_if(document.Graph.Links.begin(), document.Graph.Links.end(),
@@ -3570,6 +3677,44 @@ namespace
         Nodes::Resume();
         SetCanvasFontDensity(canvasFontDensity);
         Nodes::End();
+        // 背景クリックは End() 内で確定する。同じフレームのキー状態と画面座標を使う。
+        const auto& io = ImGui::GetIO();
+        if (Nodes::GetBackgroundClickButtonIndex() == ImGuiMouseButton_Left &&
+            !io.WantTextInput && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
+            !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        {
+            bool found = false;
+            const Kind kind = PlacementKind(found);
+            if (found)
+            {
+                document.PendingConnectPin = 0;
+                AddNodeAt(document, kind, Nodes::ScreenToCanvas(ImGui::GetMousePos()));
+            }
+        }
+        // End() が画面座標に戻し、キャンバス全体をアイテムとして提出する。
+        // ノード内の既存ドロップ先は矩形が小さいため、そちらの割り当てが優先される。
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+            {
+                if (payload->DataSize == sizeof(AssetDragPayload))
+                {
+                    const auto& asset = *static_cast<const AssetDragPayload*>(payload->Data);
+                    if (asset.Type == AssetType::Texture &&
+                        MaterialManager::Registry().TypeOf(asset.Handle) == AssetType::Texture)
+                    {
+                        document.PendingConnectPin = 0;
+                        const ImVec2 position = Nodes::ScreenToCanvas(ImGui::GetMousePos());
+                        const auto id = AddNodeAt(document, Kind::TextureSample, position);
+                        if (auto* node = document.Graph.FindNode(id))
+                        {
+                            node->Texture = asset.Handle;
+                        }
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
         SetCanvasFontDensity(1.0f);
         Nodes::PopStyleVar(5);
         Nodes::PopStyleColor(9);
