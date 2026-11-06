@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cachepaths.h"
 #include "input.h"
 #include "main.h"
 #include "resource.h"
@@ -186,6 +187,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     {
         SetCurrentDirectoryW(runtimeRoot.c_str());
     }
+    CachePaths::Initialize();
     WriteGraphicsLog("Step: WinMain begin\n");
 
     const char className[] = "DX12AI_WindowClass";

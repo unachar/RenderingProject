@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../cachepaths.h"
 #include "virtualgeometryresources.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
@@ -154,7 +155,7 @@ namespace VirtualGeometryResources
                         auto path = asset->CachePath;
                         if (path.empty())
                         {
-                            path = std::filesystem::path("asset/virtualgeometry-cache") / std::to_string(asset->Key);
+                            path = CachePaths::Directory("VirtualGeometry") / std::to_string(asset->Key);
                         }
                         // 内容キーで識別する安定した符号化キャッシュ。従来の CPU 参照アセットは上書きしない。
                         path += "." + std::to_string(VirtualGeometryCompression::SettingsKey(compressionSettings));
@@ -169,7 +170,7 @@ namespace VirtualGeometryResources
                         auto manifest = std::make_shared<VirtualGeometryPageCache::PageManifest>();
                         manifest->StreamingPriority = asset->ImportSettings.StreamingPriority;
                         if (VirtualGeometryPageCache::Open(path, *manifest, result.Error) &&
-                            manifest->Version == VirtualGeometryPageCache::FormatVersion::Production)
+                            manifest->Version >= VirtualGeometryPageCache::FormatVersion::Production)
                         {
                             manifest->StreamingPriority = asset->ImportSettings.StreamingPriority;
                             result.Manifest = std::move(manifest);

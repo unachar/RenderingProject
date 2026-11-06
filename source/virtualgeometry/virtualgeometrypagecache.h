@@ -9,7 +9,8 @@ namespace VirtualGeometryPageCache
     {
         Streaming = 2,
         GeometryCompression = 3,
-        Production = 4
+        Production = 4,
+        ZstandardPages = 5
     };
 
     struct PageEntry

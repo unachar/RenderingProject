@@ -81,6 +81,7 @@ namespace TextureCacheStorage
         {
             if (CacheCompressionPolicy::PreferSmallerFiles() && StoreCompressed(rawPath, image))
             {
+                std::filesystem::remove(rawPath, error);
                 return true;
             }
         }
@@ -156,7 +157,7 @@ namespace TextureCacheStorage
     }
 
     inline bool LoadImpl(const std::filesystem::path& rawPath, DirectX::TexMetadata& metadata,
-                         DirectX::ScratchImage& image)
+                         DirectX::ScratchImage& image, bool requireGpuCompression)
     {
         if (rawPath.empty())
         {
@@ -175,7 +176,7 @@ namespace TextureCacheStorage
             {
                 const HRESULT loaded = DirectX::LoadFromDDSMemory(dds.data(), dds.size(), DirectX::DDS_FLAGS_NONE,
                                                                   &candidateMetadata, candidate);
-                if (SUCCEEDED(loaded) && DirectX::IsCompressed(candidateMetadata.format))
+                if (SUCCEEDED(loaded) && (!requireGpuCompression || DirectX::IsCompressed(candidateMetadata.format)))
                 {
                     metadata = candidateMetadata;
                     image = std::move(candidate);
@@ -197,7 +198,7 @@ namespace TextureCacheStorage
         }
         const HRESULT loaded =
             DirectX::LoadFromDDSFile(rawPath.c_str(), DirectX::DDS_FLAGS_NONE, &candidateMetadata, candidate);
-        if (FAILED(loaded) || !DirectX::IsCompressed(candidateMetadata.format))
+        if (FAILED(loaded) || (requireGpuCompression && !DirectX::IsCompressed(candidateMetadata.format)))
         {
             if (loaded != E_OUTOFMEMORY)
             {
@@ -222,11 +223,12 @@ namespace TextureCacheStorage
         }
     }
 
-    inline bool Load(const std::filesystem::path& rawPath, DirectX::TexMetadata& metadata, DirectX::ScratchImage& image)
+    inline bool Load(const std::filesystem::path& rawPath, DirectX::TexMetadata& metadata, DirectX::ScratchImage& image,
+                     bool requireGpuCompression = true)
     {
         try
         {
-            return LoadImpl(rawPath, metadata, image);
+            return LoadImpl(rawPath, metadata, image, requireGpuCompression);
         }
         catch (const std::bad_alloc&)
         {

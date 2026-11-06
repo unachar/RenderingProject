@@ -235,7 +235,7 @@ namespace
             if (m_UsesProceduralNoise)
             {
                 // プロシージャルスタジオと同じ HLSL ノイズ（shader/hlsl/noise.hlsl：バインドなしのライブラリ）。
-                // 生成シェーダーは EditorCache に書かれるので、絶対パスで取り込む
+                // 生成シェーダーは Data/Cache に書かれるので、絶対パスで取り込む
                 std::error_code pathError;
                 const auto library = std::filesystem::absolute("shader/hlsl/noise.hlsl", pathError);
                 if (pathError || !std::filesystem::exists(library, pathError))

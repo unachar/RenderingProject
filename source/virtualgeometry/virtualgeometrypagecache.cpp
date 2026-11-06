@@ -1,4 +1,6 @@
 #include "virtualgeometrypagecache.h"
+#include "../cachecompressionpolicy.h"
+#include "../../External/zstd/zstd.h"
 #include "virtualgeometryserializationinternal.h"
 #include "virtualgeometryserializer.h"
 #include <atomic>
@@ -22,6 +24,23 @@ namespace VirtualGeometryPageCache
         constexpr uint32_t Magic = 0x32504756; // ページ形式の識別子（VGP2）
         constexpr uint32_t HeaderBytes = 64;
         constexpr uint64_t MaxMetadataBytes = 512ull * 1024 * 1024;
+
+        std::span<const uint8_t> EncodePage(std::span<const uint8_t> payload, std::vector<uint8_t>& compressed,
+                                            bool useCompression)
+        {
+            if (useCompression)
+            {
+                compressed.resize(ZSTD_compressBound(payload.size()));
+                const size_t stored =
+                    ZSTD_compress(compressed.data(), compressed.size(), payload.data(), payload.size(), 3);
+                if (!ZSTD_isError(stored) && stored < payload.size())
+                {
+                    compressed.resize(stored);
+                    return compressed;
+                }
+            }
+            return payload;
+        }
 
         void WriteValue(Writer& writer, uint32_t value)
         {
@@ -241,18 +260,23 @@ namespace VirtualGeometryPageCache
             uint64_t offset = HeaderBytes + metadata.Bytes.size() + pinned.size() * 24ull;
             std::vector<uint8_t> payload(VirtualGeometryPages::PageBytes);
             std::vector<uint64_t> checksums;
+            std::vector<uint32_t> storedSizes;
+            std::vector<uint8_t> compressed;
+            const bool useCompression = CacheCompressionPolicy::PreferSmallerFiles();
             for (uint32_t page = 0; page < pinned.size(); ++page)
             {
                 if (!generate(page, payload, error))
                 {
                     throw std::runtime_error(error);
                 }
+                const auto encodedPage = EncodePage(payload, compressed, useCompression);
+                storedSizes.push_back(static_cast<uint32_t>(encodedPage.size()));
                 metadata.U64(offset);
-                metadata.U32(VirtualGeometryPages::PageBytes);
+                metadata.U32(storedSizes.back());
                 metadata.U32(pinned[page]);
                 checksums.push_back(VirtualGeometrySerializer::Hash(payload));
                 metadata.U64(checksums.back());
-                offset += VirtualGeometryPages::PageBytes;
+                offset += storedSizes.back();
             }
             if (metadata.Bytes.size() > MaxMetadataBytes)
             {
@@ -260,7 +284,7 @@ namespace VirtualGeometryPageCache
             }
             Writer header;
             header.U32(Magic);
-            header.U32(uint32_t(FormatVersion::Production));
+            header.U32(uint32_t(FormatVersion::ZstandardPages));
             header.U32(VirtualGeometryPages::PageBytes);
             header.U32(uint32_t(pinned.size()));
             header.U64(offset);
@@ -285,7 +309,12 @@ namespace VirtualGeometryPageCache
                 {
                     throw std::runtime_error("Page generator failed or changed between passes: " + error);
                 }
-                file.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+                const auto encodedPage = EncodePage(payload, compressed, useCompression);
+                if (encodedPage.size() != storedSizes[page])
+                {
+                    throw std::runtime_error("Page compression changed between passes");
+                }
+                file.write(reinterpret_cast<const char*>(encodedPage.data()), encodedPage.size());
             }
             file.flush();
             file.close();
@@ -347,7 +376,7 @@ namespace VirtualGeometryPageCache
                 throw std::runtime_error("Invalid VGMesh Page magic");
             }
             uint32_t version = header.U32();
-            if (version < uint32_t(FormatVersion::Streaming) || version > uint32_t(FormatVersion::Production))
+            if (version < uint32_t(FormatVersion::Streaming) || version > uint32_t(FormatVersion::ZstandardPages))
             {
                 throw std::runtime_error("Unsupported VGMesh format version");
             }
@@ -363,7 +392,7 @@ namespace VirtualGeometryPageCache
             const uint32_t compressionVersion = header.U32();
             const uint64_t sourceTriangles = header.U64();
             const uint64_t sourceVertices = header.U64();
-            if (version == uint32_t(FormatVersion::Production) &&
+            if (version >= uint32_t(FormatVersion::Production) &&
                 (builderVersion != VirtualGeometryConfig::BuilderVersion ||
                  compressionVersion > VirtualGeometryCompression::CompressionVersion))
             {
@@ -371,8 +400,7 @@ namespace VirtualGeometryPageCache
             }
             if (!pageCount || declaredFileBytes != fileBytes || fileBytes < HeaderBytes || metadataBytes < 16 ||
                 metadataBytes > MaxMetadataBytes || metadataBytes > fileBytes - HeaderBytes ||
-                uint64_t(pageCount) * 24 > metadataBytes ||
-                uint64_t(pageCount) * VirtualGeometryPages::PageBytes != fileBytes - HeaderBytes - metadataBytes)
+                uint64_t(pageCount) * 24 > metadataBytes)
             {
                 throw std::runtime_error("Invalid Page cache size/directory");
             }
@@ -414,7 +442,11 @@ namespace VirtualGeometryPageCache
                 entry.Size = metadata.U32();
                 uint32_t pinned = metadata.U32();
                 entry.Checksum = metadata.U64();
-                if (entry.Offset != offset || entry.Size != VirtualGeometryPages::PageBytes || pinned > 1)
+                const bool validSize = entry.Size > 0 && entry.Size <= VirtualGeometryPages::PageBytes &&
+                                       (version >= uint32_t(FormatVersion::ZstandardPages) ||
+                                        entry.Size == VirtualGeometryPages::PageBytes);
+                if (entry.Offset != offset || !validSize || pinned > 1 || offset > fileBytes ||
+                    entry.Size > fileBytes - offset)
                 {
                     throw std::runtime_error("Invalid Page directory entry");
                 }
@@ -422,6 +454,10 @@ namespace VirtualGeometryPageCache
                 offset += entry.Size;
             }
             metadata.RequireEnd();
+            if (offset != fileBytes)
+            {
+                throw std::runtime_error("Page payload size mismatch");
+            }
             if (!VirtualGeometryPages::Validate(result.Metadata, result.PinnedPages, error))
             {
                 return false;
@@ -430,7 +466,7 @@ namespace VirtualGeometryPageCache
             for (uint32_t index = 0; index < result.Metadata.Clusters.size(); ++index)
             {
                 const auto& cluster = result.Metadata.Clusters[index];
-                if (version == uint32_t(FormatVersion::Production) &&
+                if (version >= uint32_t(FormatVersion::Production) &&
                     (cluster.Flags & VirtualGeometryCompression::ClusterFlag) &&
                     compressionVersion != VirtualGeometryCompression::CompressionVersion)
                 {
@@ -463,15 +499,36 @@ namespace VirtualGeometryPageCache
                 throw std::runtime_error("Invalid Page read range");
             }
             const auto& entry = manifest.Pages[page];
-            if (entry.Size != bytes.size() || entry.Offset > manifest.FileBytes ||
-                entry.Size > manifest.FileBytes - entry.Offset ||
+            if (!entry.Size || entry.Size > bytes.size() ||
+                (entry.Size != bytes.size() && manifest.Version < FormatVersion::ZstandardPages) ||
+                entry.Offset > manifest.FileBytes || entry.Size > manifest.FileBytes - entry.Offset ||
                 entry.Offset > uint64_t(std::numeric_limits<std::streamoff>::max()))
             {
                 throw std::runtime_error("Page file offset overflow");
             }
             std::ifstream file(manifest.Path, std::ios::binary);
             file.seekg(std::streamoff(entry.Offset));
-            ReadExact(file, bytes);
+            if (entry.Size == bytes.size())
+            {
+                ReadExact(file, bytes);
+            }
+            else
+            {
+                std::vector<uint8_t> compressed(entry.Size);
+                ReadExact(file, compressed);
+                const size_t frameBytes = ZSTD_findFrameCompressedSize(compressed.data(), compressed.size());
+                if (ZSTD_getFrameContentSize(compressed.data(), compressed.size()) != bytes.size() ||
+                    ZSTD_isError(frameBytes) || frameBytes != compressed.size())
+                {
+                    throw std::runtime_error("Invalid compressed Page frame");
+                }
+                const size_t restored =
+                    ZSTD_decompress(bytes.data(), bytes.size(), compressed.data(), compressed.size());
+                if (ZSTD_isError(restored) || restored != bytes.size())
+                {
+                    throw std::runtime_error("Page decompression failed");
+                }
+            }
             if (VirtualGeometrySerializer::Hash(bytes) != entry.Checksum)
             {
                 throw std::runtime_error("Page payload checksum mismatch");

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../../cachepaths.h"
 #include "meshletmanager.h"
 #include "virtualgeometry/virtualgeometrybuilder.h"
 #include "staticmodel.h"
@@ -87,9 +88,9 @@ namespace MeshletManager
                         std::move(vertices), indices, 0, mesh.AppliedMaterialPartId, mesh.VirtualGeometrySettings);
                     continue;
                 }
-                auto asset =
-                    VirtualGeometryRuntime::Acquire(vertices, indices, 0, mesh.AppliedMaterialPartId,
-                                                    "asset/virtualgeometry-cache", mesh.VirtualGeometrySettings);
+                auto asset = VirtualGeometryRuntime::Acquire(vertices, indices, 0, mesh.AppliedMaterialPartId,
+                                                             CachePaths::Directory("VirtualGeometry"),
+                                                             mesh.VirtualGeometrySettings);
                 mesh.VirtualGeometryLODs[lod] = asset;
                 if (asset->Error.empty())
                 {

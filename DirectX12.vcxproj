@@ -1485,6 +1485,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\shadercachecodec.h" />
     <ClInclude Include="source\assets\texturecachecodec.h" />
     <ClInclude Include="source\assets\texturecachestorage.h" />
+    <ClInclude Include="source\cachepaths.h" />
+    <ClInclude Include="source\cachefile.h" />
     <ClInclude Include="External\zstd\zstd.h" />
     <ClInclude Include="External\zstd\zstd_errors.h" />
     <None Include="External\zstd\LICENSE" />

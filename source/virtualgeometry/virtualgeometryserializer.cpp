@@ -1,4 +1,5 @@
 #include "virtualgeometryserializer.h"
+#include "../cachefile.h"
 #include "virtualgeometrypagecache.h"
 #include "virtualgeometryserializationinternal.h"
 #include "virtualgeometryinternal.h"
@@ -347,74 +348,30 @@ bool VirtualGeometrySerializer::Decode(std::span<const uint8_t> bytes, VirtualGe
 bool VirtualGeometrySerializer::Save(const std::filesystem::path& path, const VirtualGeometryAsset& asset,
                                      std::string& error)
 {
-    static std::atomic<uint64_t> sequence{0};
-    auto temporary = path;
-#ifdef _WIN32
-    temporary += ".tmp." + std::to_string(GetCurrentProcessId()) + "." + std::to_string(++sequence);
-#else
-    temporary += ".tmp." + std::to_string(++sequence);
-#endif
     std::vector<uint8_t> bytes;
     if (!Encode(asset, bytes, error))
     {
         return false;
     }
-    try
+    if (!CacheFile::Store(path, {reinterpret_cast<const char*>(bytes.data()), bytes.size()}))
     {
-        if (bytes.size() > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
-        {
-            throw std::runtime_error("Virtual geometry file exceeds stream addressing");
-        }
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        file.exceptions(std::ios::badbit | std::ios::failbit);
-        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        file.close();
-#ifdef _WIN32
-        if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        {
-            throw std::runtime_error("Cannot publish VirtualGeometry derived data");
-        }
-#else
-        std::filesystem::rename(temporary, path);
-#endif
-        return true;
-    }
-    catch (const std::exception& exception)
-    {
-        std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
-        error = exception.what();
+        error = "Cannot publish VirtualGeometry derived data";
         return false;
     }
+    return true;
 }
 
 bool VirtualGeometrySerializer::Load(const std::filesystem::path& path, VirtualGeometryAsset& asset, std::string& error,
                                      const VirtualGeometryLoadLimits& limits)
 {
     error.clear();
-    try
+    std::vector<char> bytes;
+    const uint64_t maximumBytes =
+        (std::min)(limits.MaxFileBytes, uint64_t(std::numeric_limits<size_t>::max() - CacheFile::HeaderBytes));
+    if (!CacheFile::Load(path, bytes, static_cast<size_t>(maximumBytes)))
     {
-        std::ifstream file(path, std::ios::binary | std::ios::ate);
-        file.exceptions(std::ios::badbit | std::ios::failbit);
-        auto position = file.tellg();
-        if (position < 0)
-        {
-            throw std::runtime_error("Cannot determine virtual geometry file size");
-        }
-        uint64_t size = static_cast<uint64_t>(position);
-        if (size < HeaderBytes || size > limits.MaxFileBytes || size > std::numeric_limits<size_t>::max() ||
-            size > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
-        {
-            throw std::runtime_error("Invalid virtual geometry file size or load budget exceeded");
-        }
-        std::vector<uint8_t> bytes(static_cast<size_t>(size));
-        file.seekg(0);
-        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
-        return Decode(bytes, asset, error, limits);
-    }
-    catch (const std::exception& exception)
-    {
-        error = exception.what();
+        error = "Invalid virtual geometry cache or load budget exceeded";
         return false;
     }
+    return Decode({reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()}, asset, error, limits);
 }

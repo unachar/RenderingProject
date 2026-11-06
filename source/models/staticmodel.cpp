@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "../cachepaths.h"
+#include "../cachefile.h"
 #include "envflags.h"
 #include <unordered_set>
 #include "gpudriven/gpudrivenrenderer.h"
@@ -1126,9 +1128,22 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
         {
             return false;
         }
-        auto indexPath = ModelPathFromUtf8(fileName);
-        indexPath += ".vgderived";
-        std::ifstream input(indexPath);
+        const auto sourcePath = ModelPathFromUtf8(fileName);
+        const auto indexPath = CachePaths::SourceEntry("VirtualGeometry/Models", sourcePath, ".vgderived");
+        auto legacyPath = sourcePath;
+        legacyPath += ".vgderived";
+        std::error_code migrationError;
+        if (!std::filesystem::exists(indexPath) && std::filesystem::exists(legacyPath))
+        {
+            std::filesystem::create_directories(indexPath.parent_path(), migrationError);
+            std::filesystem::rename(legacyPath, indexPath, migrationError);
+        }
+        std::vector<char> bytes;
+        if (!CacheFile::Load(indexPath, bytes, 64 * 1024 * 1024))
+        {
+            return false;
+        }
+        std::istringstream input(std::string(bytes.begin(), bytes.end()));
         Json::Value index;
         Json::CharReaderBuilder reader;
         std::string error;
@@ -1166,8 +1181,14 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
         XMFLOAT3 lower{INFINITY, INFINITY, INFINITY}, upper{-INFINITY, -INFINITY, -INFINITY};
         for (const auto& entry : index["meshes"])
         {
-            const std::filesystem::path path = std::filesystem::u8path(entry["path"].asString());
-            const auto cache = std::filesystem::weakly_canonical("asset/virtualgeometry-cache");
+            std::filesystem::path path = std::filesystem::u8path(entry["path"].asString());
+            const auto oldCache = std::filesystem::weakly_canonical("asset/virtualgeometry-cache");
+            const auto oldRelative = std::filesystem::weakly_canonical(path).lexically_relative(oldCache);
+            if (!oldRelative.empty() && !oldRelative.is_absolute() && *oldRelative.begin() != "..")
+            {
+                path = CachePaths::Directory("VirtualGeometry") / oldRelative;
+            }
+            const auto cache = std::filesystem::weakly_canonical(CachePaths::Directory("VirtualGeometry"));
             const auto relative = std::filesystem::weakly_canonical(path).lexically_relative(cache);
             if (relative.empty() || relative.is_absolute() || *relative.begin() == "..")
             {
@@ -1322,21 +1343,12 @@ void StaticModelResource::PublishDerivedVirtualGeometry(bool convert)
             }
             index["meshes"].append(entry);
         }
-        auto path = ModelPathFromUtf8(m_SourcePath.c_str());
-        path += ".vgderived";
-        auto temporary = path;
-        temporary += ".tmp";
-        {
-            std::ofstream output(temporary);
-            output << index;
-            output.flush();
-            if (!output)
-            {
-                return;
-            }
-        }
-        m_DerivedVGPublished =
-            MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+        const auto path =
+            CachePaths::SourceEntry("VirtualGeometry/Models", ModelPathFromUtf8(m_SourcePath.c_str()), ".vgderived");
+        std::ostringstream output;
+        output << index;
+        const std::string contents = output.str();
+        m_DerivedVGPublished = CacheFile::Store(path, contents);
     }
     catch (const std::exception& error)
     {

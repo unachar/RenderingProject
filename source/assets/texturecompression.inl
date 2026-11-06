@@ -1,3 +1,4 @@
+#include "../cachepaths.h"
 // texturemanager.cpp の末尾から取り込まれる実装（プロジェクトへのファイル追加を不要にするため .inl）。
 #include "DirectXTex.h"
 #include "texturecompression.h"
@@ -227,7 +228,8 @@ namespace TextureCompression
     std::filesystem::path CacheDirectory()
     {
         std::error_code error;
-        const auto directory = (std::filesystem::current_path(error) / "Data" / "Cache" / "Textures").lexically_normal();
+        const auto directory =
+            (std::filesystem::current_path(error) / CachePaths::Directory("Textures")).lexically_normal();
         static std::once_flag cleaned;
         std::call_once(cleaned, [&directory] {
             // 前回の異常終了で残った書きかけファイルを掃除する。

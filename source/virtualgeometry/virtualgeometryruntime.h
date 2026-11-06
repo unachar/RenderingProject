@@ -1,4 +1,5 @@
 #pragma once
+#include "../cachepaths.h"
 #include "virtualgeometryasset.h"
 #include "virtualgeometryimport.h"
 #include "rendering/meshlets/meshletbuilder.h"
@@ -40,7 +41,7 @@ namespace VirtualGeometryRuntime
 
     std::shared_ptr<const RuntimeAsset> Acquire(
         std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices, uint32_t materialId,
-        float materialPartId, const std::filesystem::path& cacheDirectory = "asset/virtualgeometry-cache",
+        float materialPartId, const std::filesystem::path& cacheDirectory = CachePaths::Directory("VirtualGeometry"),
         const VGImportSettings& settings = {});
     // 変更不可の入力スナップショットを所有する。メッシュへの反映は描画スレッドで行う。
     std::shared_future<std::shared_ptr<const RuntimeAsset>> AcquireAsync(std::vector<VirtualGeometryVertex> vertices,

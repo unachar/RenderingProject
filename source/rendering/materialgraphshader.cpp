@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../cachepaths.h"
 #include "materialgraphshader.h"
 #include "dxccompiler.h"
 #include "persistentpsocache.h"
@@ -107,7 +108,7 @@ MaterialGraphShader MaterialGraphShaderCompiler::Compile(const MaterialGraphProg
     {
         shader.Hash = (shader.Hash ^ value) * 1099511628211ull;
     }
-    const auto directory = std::filesystem::path("EditorCache/MaterialGraphs/Shaders");
+    const auto directory = CachePaths::Directory("MaterialGraphs/Shaders");
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     if (error)

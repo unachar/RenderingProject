@@ -1,4 +1,5 @@
 #pragma once
+#include "cachepaths.h"
 
 #include <cstdint>
 #include <array>
@@ -87,7 +88,7 @@ namespace DxcShaderCache
         {
             hash = Hash(diagnostics->GetBufferPointer(), diagnostics->GetBufferSize(), hash);
         }
-        return std::filesystem::path("EditorCache/Shaders") / (std::to_string(hash) + ".bin");
+        return CachePaths::Directory("Shaders") / (std::to_string(hash) + ".bin");
     }
 
     inline bool Load(const std::filesystem::path& path, std::vector<char>& object, std::string& diagnostics)

@@ -1,3 +1,4 @@
+#include "../cachepaths.h"
 #include "virtualgeometryruntime.h"
 #include "virtualgeometrybuilder.h"
 #include "virtualgeometryserializer.h"
@@ -298,7 +299,7 @@ namespace VirtualGeometryRuntime
             pagePath += compression.Enabled ? ".encoded.vgmesh" : ".raw.vgmesh";
             auto manifest = std::make_shared<VirtualGeometryPageCache::PageManifest>();
             if (!VirtualGeometryPageCache::Open(pagePath, *manifest, error) ||
-                manifest->Version != VirtualGeometryPageCache::FormatVersion::Production)
+                manifest->Version < VirtualGeometryPageCache::FormatVersion::Production)
             {
                 if (!VirtualGeometrySerializer::SaveEncoded(pagePath, asset->Hierarchy, error, compression) ||
                     !VirtualGeometryPageCache::Open(pagePath, *manifest, error))
@@ -423,7 +424,8 @@ namespace VirtualGeometryRuntime
         job.Bytes = bytes;
         job.Work = std::packaged_task<std::shared_ptr<const RuntimeAsset>()>(
             [vertices = std::move(vertices), indices = std::move(indices), materialId, materialPartId, settings] {
-                return Acquire(vertices, indices, materialId, materialPartId, "asset/virtualgeometry-cache", settings);
+                return Acquire(vertices, indices, materialId, materialPartId, CachePaths::Directory("VirtualGeometry"),
+                               settings);
             });
         auto future = job.Work.get_future().share();
         queue.Bytes += bytes;

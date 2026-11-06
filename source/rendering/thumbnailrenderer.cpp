@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../cachepaths.h"
 #include "thumbnailrenderer.h"
 #include "niagararenderer.h"
 #include "thumbnailmeshio.h"
@@ -9,6 +10,7 @@
 #include "materialmanager.h"
 #include "assets/noiseasset.h"
 #include "assets/thumbnailcache.h"
+#include "assets/texturecachestorage.h"
 #include "assets/thumbnailmanifest.h"
 #include <cimport.h>
 #include <postprocess.h>
@@ -386,7 +388,7 @@ uint64_t ThumbnailRenderer::SourceRevision(const std::filesystem::path& path)
 
 std::filesystem::path ThumbnailRenderer::CachePath(AssetHandle handle)
 {
-    return std::filesystem::path("EditorCache/Thumbnails") / ThumbnailCacheFileName(handle);
+    return CachePaths::Directory("Thumbnails") / ThumbnailCacheFileName(handle);
 }
 
 ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
@@ -420,7 +422,7 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
     const auto loadCachedImage = [&]() {
         auto cached = std::make_unique<DirectX::ScratchImage>();
         DirectX::TexMetadata metadata;
-        if (SUCCEEDED(DirectX::LoadFromDDSFile(cachePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, *cached)) &&
+        if (TextureCacheStorage::Load(cachePath, metadata, *cached, false) &&
             metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D && metadata.arraySize == 1 &&
             !metadata.IsCubemap() && metadata.width <= input.Size && metadata.height <= input.Size)
         {
@@ -770,13 +772,7 @@ std::future<void> ThumbnailRenderer::SaveCache(const ThumbnailPrepared& input,
             {
                 return;
             }
-            const std::filesystem::path temporary(path.wstring() + L".tmp");
-            if (FAILED(DirectX::SaveToDDSFile(pixels.GetImages(), pixels.GetImageCount(), pixels.GetMetadata(),
-                                              DirectX::DDS_FLAGS_NONE, temporary.c_str())))
-            {
-                return;
-            }
-            if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            if (!TextureCacheStorage::Store(path, pixels))
             {
                 return;
             }

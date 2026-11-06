@@ -1,4 +1,6 @@
 ﻿#include "pch.h"
+#include "../cachepaths.h"
+#include "../cachefile.h"
 #include "graphvisuals.h"
 #include "backgroundtasks.h"
 #include <cstdarg>
@@ -231,16 +233,33 @@ namespace
             document.Error = error.message();
             return false;
         }
-        return WriteAssetFile(path, Json::writeString(writer, value), document.Error);
+        const std::string contents = Json::writeString(writer, value);
+        if (path == document.RecoveryPath)
+        {
+            if (!CacheFile::Store(path, contents))
+            {
+                document.Error = "グラフの復旧キャッシュを保存できませんでした。";
+                return false;
+            }
+            return true;
+        }
+        return WriteAssetFile(path, contents, document.Error);
     }
 
     bool ReadDocument(const std::filesystem::path& path, MaterialGraph& graph, std::string& layout, std::string& error)
     {
-        if (!MaterialGraph::Load(path, graph, error))
+        std::vector<char> bytes;
+        if (!CacheFile::Load(path, bytes, 64 * 1024 * 1024))
+        {
+            error = "グラフを読み込めませんでした。";
+            return false;
+        }
+        const std::string contents(bytes.begin(), bytes.end());
+        if (!MaterialGraph::Deserialize(contents, graph, error))
         {
             return false;
         }
-        std::ifstream input(path, std::ios::binary);
+        std::istringstream input(contents);
         Json::Value value;
         Json::CharReaderBuilder reader;
         if (!Json::parseFromStream(reader, input, &value, &error))
@@ -266,8 +285,7 @@ namespace
         document.Material = material;
         document.Path = MaterialManager::Registry().Resolve(material);
         document.Path += ".graph.json";
-        document.RecoveryPath =
-            std::filesystem::path("EditorCache/MaterialGraphs") / (std::to_string(material) + ".recovery.json");
+        document.RecoveryPath = CachePaths::Directory("MaterialGraphs") / (std::to_string(material) + ".recovery.json");
         document.Graph = MaterialGraph::FromMaterial(MaterialManager::GetRuntime(material).Editing);
         std::error_code error;
         if (std::filesystem::exists(document.Path, error))

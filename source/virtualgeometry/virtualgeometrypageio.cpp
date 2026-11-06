@@ -108,7 +108,7 @@ namespace VirtualGeometryStreaming
                 result.Payload.resize(65536);
                 if (m_Read(*job.Manifest, job.LocalPage, result.Payload, result.Error))
                 {
-                    result.ReadBytes = 65536;
+                    result.ReadBytes = job.Manifest->Pages.at(job.LocalPage).Size;
                 }
                 else if (result.Error.empty())
                 {

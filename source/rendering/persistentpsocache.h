@@ -1,4 +1,6 @@
 #pragma once
+#include "../cachepaths.h"
+#include "../cachefile.h"
 #include "pch.h"
 #include <filesystem>
 #include <fstream>
@@ -80,29 +82,9 @@ class PersistentPsoCache final
         key.Add(device->GetAdapterLuid());
         std::ostringstream name;
         name << std::hex << key.Value << ".pso";
-        const auto path = std::filesystem::path("bin/cache/pso") / name.str();
+        const auto path = CachePaths::Directory("Pso") / name.str();
         std::vector<char> data;
-        try
-        {
-            std::ifstream input(path, std::ios::binary | std::ios::ate);
-            if (input)
-            {
-                const auto size = input.tellg();
-                if (size > 0 && size < std::streampos(64 * 1024 * 1024))
-                {
-                    data.resize(static_cast<size_t>(size));
-                    input.seekg(0);
-                    if (!input.read(data.data(), data.size()))
-                    {
-                        data.clear();
-                    }
-                }
-            }
-        }
-        catch (...)
-        {
-            data.clear();
-        }
+        CacheFile::Load(path, data, 64 * 1024 * 1024);
         HRESULT hr = fn(data.empty() ? nullptr : data.data(), data.size());
         if (SUCCEEDED(hr) && !data.empty())
         {
@@ -123,19 +105,7 @@ class PersistentPsoCache final
             ComPtr<ID3DBlob> blob;
             if (SUCCEEDED(pso->GetCachedBlob(&blob)) && blob)
             {
-                std::error_code error;
-                std::filesystem::create_directories(path.parent_path(), error);
-                auto temporary = path;
-                temporary += L".tmp";
-                std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-                out.write(static_cast<const char*>(blob->GetBufferPointer()), blob->GetBufferSize());
-                out.flush();
-                const bool ok = bool(out);
-                out.close();
-                if (ok)
-                {
-                    MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
-                }
+                CacheFile::Store(path, {static_cast<const char*>(blob->GetBufferPointer()), blob->GetBufferSize()});
             }
         }
         catch (...)

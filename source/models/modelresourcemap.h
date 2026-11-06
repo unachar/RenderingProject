@@ -1,4 +1,6 @@
 #pragma once
+#include "../cachefile.h"
+#include "../cachepaths.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -178,7 +180,7 @@ class ModelResourceMap
     // Validate the cached data against the actual imported layout, not timestamps alone.
     // This is metadata persistence, not a replacement for model/GPU import.
     bool Persist(const std::filesystem::path& source, const std::string& importIdentity,
-                 const std::filesystem::path& directory = "Data/Cache/ModelMaps")
+                 const std::filesystem::path& directory = CachePaths::Directory("ModelMaps"))
     {
         try
         {
@@ -189,28 +191,22 @@ class ModelResourceMap
             const auto file = directory / (name.str() + ".modelmap");
             const uint64_t fingerprint = Fingerprint(importIdentity);
             ModelResourceMap cached;
-            std::ifstream input(file, std::ios::binary);
-            if (input && cached.Read(input, fingerprint) && cached.Categories() == Categories()) return true;
-            input.close();
-            std::filesystem::create_directories(directory);
-            auto temporary = file;
-            temporary += ".tmp";
+            std::vector<char> bytes;
+            if (CacheFile::Load(file, bytes, MaxPayload + 32))
             {
-                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-                if (!output || !Write(output, fingerprint)) return false;
-                output.flush();
-                if (!output) return false;
+                std::istringstream input(std::string(bytes.begin(), bytes.end()), std::ios::binary);
+                if (cached.Read(input, fingerprint) && cached.Categories() == Categories())
+                {
+                    return true;
+                }
             }
-            std::error_code error;
-            std::filesystem::rename(temporary, file, error);
-            if (error)
+            std::ostringstream output(std::ios::binary);
+            if (!Write(output, fingerprint))
             {
-                // Windows rename cannot replace an existing destination.
-                std::filesystem::remove(file, error);
-                error.clear();
-                std::filesystem::rename(temporary, file, error);
+                return false;
             }
-            return !error;
+            const std::string payload = output.str();
+            return CacheFile::Store(file, payload);
         }
         catch (const std::exception&) { return false; }
     }
