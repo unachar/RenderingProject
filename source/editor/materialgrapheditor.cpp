@@ -1358,6 +1358,40 @@ namespace
         ImGui::SetNextItemWidth(width);
         switch (node.Kind)
         {
+            case Kind::ToonShading:
+            case Kind::LiveToonShading: {
+                if (node.Kind == Kind::LiveToonShading)
+                {
+                    NodeCombo(
+                        node, "Profile", 0, 3,
+                        [](int profile) {
+                            switch (profile)
+                            {
+                                case 0:
+                                    return "Hair";
+                                case 1:
+                                    return "Cloth";
+                                default:
+                                    return "Skin";
+                            }
+                        },
+                        "", width);
+                }
+                const auto slider = [&](const char* label, size_t component, float minimum) {
+                    ImGui::TextUnformatted(label);
+                    ImGui::SetNextItemWidth(width);
+                    const auto previous = node.Value;
+                    ImGui::PushID(static_cast<int>(component));
+                    const bool edited = ImGui::SliderFloat("##Value", &node.Value[component], minimum, 1.0f);
+                    TrackValueEdit(document, node, previous, edited);
+                    ImGui::PopID();
+                };
+                slider("Shadow Threshold", 1, 0.0f);
+                slider("Shadow Softness", 2, 0.001f);
+                slider("Shadow Strength", 3, 0.0f);
+                ImGui::TextDisabled("Connect to Output > Shading");
+                break;
+            }
             case Kind::ScalarParameter:
                 changed = ImGui::DragFloat("##Value", node.Value.data(), 0.01f);
                 TrackValueEdit(document, node, before, changed);
@@ -2814,7 +2848,7 @@ namespace
     // ============================================================ ノード追加（UE のパレット）
     const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture",         "Coordinates", "Object", "Math",
                                           "Vector",     "Color",     "Normal / Height", "Procedural", "Render / Original", "Utility",
-                                          "Comment"};
+                                          "Shading", "Comment"};
 
     uint64_t AddNodeAt(GraphDocument& document, Kind kind, ImVec2 position)
     {

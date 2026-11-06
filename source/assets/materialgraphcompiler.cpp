@@ -180,11 +180,13 @@ namespace
                                         "Thickness",
                                         "Absorption",
                                         "ShadingStrength"};
-                static_assert(sizeof(fields) / sizeof(fields[0]) == static_cast<size_t>(MaterialOutputPin::Count));
+                // Shading selects the renderer; it is not a pixel expression.
+                static_assert(sizeof(fields) / sizeof(fields[0]) == static_cast<size_t>(MaterialOutputPin::Shading));
                 const auto source = "material_node_" + std::to_string(node->Id);
                 result = "#line 1 \"" + source + "\"\nGeneratedMaterial result;\n";
                 m_Program.Sources.push_back({node->Id, source, 1});
-                for (size_t i = 0; i < node->InputPins.size() && i < static_cast<size_t>(MaterialOutputPin::Count); ++i)
+                for (size_t i = 0; i < node->InputPins.size() && i < static_cast<size_t>(MaterialOutputPin::Shading);
+                     ++i)
                 {
                     const auto input = Promote(Input(*node, i), MaterialGraph::Definition(node->Kind).Inputs[i].Type);
                     result += "result." + std::string(fields[i]) + " = " + input.Code + ";\n";
@@ -576,6 +578,13 @@ namespace
                 return found->second;
             }
             Expression expression;
+            if (MaterialGraph::Definition(node.Kind).OutputType == Type::Shading)
+            {
+                // Standalone inspection exposes settings; lighting is selected by ApplyShading.
+                expression = Literal(node.Value, Type::Vector4);
+                m_Expressions[node.Id] = expression;
+                return expression;
+            }
             if (node.Kind == Kind::Reroute || node.Kind == Kind::BreakVector)
             {
                 // 中継ノードは式をそのまま通す
@@ -2227,6 +2236,10 @@ namespace MaterialGraphVm
                 const auto V2 = Type::Vector2;
                 const auto V3 = Type::Vector3;
                 const auto V4 = Type::Vector4;
+                if (MaterialGraph::Definition(node.Kind).OutputType == Type::Shading)
+                {
+                    return Const(node.Value, V4);
+                }
                 if (node.Kind == Kind::Reroute || node.Kind == Kind::BreakVector)
                 {
                     return Input(node, 0);

@@ -17,6 +17,9 @@ namespace GraphVisuals
     {
         switch (kind)
         {
+            case MaterialNodeKind::ToonShading:
+            case MaterialNodeKind::LiveToonShading:
+                return {"Shading", IM_COL32(105, 92, 160, 255)};
             case MaterialNodeKind::Output:
                 return {"Output", IM_COL32(72, 72, 78, 255)};
             case MaterialNodeKind::Constant:
@@ -130,6 +133,9 @@ namespace GraphVisuals
         ImVec4 color;
         switch (type)
         {
+            case MaterialGraphType::Shading:
+                color = ImVec4(0.65f, 0.55f, 0.90f, 1.0f);
+                break;
             case MaterialGraphType::Scalar:
                 color = ImVec4(0.55f, 0.85f, 0.55f, 1.0f); // 緑
                 break;
@@ -154,6 +160,8 @@ namespace GraphVisuals
     {
         switch (type)
         {
+            case MaterialGraphType::Shading:
+                return "Shading";
             case MaterialGraphType::Scalar:
                 return "float";
             case MaterialGraphType::Vector2:

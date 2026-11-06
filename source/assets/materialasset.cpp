@@ -71,6 +71,11 @@ bool WriteAssetFile(const std::filesystem::path& path, const std::string& conten
 bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string& error)
 {
     error.clear();
+    if (material.ToonShading > 4)
+    {
+        error = "Invalid toonShading property";
+        return false;
+    }
     auto range = [&](float value, float minimum, float maximum, const char* property) {
         if (!std::isfinite(value) || value < minimum || value > maximum)
         {
@@ -93,7 +98,10 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
             return false;
         }
     }
-    if (!range(material.Metallic, 0, 1, "metallic") || !range(material.Roughness, 0, 1, "roughness") ||
+    if (!range(material.ToonShadowThreshold, 0, 1, "toonShadowThreshold") ||
+        !range(material.ToonShadowSoftness, 0.001f, 1, "toonShadowSoftness") ||
+        !range(material.ToonShadowStrength, 0, 1, "toonShadowStrength") ||
+        !range(material.Metallic, 0, 1, "metallic") || !range(material.Roughness, 0, 1, "roughness") ||
         !range(material.ParallaxDepth, 0, 0.2f, "parallaxDepth") ||
         !range(material.ParallaxSteps, 8, 1024, "parallaxSteps") || !range(material.NormalScale, 0, 8, "normalScale") ||
         !range(material.AOStrength, 0, 1, "aoStrength") ||
@@ -194,6 +202,15 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         return false;
     }
     MaterialAssetData result;
+    if (root.isMember("toonShading"))
+    {
+        if (!root["toonShading"].isUInt() || root["toonShading"].asUInt() > 4)
+        {
+            error = "Invalid toonShading property";
+            return false;
+        }
+        result.ToonShading = root["toonShading"].asUInt();
+    }
     const auto& parameters = root["parameters"];
     const auto& renderState = root["renderState"];
     const auto& textures = root["textures"];
@@ -205,7 +222,10 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
             return false;
         }
     }
-    if (!ReadColor(parameters, "baseColor", result.BaseColor, error) ||
+    if (!ReadFloat(parameters, "toonShadowThreshold", result.ToonShadowThreshold, error) ||
+        !ReadFloat(parameters, "toonShadowSoftness", result.ToonShadowSoftness, error) ||
+        !ReadFloat(parameters, "toonShadowStrength", result.ToonShadowStrength, error) ||
+        !ReadColor(parameters, "baseColor", result.BaseColor, error) ||
         !ReadColor(parameters, "emissiveColor", result.EmissiveColor, error) ||
         !ReadFloat(parameters, "metallic", result.Metallic, error) ||
         !ReadFloat(parameters, "roughness", result.Roughness, error) ||
@@ -344,6 +364,7 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     Json::Value root(Json::objectValue);
     root["version"] = 1;
     root["shader"] = "PBR";
+    root["toonShading"] = material.ToonShading;
     root["surfaceType"] = "Opaque";
     if (material.Surface == MaterialSurface::Masked)
     {
@@ -362,6 +383,9 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     state["shadowMode"] = shadowNames[static_cast<size_t>(material.ShadowMode)];
     state["shadowCutoff"] = material.ShadowCutoff;
     auto& parameters = root["parameters"];
+    parameters["toonShadowThreshold"] = material.ToonShadowThreshold;
+    parameters["toonShadowSoftness"] = material.ToonShadowSoftness;
+    parameters["toonShadowStrength"] = material.ToonShadowStrength;
     for (float value : material.BaseColor)
     {
         parameters["baseColor"].append(value);

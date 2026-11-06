@@ -60,6 +60,11 @@ enum class MaterialTextureSlot : uint32_t
 
 struct MaterialAssetData
 {
+    // 0 = PBR, 1 = Toon, 2 = LiveToon Hair, 3 = LiveToon Cloth, 4 = LiveToon Skin.
+    uint32_t ToonShading = 0;
+    float ToonShadowThreshold = 0.44f;
+    float ToonShadowSoftness = 0.045f;
+    float ToonShadowStrength = 1.0f;
     std::array<float, 4> BaseColor{1, 1, 1, 1};
     float Metallic = 0.0f;
     float Roughness = 0.5f;

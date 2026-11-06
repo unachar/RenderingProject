@@ -8,6 +8,7 @@
 #include "assets/thumbnailgeometry.h"
 #include "materialmanager.h"
 #include "materialbindings.h"
+#include "livetoonstyle.h"
 #include "frameconstants.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
@@ -571,6 +572,10 @@ namespace
         constexpr size_t flagsOffset = shadowDataOffset + RendererState::g_kMAX_SHADER_LIGHTS;
         lights[shadowDataOffset] = {-1, 0, 0, 0}; // スタジオライトにはシーンのシャドウマップがない。
         lights[flagsOffset] = {1, 1, 0, 0};       // 不透明パスとフォワードパスで物理ライティングを有効にする。
+        XMFLOAT4 toonStyle[5];
+        LiveToonStyle::Write(toonStyle);
+        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 5;
+        std::copy(std::begin(toonStyle), std::end(toonStyle), lights + toonStyleOffset);
         commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() +
                                                            GraphicsDevice::GetFrameIndex() * constantBytes);
         // 独立したプレビューシーンのため、影とレイのフラグをゼロにする。
@@ -607,7 +612,7 @@ namespace
         constants.UseTexture = material.UseTexture;
         constants.UseNormalMap = material.NormalMapID >= 0;
         constants.MaterialMode = 1;
-        constants.ShaderClass = static_cast<int>(ShaderClass::PBR);
+        constants.ShaderClass = static_cast<int>(material.ShaderClass);
         constants.MaterialMetallic = material.Metallic;
         constants.MaterialRoughness = material.Roughness;
         constants.MaterialFresnel = material.Fresnel;

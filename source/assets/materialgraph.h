@@ -12,7 +12,8 @@ enum class MaterialGraphType
     Vector2 = 2,
     Vector3 = 3,
     Vector4 = 4,
-    Numeric = 0
+    Numeric = 0,
+    Shading = 5
 };
 enum class MaterialNodeKind
 {
@@ -138,8 +139,8 @@ enum class MaterialNodeKind
     ObjectBounds,      // ローカルの範囲。Value[0] = 出力：0 大きさ / 1 中心 / 2 最小 / 3 最大
     BoundingBoxUVW,    // 範囲内の 0〜1 座標（ローカル。UE の BoundingBoxBased_0-1_UVW）
     PerInstanceRandom, // オブジェクトごとに固定の 0〜1 の乱数
-    TransformVector, // 方向の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル / 2 ワールド→ビュー / 3
-                     // ビュー→ワールド
+    TransformVector,   // 方向の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル / 2 ワールド→ビュー / 3
+                       // ビュー→ワールド
     TransformPosition, // 位置の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル
     CameraPosition,    // カメラのワールド座標
     PixelDepth,        // カメラからの奥行き（ビュー空間の Z）
@@ -155,7 +156,9 @@ enum class MaterialNodeKind
     ReflectVector,
     RenderSoftBand,
     RenderRadialPulse,
-    RenderFlowUV
+    RenderFlowUV,
+    ToonShading,
+    LiveToonShading
 };
 
 // Convert To Solid の方式（node.Value[0]）
@@ -252,6 +255,7 @@ enum class MaterialOutputPin : size_t
     Thickness,
     Absorption,
     ShadingStrength,
+    Shading,
     Count
 };
 
@@ -442,6 +446,8 @@ class MaterialGraph
     const MaterialGraphLink* RawInputLink(uint64_t pin) const;
     // ノード出力の型（Numeric の演算は入力から決まる。Append / Component Mask は成分数から決まる）
     MaterialGraphType ResolveOutputType(uint64_t node) const;
+    // Shading is a material-level choice, evaluated independently of pixel expressions.
+    void ApplyShading(MaterialAssetData& material) const;
     bool Validate(std::string& error) const;
     std::string Serialize() const;
     static bool Deserialize(const std::string& contents, MaterialGraph& graph, std::string& error);

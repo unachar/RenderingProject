@@ -474,6 +474,10 @@ namespace MaterialGraphEval
     {
         Value result;
         const Kind kind = node.Kind;
+        if (MaterialGraph::Definition(kind).OutputType == MaterialGraphType::Shading)
+        {
+            return Make(node.Value.data(), 4);
+        }
         if (GraphMath::IsConstantNode(kind))
         {
             const auto type = MaterialGraph::Definition(kind).OutputType;

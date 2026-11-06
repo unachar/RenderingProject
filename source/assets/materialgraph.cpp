@@ -71,7 +71,8 @@ namespace
           {"Transmission Roughness", Type::Scalar, {0.02f}},
           {"Thickness", Type::Scalar, {0.1f}},
           {"Absorption", Type::Vector3},
-          {"Shading Model Strength", Type::Scalar, {1}}}},
+          {"Shading Model Strength", Type::Scalar, {1}},
+          {"Shading", Type::Shading}}},
         {Kind::Group, "Comment Group", Type::Numeric, {}},
         {Kind::Constant2Vector, "Constant2Vector", Type::Vector2, {{"R", Type::Scalar}, {"G", Type::Scalar}}},
         {Kind::Constant3Vector,
@@ -417,7 +418,9 @@ namespace
          {{"UV", Type::Vector2},
           {"Flow", Type::Vector2, {0.1f, 0}},
           {"Time", Type::Scalar},
-          {"Distortion", Type::Scalar, {0.025f}}}}};
+          {"Distortion", Type::Scalar, {0.025f}}}},
+        {Kind::ToonShading, "Toon Shading", Type::Shading, {}},
+        {Kind::LiveToonShading, "LiveToon Shading", Type::Shading, {}}};
 
     int Dimensions(Type type)
     {
@@ -426,6 +429,10 @@ namespace
 
     bool Compatible(Type source, Type target)
     {
+        if (source == Type::Shading || target == Type::Shading)
+        {
+            return source == target;
+        }
         // Vector3 → Vector4 はアルファ 1 を足して受け付ける（UE の Base Color に float3 を繋ぐのと同じ）
         return target == Type::Numeric || source == Type::Scalar || source == target ||
                (static_cast<int>(target) > 1 && static_cast<int>(source) > static_cast<int>(target)) ||
@@ -631,6 +638,23 @@ MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
              pinOf(MaterialOutputPin::ShadingStrength));
         y += 100.0f;
     }
+    if (material.ToonShading != 0)
+    {
+        Kind kind = Kind::ToonShading;
+        if (material.ToonShading > 1)
+        {
+            kind = Kind::LiveToonShading;
+        }
+        float profile = 1.0f;
+        if (material.ToonShading > 1)
+        {
+            profile = static_cast<float>(material.ToonShading - 2);
+        }
+        link(add(kind, Definition(kind).Name,
+                 {profile, material.ToonShadowThreshold, material.ToonShadowSoftness, material.ToonShadowStrength}, 40,
+                 y),
+             pinOf(MaterialOutputPin::Shading));
+    }
     graph.SetMode(mode);
     graph.Settings.Cull = static_cast<int>(material.Cull);
     graph.Settings.ShadingModel = static_cast<int>((std::min)(material.ShadingModel, 5u));
@@ -663,6 +687,10 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
     node.Position = {x, y};
     switch (kind)
     {
+        case Kind::ToonShading:
+        case Kind::LiveToonShading:
+            node.Value = {1.0f, 0.44f, 0.045f, 1.0f}; // Profile, threshold, softness, strength.
+            break;
         case Kind::TextureCoordinate:
             node.Value = {1, 1, 0, 0}; // UTiling, VTiling
             break;
@@ -1147,7 +1175,8 @@ bool MaterialGraph::SplitOutput(uint64_t id, std::string& error, int forcedCount
 {
     const auto* target = FindNode(id);
     const bool forced = forcedCount >= 2 && forcedCount <= 4 && target && target->SplitPins.empty() &&
-                        target->OutputPin != 0 && target->Kind != Kind::Reroute;
+                        target->OutputPin != 0 && target->Kind != Kind::Reroute &&
+                        Definition(target->Kind).OutputType != Type::Shading;
     if (!forced && !CanSplitOutput(id))
     {
         error = "float2 以上の出力だけ分割できます。";
@@ -1397,6 +1426,37 @@ bool MaterialGraph::Connect(uint64_t source, uint64_t target, std::string& error
     return true;
 }
 
+void MaterialGraph::ApplyShading(MaterialAssetData& material) const
+{
+    material.ToonShading = 0;
+    material.ToonShadowThreshold = 0.44f;
+    material.ToonShadowSoftness = 0.045f;
+    material.ToonShadowStrength = 1.0f;
+    for (const auto& output : Nodes)
+    {
+        const size_t input = static_cast<size_t>(MaterialOutputPin::Shading);
+        if (output.Kind != Kind::Output || input >= output.InputPins.size())
+        {
+            continue;
+        }
+        const auto* link = InputLink(output.InputPins[input]);
+        const auto* node = link ? FindPinNode(link->SourcePin) : nullptr;
+        if (!node || (node->Kind != Kind::ToonShading && node->Kind != Kind::LiveToonShading))
+        {
+            return;
+        }
+        material.ToonShading = 1;
+        if (node->Kind == Kind::LiveToonShading)
+        {
+            material.ToonShading = 2 + static_cast<uint32_t>(std::clamp(node->Value[0], 0.0f, 2.0f));
+        }
+        material.ToonShadowThreshold = std::clamp(node->Value[1], 0.0f, 1.0f);
+        material.ToonShadowSoftness = std::clamp(node->Value[2], 0.001f, 1.0f);
+        material.ToonShadowStrength = std::clamp(node->Value[3], 0.0f, 1.0f);
+        return;
+    }
+}
+
 bool MaterialGraph::Validate(std::string& error) const
 {
     error.clear();
@@ -1435,9 +1495,9 @@ bool MaterialGraph::Validate(std::string& error) const
             error = "Invalid output pin identity.";
             return false;
         }
-        if (node.SplitPins.size() > 4 ||
-            ((node.Kind == Kind::Output || node.Kind == Kind::Group || node.Kind == Kind::Reroute) &&
-             !node.SplitPins.empty()))
+        if (node.SplitPins.size() > 4 || ((node.Kind == Kind::Output || node.Kind == Kind::Group ||
+                                           node.Kind == Kind::Reroute || definition.OutputType == Type::Shading) &&
+                                          !node.SplitPins.empty()))
         {
             error = "Invalid split output pins.";
             return false;

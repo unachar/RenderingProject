@@ -131,6 +131,30 @@ MaterialComponent MaterialManager::BuildPreviewBinding(
     MaterialComponent binding;
     binding.ShaderClassMode = MaterialMode::Manual;
     binding.ShaderClass = ShaderClass::PBR;
+    switch (material.ToonShading)
+    {
+        case 1:
+            binding.ShaderClass = ShaderClass::Toon;
+            break;
+        case 2:
+            binding.ShaderClass = ShaderClass::Hair;
+            break;
+        case 3:
+            binding.ShaderClass = ShaderClass::Cloth;
+            break;
+        case 4:
+            binding.ShaderClass = ShaderClass::Skin;
+            break;
+    }
+    binding.ShadowThreshold = material.ToonShadowThreshold;
+    binding.ShadowSoftness = material.ToonShadowSoftness;
+    binding.ShadowStrength = material.ToonShadowStrength;
+    for (auto& part : binding.PartParams)
+    {
+        part.ShadowThreshold = material.ToonShadowThreshold;
+        part.ShadowSoftness = material.ToonShadowSoftness;
+        part.ShadowStrength = material.ToonShadowStrength;
+    }
     binding.BaseColor = XMFLOAT4(material.BaseColor.data());
     binding.Metallic = material.Metallic;
     binding.Roughness = material.Roughness;
@@ -227,8 +251,9 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
         runtime.TextureDescriptors != descriptors ||
         std::memcmp(runtime.Binding.Noise.data(), noise.data(), sizeof(noise)) != 0)
     {
-        if (runtime.Revision == 0 || runtime.BoundData.Cull != material.Cull ||
-            runtime.BoundData.Surface != material.Surface || runtime.BoundData.DepthWrite != material.DepthWrite ||
+        if (runtime.Revision == 0 || runtime.BoundData.ToonShading != material.ToonShading ||
+            runtime.BoundData.Cull != material.Cull || runtime.BoundData.Surface != material.Surface ||
+            runtime.BoundData.DepthWrite != material.DepthWrite ||
             runtime.Binding.IsTransparent != binding.IsTransparent ||
             (material.Surface == MaterialSurface::Masked && (runtime.BoundData.AlphaCutoff != material.AlphaCutoff ||
                                                              runtime.BoundData.BaseColor[3] != material.BaseColor[3] ||
@@ -281,6 +306,19 @@ void MaterialManager::SetGraphProgram(AssetHandle handle, const MaterialGraph* g
         runtime.GraphStatus.clear();
         DisableGraphProgram(runtime);
         return;
+    }
+    std::string validationError;
+    if (!graph->Validate(validationError))
+    {
+        runtime.GraphStatus = validationError;
+        DisableGraphProgram(runtime);
+        return;
+    }
+    auto material = runtime.Editing;
+    graph->ApplyShading(material);
+    if (material != runtime.Editing)
+    {
+        SetEditing(handle, material);
     }
     if (!graph->Settings.RuntimeEvaluation)
     {
@@ -606,4 +644,3 @@ void MaterialManager::NotifyAssignmentsChanged()
         }
     }
 }
-

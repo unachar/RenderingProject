@@ -967,6 +967,8 @@ namespace MaterialGraphPreview
         switch (node.Kind)
         {
             // プレビューしても意味の無いノード（UE でもプレビューを出さない / 画面全体が 1 色になる）
+            case Kind::ToonShading:
+            case Kind::LiveToonShading:
             case Kind::Group:
             case Kind::Reroute:
             case Kind::Time:              // 時刻（数値）
@@ -1825,6 +1827,8 @@ namespace MaterialGraphPreview
                 result.Notes.push_back("Time を使う式は、グラフ設定の「ベイク時刻」の値でテクスチャに焼かれます");
             }
         }
+
+        graph.ApplyShading(result.Data);
 
         // ---- グラフ設定（UE のマテリアル Details）で上書き
         const auto& settings = graph.Settings;
