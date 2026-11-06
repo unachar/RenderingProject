@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "niagararenderer.h"
 #include "materialpreview.h"
 #include "animationpreviewwindow.h"
 #include "modelmanager.h"
@@ -66,6 +67,7 @@ void RenderFrame::BeginDraw()
     SetDescriptorHeap();
     static uint64_t editorFrame = 0;
     AssetThumbnailManager::BeginFrame(++editorFrame);
+    NiagaraRenderer::BeginFrame();
     ImGuiManager::Update();
 
     // UI でシーンを読み替えるとライトの EntityID も変わるため、更新後のシーンからキャッシュを作る。
@@ -77,6 +79,7 @@ void RenderFrame::BeginDraw()
 
 void RenderFrame::EndDraw()
 {
+    NiagaraRenderer::RenderPreview();
     AnimationPreviewWindow::Render();
     MaterialPreview::Render();
     // マテリアルグラフの GPU 評価（ノードプレビュー / ベイク）。UI の後、ImGui の描画の前に記録する

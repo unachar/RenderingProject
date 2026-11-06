@@ -3,6 +3,7 @@
 //  データ操作は TimelineCurve、エンジン連携は ISequencerBackend を経由する。
 // ============================================================================
 #include "pch.h"
+#include "timelinewidgets.h"
 #include "editorworkspace.h" // プロジェクトのプリコンパイル済みヘッダー（テストでは空のスタブ）
 #ifdef min
 #undef min
@@ -597,12 +598,12 @@ float SequencerWindow::GetFrameRate() const
 
 float SequencerWindow::TimeToX(float time) const
 {
-    return m_TimelineMin.x + (time - m_Settings.ViewStart) * m_Settings.PixelsPerSecond;
+    return TimelineWidgets::Axis{m_TimelineMin.x, m_Settings.ViewStart, m_Settings.PixelsPerSecond}.ToX(time);
 }
 
 float SequencerWindow::XToTime(float x) const
 {
-    return m_Settings.ViewStart + (x - m_TimelineMin.x) / m_Settings.PixelsPerSecond;
+    return TimelineWidgets::Axis{m_TimelineMin.x, m_Settings.ViewStart, m_Settings.PixelsPerSecond}.ToTime(x);
 }
 
 ImU32 SequencerWindow::CategoryColor(Category category, float alpha) const
@@ -2152,37 +2153,18 @@ void SequencerWindow::DrawRuler(TimelineComponent& timeline, ImDrawList* drawLis
     float minor = 0.5f;
     float origin = 0.0f;
     ComputeTickSteps(major, minor, origin);
-    const float viewEnd = XToTime(max.x);
-    // 補助目盛り
-    {
-        const long long first = static_cast<long long>(std::floor((m_Settings.ViewStart - origin) / minor));
-        const long long last = static_cast<long long>(std::ceil((viewEnd - origin) / minor));
-        for (long long index = first; index <= last && index - first < 4000; ++index)
-        {
-            const float x = TimeToX(origin + index * minor);
-            drawList->AddLine({x, max.y - 5.0f}, {x, max.y}, IM_COL32(255, 255, 255, 60));
-        }
-    }
-    {
-        const long long first = static_cast<long long>(std::floor((m_Settings.ViewStart - origin) / major));
-        const long long last = static_cast<long long>(std::ceil((viewEnd - origin) / major));
-        char label[48];
-        for (long long index = first; index <= last && index - first < 2000; ++index)
-        {
-            const float time = origin + index * major;
-            const float x = TimeToX(time);
-            drawList->AddLine({x, max.y - 11.0f}, {x, max.y}, IM_COL32(255, 255, 255, 130));
+    const TimelineWidgets::Axis axis{m_TimelineMin.x, m_Settings.ViewStart, m_Settings.PixelsPerSecond};
+    TimelineWidgets::DrawTicks(drawList, axis, min, max, major, minor, origin, kText, kTextDim,
+        [&](float time, float step, char* label, size_t capacity) {
             if (static_cast<TimeFormat>(m_Settings.TimeFormatValue) == TimeFormat::Seconds)
             {
-                std::snprintf(label, sizeof(label), major < 0.1f ? "%.2fs" : (major < 1.0f ? "%.1fs" : "%.0fs"), time);
+                std::snprintf(label, capacity, step < 0.1f ? "%.2fs" : (step < 1.0f ? "%.1fs" : "%.0fs"), time);
             }
             else
             {
-                FormatTime(time, label, sizeof(label));
+                FormatTime(time, label, capacity);
             }
-            drawList->AddText({x + 3.0f, min.y + 2.0f}, time < 0.0f ? kTextDim : kText, label);
-        }
-    }
+        });
     // タイムラインの終端（以降を暗く）
     const float endX = TimeToX(timeline.Duration);
     if (endX < max.x)
@@ -2208,9 +2190,7 @@ void SequencerWindow::DrawRuler(TimelineComponent& timeline, ImDrawList* drawLis
     }
     // 再生ヘッド
     const float headX = TimeToX(timeline.CurrentTime);
-    drawList->AddTriangleFilled({headX - 6.0f, min.y + 10.0f}, {headX + 6.0f, min.y + 10.0f}, {headX, max.y - 2.0f},
-                                kPlayhead);
-    drawList->AddRectFilled({headX - 6.0f, min.y}, {headX + 6.0f, min.y + 10.0f}, kPlayhead, 2.0f);
+    TimelineWidgets::DrawPlayhead(drawList, headX, min, max, kPlayhead);
     drawList->PopClipRect();
 
     // ---- 入力：クリック / ドラッグで再生ヘッドを移動、[ ] で範囲、終端マーカーで長さを変更

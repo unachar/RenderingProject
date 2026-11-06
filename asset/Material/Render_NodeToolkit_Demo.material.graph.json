@@ -1,0 +1,423 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "Material Output",
+      "name": "Material Output",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "output": 0,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        1250,
+        120
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 20,
+      "kind": "Render Flow UV",
+      "name": "Render Flow UV",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        21,
+        22,
+        23,
+        24
+      ],
+      "output": 25,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        -800,
+        0
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 26,
+      "kind": "Linear Gradient",
+      "name": "Linear Gradient",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        27
+      ],
+      "output": 28,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        -500,
+        0
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 29,
+      "kind": "Render Soft Band",
+      "name": "Render Soft Band",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        30,
+        31,
+        32,
+        33
+      ],
+      "output": 34,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        -200,
+        0
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 35,
+      "kind": "Render Radial Pulse",
+      "name": "Render Radial Pulse",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        36,
+        37,
+        38,
+        39
+      ],
+      "output": 40,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        -200,
+        300
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 41,
+      "kind": "Add",
+      "name": "Add",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        42,
+        43
+      ],
+      "output": 44,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        100,
+        80
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 45,
+      "kind": "Constant3Vector",
+      "name": "Constant3Vector",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        46,
+        47,
+        48
+      ],
+      "output": 49,
+      "value": [
+        0.06,
+        0.35,
+        0.9,
+        0
+      ],
+      "position": [
+        100,
+        400
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 50,
+      "kind": "Multiply",
+      "name": "Multiply",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        51,
+        52
+      ],
+      "output": 53,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        450,
+        100
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 54,
+      "kind": "Logarithm10",
+      "name": "Logarithm10",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        55
+      ],
+      "output": 56,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        -500,
+        600
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 57,
+      "kind": "Exponential2",
+      "name": "Exponential2",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        58
+      ],
+      "output": 59,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        -200,
+        600
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 60,
+      "kind": "Inverse Lerp",
+      "name": "Inverse Lerp",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        61,
+        62,
+        63
+      ],
+      "output": 64,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        100,
+        650
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 65,
+      "kind": "Reflect Vector",
+      "name": "Reflect Vector",
+      "texture": "guid:0000000000000000",
+      "inputs": [
+        66,
+        67
+      ],
+      "output": 68,
+      "value": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "position": [
+        800,
+        500
+      ],
+      "size": [
+        300,
+        200
+      ]
+    },
+    {
+      "id": 81,
+      "inputs": [
+        82,
+        83,
+        84
+      ],
+      "output": 85,
+      "kind": "Constant3Vector",
+      "name": "Constant3Vector",
+      "texture": "guid:0000000000000000",
+      "value": [
+        0,
+        0,
+        1,
+        0
+      ],
+      "position": [
+        480,
+        850
+      ],
+      "size": [
+        300,
+        200
+      ]
+    }
+  ],
+  "links": [
+    {
+      "id": 69,
+      "source": 25,
+      "target": 27
+    },
+    {
+      "id": 70,
+      "source": 28,
+      "target": 30
+    },
+    {
+      "id": 71,
+      "source": 34,
+      "target": 42
+    },
+    {
+      "id": 72,
+      "source": 40,
+      "target": 43
+    },
+    {
+      "id": 73,
+      "source": 44,
+      "target": 51
+    },
+    {
+      "id": 74,
+      "source": 49,
+      "target": 52
+    },
+    {
+      "id": 75,
+      "source": 53,
+      "target": 2
+    },
+    {
+      "id": 76,
+      "source": 53,
+      "target": 6
+    },
+    {
+      "id": 77,
+      "source": 56,
+      "target": 58
+    },
+    {
+      "id": 78,
+      "source": 59,
+      "target": 61
+    },
+    {
+      "id": 79,
+      "source": 64,
+      "target": 4
+    },
+    {
+      "id": 80,
+      "source": 68,
+      "target": 5
+    },
+    {
+      "id": 86,
+      "source": 85,
+      "target": 66
+    }
+  ],
+  "settings": {
+    "runtimeEvaluation": true,
+    "solidSpace": 1
+  }
+}

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialgraphevaluator.h"
 #include "materialgraphmath.h"
 #include "procedural/noise.h"
@@ -380,7 +380,7 @@ namespace MaterialGraphEval
                         {
                             // 分割した出力（X / Y / Z / W）：成分を取り出す。無い成分は 0（スカラーは全成分同じ）
                             const int component = static_cast<int>(outputIndex) - 1;
-                            const float scalar = value.N == 1 ? value.V[0]
+                            const float scalar = value.N == 1          ? value.V[0]
                                                  : component < value.N ? value.V[component]
                                                                        : 0.0f;
                             value = Value{};
@@ -541,7 +541,8 @@ namespace MaterialGraphEval
                 [[fallthrough]];
             case Kind::TextureSample: {
                 const Value uv = Promote(Input(node, node.Kind == Kind::ConvertToTexture ? 1 : 0, depth), 2);
-                const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                const auto sampler =
+                    static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                 result.N = 4;
                 if (node.Texture != 0 && m_Sampler &&
                     m_Sampler(node.Texture, uv.V[0], uv.V[1], sampler != MaterialSamplerType::Color, result.V))
@@ -808,7 +809,8 @@ namespace MaterialGraphEval
             // ---------------------------------------------------------------- 便利ノード（CPU プレビュー / ベイク）
             case Kind::LocalPosition:
                 return Make(m_Context.Position, 3); // プレビュー / ベイクではワールド位置と同じ
-            // ---------------------------------------------------------------- オブジェクト / カメラ（プレビュー / ベイク用の値）
+            // ---------------------------------------------------------------- オブジェクト / カメラ（プレビュー /
+            // ベイク用の値）
             //  プレビューにはオブジェクトが無いので、原点 0・スケール 1・範囲 -1〜1・乱数 0.5 として評価する
             case Kind::ObjectPosition:
                 return Make3(0.0f, 0.0f, 0.0f);
@@ -923,7 +925,8 @@ namespace MaterialGraphEval
                 const Value position = Promote(Input(node, 0, depth), 3);
                 const float scale = Input(node, 1, depth).V[0];
                 const float sharpness = (std::max)(Input(node, 2, depth).V[0], 0.01f);
-                const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                const auto sampler =
+                    static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                 const bool raw = sampler != MaterialSamplerType::Color;
                 float p[3];
                 for (int i = 0; i < 3; ++i)
@@ -1010,8 +1013,9 @@ namespace MaterialGraphEval
                         const auto tiles = GraphMath::HexGrid(uvs[axis][0], uvs[axis][1]);
                         for (int t = 0; t < 3; ++t)
                         {
-                            const uint32_t h = Hash(planeSeed ^ Hash(static_cast<uint32_t>(tiles.Vertex[t][0]) * 0x8da6b343u ^
-                                                                     Hash(static_cast<uint32_t>(tiles.Vertex[t][1]) * 0xd8163841u)));
+                            const uint32_t h =
+                                Hash(planeSeed ^ Hash(static_cast<uint32_t>(tiles.Vertex[t][0]) * 0x8da6b343u ^
+                                                      Hash(static_cast<uint32_t>(tiles.Vertex[t][1]) * 0xd8163841u)));
                             const float angle = Unit(Hash(h ^ 0x68bc21ebu)) * 6.28318531f * randomness;
                             const float c = cosf(angle), sn = sinf(angle);
                             const float u = uvs[axis][0] * c - uvs[axis][1] * sn + Unit(h);
@@ -1162,6 +1166,47 @@ namespace MaterialGraphEval
             case Kind::Pi:
                 result.V[0] = kPi * node.Value[0];
                 return result;
+            case Kind::InverseLerp: {
+                result = Input(node, 0, depth);
+                const float low = Input(node, 1, depth).V[0];
+                const float high = Input(node, 2, depth).V[0];
+                for (int component = 0; component < result.N; ++component)
+                {
+                    result.V[component] = SafeDivide(result.V[component] - low, high - low);
+                }
+                return result;
+            }
+            case Kind::ReflectVector: {
+                const Value incident = Promote(Input(node, 0, depth), 3);
+                const Value normal = Promote(Input(node, 1, depth), 3);
+                const float scale = 2.0f * SafeDivide(Dot3(incident.V, normal.V), Dot3(normal.V, normal.V));
+                result.N = 3;
+                for (int component = 0; component < 3; ++component)
+                {
+                    result.V[component] = incident.V[component] - scale * normal.V[component];
+                }
+                return result;
+            }
+            case Kind::RenderSoftBand:
+                result.V[0] = GraphMath::RenderSoftBand(Input(node, 0, depth).V[0], Input(node, 1, depth).V[0],
+                                                        Input(node, 2, depth).V[0], Input(node, 3, depth).V[0]);
+                return result;
+            case Kind::RenderRadialPulse: {
+                const auto position = Promote(Input(node, 0, depth), 3);
+                result.V[0] = GraphMath::RenderRadialPulse(position.V, Input(node, 1, depth).V[0],
+                                                           Input(node, 2, depth).V[0], Input(node, 3, depth).V[0]);
+                return result;
+            }
+            case Kind::RenderFlowUV: {
+                const auto uv = Promote(Input(node, 0, depth), 2);
+                const auto flow = Promote(Input(node, 1, depth), 2);
+                const float time = Input(node, 2, depth).V[0];
+                const float distortion = Input(node, 3, depth).V[0];
+                result.N = 2;
+                result.V[0] = uv.V[0] + flow.V[0] * time + std::sin(uv.V[1] * 6.283185307f + time) * distortion;
+                result.V[1] = uv.V[1] + flow.V[1] * time + std::sin(uv.V[0] * 6.283185307f - time) * distortion;
+                return result;
+            }
             case Kind::RemapValueRange: {
                 result = Input(node, 0, depth);
                 const float inLow = Input(node, 1, depth).V[0];
@@ -1271,7 +1316,8 @@ namespace MaterialGraphEval
                                     (node.Kind == Kind::ConvertToNormalHeight && node.Value[0] > 0.5f);
                 const auto tap = [&](float du, float dv, float& height) {
                     float texel[4]{};
-                    if (node.Texture == 0 || !m_Sampler || !m_Sampler(node.Texture, uv.V[0] + du, uv.V[1] + dv, true, texel))
+                    if (node.Texture == 0 || !m_Sampler ||
+                        !m_Sampler(node.Texture, uv.V[0] + du, uv.V[1] + dv, true, texel))
                     {
                         return false;
                     }
@@ -1313,7 +1359,8 @@ namespace MaterialGraphEval
                 const float a = Input(node, 0, depth).V[0];
                 const float b = Input(node, 1, depth).V[0];
                 const float factor = Input(node, 2, depth).V[0];
-                result.V[0] = GraphMath::NoiseCombine(static_cast<int>(node.Value[0]), a, b, factor, node.Value[1] > 0.5f);
+                result.V[0] =
+                    GraphMath::NoiseCombine(static_cast<int>(node.Value[0]), a, b, factor, node.Value[1] > 0.5f);
                 return result;
             }
             case Kind::NoiseLayers: {
@@ -1418,8 +1465,3 @@ namespace MaterialGraphEval
         }
     }
 } // namespace MaterialGraphEval
-
-
-
-
-

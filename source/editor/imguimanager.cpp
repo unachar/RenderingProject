@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "niagarawindow.h"
 #include "envflags.h"
 #include "thumbnailvalidation.h"
 #include "materialmanager.h"
@@ -182,6 +183,7 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 
 void ImGuiManager::Uninit()
 {
+    NiagaraWindow::Shutdown();
     MaterialGraphEditor::Shutdown();
     EditorWorkspaceManager::Get().Shutdown();
     SequencerEditorBridge::Shutdown();
@@ -239,7 +241,7 @@ void ImGuiManager::Update()
     DebugSystem::SetShowLightDebug(m_ShowLightDebug);
 
     ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+    if (!NiagaraWindow::HasFocus() && !io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
     {
         if (io.KeyShift && MaterialEditorHasFocus())
         {
@@ -258,7 +260,7 @@ void ImGuiManager::Update()
             Undo();
         }
     }
-    if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
+    if (!NiagaraWindow::HasFocus() && !io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
     {
         if (MaterialEditorHasFocus())
         {
@@ -272,7 +274,7 @@ void ImGuiManager::Update()
 
     MaterialPreview::SetVisible(false);
     // Ctrl+S：シーンを保存（未保存の新規シーンなら名前を付けて保存）、Ctrl+Shift+S：名前を付けて保存、Ctrl+N：新規シーン
-    if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
+    if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus() && !NiagaraWindow::HasFocus())
     {
         SaveCurrentScene(io.KeyShift);
         string error;
@@ -282,7 +284,7 @@ void ImGuiManager::Update()
             AddLog("Scene save failed: %s", error.c_str());
         }
     }
-    if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N, false))
+    if (!NiagaraWindow::HasFocus() && !io.WantTextInput && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N, false))
     {
         RequestNewScene();
     }
@@ -291,7 +293,7 @@ void ImGuiManager::Update()
     // マテリアルグラフ操作中の Q / W / E / R（整列・配置キー）でギズモが切り替わらないようにする
     const bool canSwitchGizmo = !io.WantTextInput && !ImGui::IsAnyItemActive() &&
                                 !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGuizmo::IsUsingAny() &&
-                                !MaterialGraphEditor::HasFocus();
+                                !MaterialGraphEditor::HasFocus() && !NiagaraWindow::HasFocus();
     if (canSwitchGizmo)
     {
         // Unityと同じ割り当て
@@ -321,7 +323,7 @@ void ImGuiManager::Update()
     }
     // Ctrl+D：複製（Unityと同じ）。入力中・ギズモ操作中・カメラ飛行中・マテリアルエディター操作中は無効
     if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !ImGui::IsAnyItemActive() &&
-        !ImGuizmo::IsUsingAny() && !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !MaterialEditorHasFocus() &&
+        !ImGuizmo::IsUsingAny() && !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !MaterialEditorHasFocus() && !NiagaraWindow::HasFocus() &&
         !m_AssetBrowserFocused && // アセットブラウザでの Ctrl+D はアセットの複製
         ImGui::IsKeyPressed(ImGuiKey_D, false))
     {

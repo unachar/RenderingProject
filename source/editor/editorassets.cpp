@@ -1,4 +1,6 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "niagarawindow.h"
+#include "../effects/niagara.h"
 #include "editorpreferences.h"
 #include "editoricons.h"
 #include <chrono>
@@ -98,6 +100,16 @@ namespace
             drawList->AddQuadFilled(at(8, 1.5f), at(14, 5), at(8, 8.5f), at(2, 5), IM_COL32(151, 218, 255, 255));
             drawList->AddQuadFilled(at(2, 5), at(8, 8.5f), at(8, 15), at(2, 11.5f), IM_COL32(88, 176, 237, 255));
             drawList->AddQuadFilled(at(8, 8.5f), at(14, 5), at(14, 11.5f), at(8, 15), IM_COL32(57, 137, 215, 255));
+            return;
+        }
+        if (extension == ".naiagara")
+        {
+            const ImU32 color = IM_COL32(184, 136, 246, 255);
+            drawList->AddCircle(at(8, 8), unit * 4.3f, color, 32, unit * 0.65f);
+            drawList->AddCircleFilled(at(4.0f, 5.0f), unit * 1.4f, IM_COL32(231, 214, 255, 255), 12);
+            drawList->AddCircleFilled(at(11.0f, 4.5f), unit * 1.0f, color, 12);
+            drawList->AddCircleFilled(at(10.0f, 12.0f), unit * 1.6f, color, 12);
+            drawList->AddCircleFilled(at(6.0f, 9.0f), unit * 0.9f, IM_COL32(231, 214, 255, 255), 12);
             return;
         }
         if (extension == ".material")
@@ -1812,6 +1824,20 @@ void ImGuiManager::CreateAssetFile(const filesystem::path& path)
         return;
     }
 
+    if (AssetRegistry::Classify(path) == AssetType::Niagara)
+    {
+        string error;
+        if (Niagara::Save(path, Niagara::MakeDefaultSystem(), error))
+        {
+            MaterialManager::Registry().Register(path, AssetType::Niagara, error);
+            ShowNiagaraAsset(path);
+        }
+        if (!error.empty())
+        {
+            AddLog("Niagara作成失敗: %s", error.c_str());
+        }
+        return;
+    }
     if (AssetRegistry::Classify(path) == AssetType::Material)
     {
         string error;
@@ -1900,7 +1926,8 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
     }
 
     const bool prefab = IsPrefabFile(path);
-    if (!prefab && !IsModelFile(path))
+    const bool niagara = AssetRegistry::Classify(path) == AssetType::Niagara;
+    if (!prefab && !niagara && !IsModelFile(path))
     {
         AddLog("シーンD&D無視: %s", relative.c_str());
         return;
@@ -1933,6 +1960,15 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
     XMFLOAT3 pos{};
     XMStoreFloat3(&pos, hit);
 
+    if (niagara)
+    {
+        const auto entity = PlaceNiagaraAsset(path);
+        if (Registry::IsAlive(entity))
+        {
+            ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position = pos;
+        }
+        return;
+    }
     if (prefab)
     {
         LoadPrefabInstance(path, g_kINVALID_ENTITY, nullptr, &pos);
@@ -2079,6 +2115,23 @@ void ImGuiManager::DrawAssetCreateMenuItems(const filesystem::path& directory)
     if (ImGui::MenuItem("マテリアル"))
     {
         CreateMaterialAsset(directory);
+    }
+    if (ImGui::MenuItem("Niagaraシステム"))
+    {
+        const auto path = MakeUniqueAssetPath(directory, "NewNiagara", ".naiagara");
+        auto system = Niagara::MakeDefaultSystem();
+        string error;
+        if (Niagara::Save(path, system, error))
+        {
+            MaterialManager::Registry().Register(path, AssetType::Niagara, error);
+            m_SelectedAssetPath = path;
+            m_AssetBrowserRescan = true;
+            ShowNiagaraAsset(path);
+        }
+        else
+        {
+            AddLog("Niagara作成失敗: %s", error.c_str());
+        }
     }
     if (ImGui::MenuItem("シーン"))
     {
@@ -2730,6 +2783,11 @@ void ImGuiManager::OpenAssetItem(const filesystem::path& path)
         RequestOpenScene(path); // 未保存なら確認ポップアップ
         return;
     }
+    if (AssetRegistry::Classify(path) == AssetType::Niagara)
+    {
+        ShowNiagaraAsset(path);
+        return;
+    }
     if (AssetRegistry::Classify(path) == AssetType::Material)
     {
         string error;
@@ -2924,3 +2982,9 @@ void ImGuiManager::DuplicateSelectedAssets()
 }
 
 
+
+void ImGuiManager::ShowNiagaraAsset(const filesystem::path& path)
+{
+    m_ShowNiagaraWindow = true;
+    NiagaraWindow::Open(path);
+}

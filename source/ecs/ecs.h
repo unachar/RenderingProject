@@ -51,6 +51,7 @@ struct ComponentType
     static const ComponentType TIMELINE;
     static const ComponentType PROCEDURAL_TERRAIN;
     static const ComponentType PROCEDURAL_MOTION;
+    static const ComponentType NIAGARA;
 
     ComponentTypeID Value = MAX;
 

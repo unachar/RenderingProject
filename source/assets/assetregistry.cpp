@@ -1,4 +1,4 @@
-#include "assetregistry.h"
+﻿#include "assetregistry.h"
 #include <algorithm>
 #include <fstream>
 #include <random>
@@ -122,6 +122,10 @@ AssetType AssetRegistry::Classify(const std::filesystem::path& path)
         {
             return AssetType::Mesh;
         }
+    }
+    if (extension == ".naiagara")
+    {
+        return AssetType::Niagara;
     }
     return AssetType::Unknown;
 }

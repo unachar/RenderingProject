@@ -26,6 +26,7 @@ class EditorWindowRegistry
     void HideWindow(const std::string& id);
     void DrawVisibleWindows();
     void DrawWindowMenu();
+    void HandleContentBrowserShortcut(bool available);
     // Begin/End still follow ImGui's contract. Only the primary panel window uses this entry point.
     static bool BeginEditorWindow(const char* title, bool* open = nullptr, ImGuiWindowFlags flags = 0);
     std::string AreaTitle(const EditorWindowDefinition& area) const;
@@ -49,6 +50,11 @@ class EditorWindowRegistry
         return m_DrawingContentDrawer;
     }
 
+    bool IsContentDrawerOpen() const
+    {
+        return m_ContentDrawerOpen;
+    }
+
   private:
     std::vector<EditorWindowDefinition> m_Windows;
     std::unordered_map<std::string, std::string> m_AreaTypes;
@@ -56,6 +62,7 @@ class EditorWindowRegistry
     const EditorWindowDefinition* m_DrawingArea = nullptr;
     bool m_ContentDrawerOpen = false;
     bool m_DrawingContentDrawer = false;
+    bool m_FocusContentDrawer = false;
 };
 
 class EditorWorkspaceManager

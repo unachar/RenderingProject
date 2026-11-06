@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "../effects/niagarascene.h"
 #include "transmittanceshadows.h"
 #include "framepipeline.h"
 #include "systemmanager.h"
@@ -268,6 +269,8 @@ void FramePipeline::Execute()
                     }
                     ScenePasses::BeginEditorSceneOverlayPass();
                     SystemManager::DrawSystem(RenderPass::OverlayScene, false);
+                    NiagaraScene::Update();
+                    NiagaraScene::Draw();
                     ScenePasses::EndEditorSceneOverlayPass();
                 });
 

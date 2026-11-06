@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "thumbnailrenderer.h"
+#include "niagararenderer.h"
 #include "thumbnailmeshio.h"
 #include "graphicsdevice.h"
 #include "frameconstants.h"
@@ -411,6 +412,11 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
 
     const auto cachePath = CachePath(input.Handle);
     input.BaseKey = Combine(Combine(input.Key, ThumbnailGeneratorVersion), input.Size);
+    if (input.Type == AssetType::Niagara)
+    {
+        // Invalidate the former material-sphere cache for VFX assets only.
+        input.BaseKey = Combine(input.BaseKey, 0x4e49414741524103ull);
+    }
     const auto loadCachedImage = [&]() {
         auto cached = std::make_unique<DirectX::ScratchImage>();
         DirectX::TexMetadata metadata;
@@ -516,6 +522,10 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
         input.Noise[0] = ProcStudio::MakeTextureGpuParams(definition);
         input.Noise[0].Width = 1;
     }
+    if (input.Type == AssetType::Niagara)
+    {
+        input.EffectFrame = NiagaraRenderer::PrepareThumbnail(input.SourcePath, input.Error);
+    }
     for (size_t slot = 0; slot < input.Textures.size(); ++slot)
     {
         auto& texture = input.Textures[slot];
@@ -555,6 +565,10 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
 
 ThumbnailPrepared ThumbnailRenderer::PreparePreview(ThumbnailPrepared input)
 {
+    if (input.Type == AssetType::Niagara)
+    {
+        return input;
+    }
     try
     {
         input.Preview = std::make_shared<ThumbnailPreviewContext>();
@@ -598,6 +612,20 @@ std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared
     if (input.Type == AssetType::Texture || input.Cached)
     {
         return Upload(input.Textures[0], false);
+    }
+    if (input.Type == AssetType::Niagara)
+    {
+        if (!input.EffectFrame)
+        {
+            return {};
+        }
+        auto result = NiagaraRenderer::RenderThumbnail(*input.EffectFrame, input.Size,
+                                                       std::move(input.PreviewDescriptor));
+        if (result)
+        {
+            Retain(result);
+        }
+        return result;
     }
     auto result = std::make_shared<ThumbnailGpuImage>();
     result->Descriptor = std::move(input.PreviewDescriptor);

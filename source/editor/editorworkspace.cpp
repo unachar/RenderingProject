@@ -2,6 +2,7 @@
 #include "editorworkspace.h"
 #include "materialasset.h"
 #include "editorpreferences.h"
+#include "niagarawindow.h"
 #include <imgui_internal.h>
 #include <json/json.h>
 #include <fstream>
@@ -160,6 +161,32 @@ void EditorWindowRegistry::ShowEditorType(const std::string& id)
     m_PendingTypes[id] = id;
 }
 
+void EditorWindowRegistry::HandleContentBrowserShortcut(bool available)
+{
+    const auto& io = ImGui::GetIO();
+    m_FocusContentDrawer = false;
+    if (!available)
+    {
+        m_ContentDrawerOpen = false;
+        return;
+    }
+    const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    if (io.WantTextInput || popupOpen)
+    {
+        return;
+    }
+    if (!io.KeyCtrl && !io.KeyAlt && io.KeyShift && !ImGui::IsAnyItemActive() &&
+        ImGui::IsKeyPressed(ImGuiKey_C, false))
+    {
+        m_ContentDrawerOpen = !m_ContentDrawerOpen;
+        m_FocusContentDrawer = m_ContentDrawerOpen;
+    }
+    if (m_ContentDrawerOpen && !ImGui::GetDragDropPayload() && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        m_ContentDrawerOpen = false;
+    }
+}
+
 void EditorWindowRegistry::DrawVisibleWindows()
 {
     auto& workspaces = EditorWorkspaceManager::Get();
@@ -168,25 +195,9 @@ void EditorWindowRegistry::DrawVisibleWindows()
         const auto& typeId = selected == m_AreaTypes.end() ? area.Id : selected->second;
         return *area.Visible && workspaces.IsMaximized(area.Id) && typeId == "material";
     });
-    const auto& io = ImGui::GetIO();
-    bool focusDrawer = false;
-    if (!materialMaximized)
-    {
-        m_ContentDrawerOpen = false;
-    }
-    else if (!io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && io.KeyShift &&
-             !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
-             ImGui::IsKeyPressed(ImGuiKey_C, false))
-    {
-        m_ContentDrawerOpen = !m_ContentDrawerOpen;
-        focusDrawer = m_ContentDrawerOpen;
-    }
-    if (m_ContentDrawerOpen && !io.WantTextInput && !ImGui::GetDragDropPayload() &&
-        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
-    {
-        m_ContentDrawerOpen = false;
-    }
+    const bool niagaraVisible = IsTypeVisible("niagara");
+    HandleContentBrowserShortcut(materialMaximized ||
+                                 (niagaraVisible && (NiagaraWindow::HasFocus() || m_ContentDrawerOpen)));
     for (const auto& area : m_Windows)
     {
         if (!*area.Visible || !area.Draw || !EditorWorkspaceManager::Get().IsAreaDrawn(area.Id))
@@ -222,7 +233,7 @@ void EditorWindowRegistry::DrawVisibleWindows()
         });
         if (browser != m_Windows.end() && browser->Draw)
         {
-            if (focusDrawer)
+            if (m_FocusContentDrawer)
             {
                 ImGui::SetNextWindowFocus();
             }

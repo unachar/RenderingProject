@@ -7,6 +7,8 @@
 #include <DirectXTex.h>
 #include <future>
 
+struct NiagaraThumbnailFrame;
+
 struct ThumbnailSourceImage
 {
     std::filesystem::path Path;
@@ -30,6 +32,7 @@ struct ThumbnailPrepared
     std::array<ProcStudio::TextureGpuParams, 3> Noise{};
     std::array<ThumbnailSourceImage, static_cast<size_t>(MaterialTextureSlot::Count)> Textures;
     std::vector<StaticModelVertex> Geometry;
+    std::shared_ptr<NiagaraThumbnailFrame> EffectFrame;
 
     struct MeshPart
     {
@@ -57,6 +60,7 @@ struct ThumbnailPrepared
 struct ThumbnailGpuImage
 {
     ComPtr<ID3D12Resource> Resource;
+    ComPtr<ID3D12DescriptorHeap> RenderTargetViews;
     std::shared_ptr<EditorDescriptorLease> Descriptor;
     D3D12_GPU_DESCRIPTOR_HANDLE BorrowedDescriptor{};
     ComPtr<ID3D12Resource> Upload;

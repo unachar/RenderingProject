@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -195,6 +195,25 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="source\editor\niagarawindow.h" />
+    <ClInclude Include="source\editor\niagaragraph.h" />
+    <ClInclude Include="source\editor\timelinewidgets.h" />
+    <ClInclude Include="source\effects\niagara.h" />
+    <ClInclude Include="source\effects\niagaragpu.h" />
+    <ClInclude Include="source\effects\niagaragpugraph.h" />
+    <ClInclude Include="source\effects\niagaracomponent.h" />
+    <ClInclude Include="source\effects\niagarascene.h" />
+    <ClInclude Include="source\rendering\niagararenderer.h" />
+    <ClCompile Include="source\editor\niagarawindow.cpp" />
+    <ClCompile Include="source\editor\niagaragraph.cpp" />
+    <ClCompile Include="source\effects\niagara.cpp" />
+    <ClCompile Include="source\effects\niagaragpu.cpp" />
+    <ClCompile Include="source\effects\niagaragpugraph.cpp" />
+    <ClCompile Include="source\effects\niagarascene.cpp" />
+    <ClCompile Include="source\rendering\niagararenderer.cpp" />
+    <None Include="shader\hlsl\niagaraparticles.hlsl" />
+  </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\editor\proceduralio.h" />
     <ClInclude Include="source\editor\proceduralmodelexport.h" />

@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "graphvisuals.h"
 #include "backgroundtasks.h"
 #include <cstdarg>
 #include <imgui_internal.h>
@@ -383,172 +384,11 @@ namespace
     }
 
     // ============================================================ 見た目（UE のマテリアルエディター風）
-    struct CategoryInfo
-    {
-        const char* Name;
-        ImU32 Color;
-    };
-
-    CategoryInfo Category(Kind kind)
-    {
-        switch (kind)
-        {
-            case Kind::Output:
-                return {"Output", IM_COL32(72, 72, 78, 255)};
-            case Kind::Constant:
-            case Kind::Constant2Vector:
-            case Kind::Constant3Vector:
-            case Kind::Constant4Vector:
-            case Kind::Time:
-                return {"Constants", IM_COL32(56, 118, 70, 255)};
-            case Kind::ScalarParameter:
-            case Kind::VectorParameter:
-            case Kind::ColorParameter:
-                return {"Parameters", IM_COL32(42, 140, 96, 255)};
-            case Kind::TextureSample:
-            case Kind::TriplanarTexture:
-            case Kind::ConvertToTexture:
-            case Kind::ConvertToHeight:
-            case Kind::ConvertToNormal:
-                return {"Texture", IM_COL32(48, 92, 168, 255)};
-            case Kind::ConvertToNormalHeight:
-                return {"Legacy", IM_COL32(48, 92, 168, 255)}; // 追加メニューには出さない
-            case Kind::UV:
-            case Kind::TextureCoordinate:
-            case Kind::Panner:
-            case Kind::Rotator:
-            case Kind::WorldPosition:
-            case Kind::WorldNormal:
-            case Kind::CameraVector:
-            case Kind::ReflectionVector:
-            case Kind::SolidCoordinate:
-            case Kind::LocalPosition:
-            case Kind::VertexColor:
-            case Kind::CameraDistance:
-            case Kind::CameraPosition:
-            case Kind::PixelDepth:
-            case Kind::ScreenPosition:
-                return {"Coordinates", IM_COL32(150, 62, 62, 255)};
-            case Kind::ObjectPosition:
-            case Kind::ObjectScale:
-            case Kind::ObjectOrientation:
-            case Kind::ObjectRadius:
-            case Kind::ObjectBounds:
-            case Kind::BoundingBoxUVW:
-            case Kind::PerInstanceRandom:
-            case Kind::TransformVector:
-            case Kind::TransformPosition:
-                return {"Object", IM_COL32(170, 110, 50, 255)};
-            case Kind::Normalize:
-            case Kind::Dot:
-            case Kind::CrossProduct:
-            case Kind::Distance:
-            case Kind::Length:
-            case Kind::AppendVector:
-            case Kind::ComponentMask:
-            case Kind::BreakVector:
-                return {"Vector", IM_COL32(108, 78, 146, 255)};
-            case Kind::Fresnel:
-            case Kind::Desaturation:
-            case Kind::If:
-            case Kind::SphereMask:
-            case Kind::CheapContrast:
-            case Kind::Noise:
-            case Kind::Reroute:
-            case Kind::StaticSwitch:
-            case Kind::SlopeMask:
-            case Kind::HeightLerp:
-            case Kind::DitherOpacity:
-            case Kind::DistanceFade:
-            case Kind::HeightGradient:
-                return {"Utility", IM_COL32(140, 104, 40, 255)};
-            case Kind::Pi:
-                return {"Constants", IM_COL32(56, 118, 70, 255)};
-            case Kind::HueShift:
-            case Kind::Blend:
-            case Kind::ColorAdjust:
-            case Kind::BlackBody:
-                return {"Color", IM_COL32(170, 70, 120, 255)};
-            case Kind::LinearGradient:
-            case Kind::RadialGradient:
-            case Kind::Voronoi:
-            case Kind::ProceduralNoise:
-            case Kind::FractalNoise:
-            case Kind::NoiseCombine:
-            case Kind::NoiseLayers:
-            case Kind::SolidTexture:
-            case Kind::SolidPattern:
-            case Kind::ThreeColorRamp:
-            case Kind::ConvertToSolid:
-                return {"Procedural", IM_COL32(60, 128, 140, 255)};
-            case Kind::NormalFromHeight:
-            case Kind::BlendAngleCorrectedNormals:
-            case Kind::FlattenNormal:
-            case Kind::BumpOffset:
-                return {"Normal / Height", IM_COL32(86, 96, 170, 255)};
-            case Kind::RotateAboutAxis:
-                return {"Vector", IM_COL32(108, 78, 146, 255)};
-            case Kind::Group:
-                return {"Comment", IM_COL32(80, 100, 130, 255)};
-            default:
-                return {"Math", IM_COL32(64, 70, 80, 255)};
-        }
-    }
-
-    ImU32 TypeColor(MaterialGraphType type, float alpha = 1.0f)
-    {
-        ImVec4 color;
-        switch (type)
-        {
-            case MaterialGraphType::Scalar:
-                color = ImVec4(0.55f, 0.85f, 0.55f, 1.0f); // 緑
-                break;
-            case MaterialGraphType::Vector2:
-                color = ImVec4(0.95f, 0.60f, 0.30f, 1.0f); // 橙
-                break;
-            case MaterialGraphType::Vector3:
-                color = ImVec4(0.95f, 0.88f, 0.35f, 1.0f); // 黄
-                break;
-            case MaterialGraphType::Vector4:
-                color = ImVec4(0.95f, 0.45f, 0.75f, 1.0f); // 桃
-                break;
-            default:
-                color = ImVec4(0.78f, 0.78f, 0.80f, 1.0f); // 型未定
-                break;
-        }
-        color.w = alpha;
-        return ImGui::GetColorU32(color);
-    }
-
-    const char* TypeName(MaterialGraphType type)
-    {
-        switch (type)
-        {
-            case MaterialGraphType::Scalar:
-                return "float";
-            case MaterialGraphType::Vector2:
-                return "float2";
-            case MaterialGraphType::Vector3:
-                return "float3";
-            case MaterialGraphType::Vector4:
-                return "float4";
-            default:
-                return "auto";
-        }
-    }
-
-    const char* ComponentName(size_t component)
-    {
-        static const char* names[] = {"X (R)", "Y (G)", "Z (B)", "W (A)"};
-        return names[(std::min)(component, size_t{3})];
-    }
-
-    ImVec4 ComponentColor(size_t component)
-    {
-        static const ImVec4 colors[] = {{0.96f, 0.32f, 0.28f, 1.0f}, {0.35f, 0.85f, 0.38f, 1.0f},
-                                        {0.35f, 0.60f, 1.0f, 1.0f}, {0.85f, 0.85f, 0.88f, 1.0f}};
-        return colors[(std::min)(component, size_t{3})];
-    }
+    using GraphVisuals::Category;
+    using GraphVisuals::TypeColor;
+    using GraphVisuals::TypeName;
+    using GraphVisuals::ComponentName;
+    using GraphVisuals::ComponentColor;
 
     // 数字は読みやすい明度を保ち、背景と枠で成分を区別する。
     void PushComponentFieldStyle(size_t component)
@@ -573,7 +413,7 @@ namespace
         {
             return std::clamp(node.Width, 96.0f, 512.0f);
         }
-        if (node.Kind == Kind::ComponentMask || node.Kind == Kind::VectorParameter ||
+        if (node.Kind == Kind::ComponentMask || node.Kind == Kind::VectorParameter || node.Kind == Kind::Vector2Parameter ||
             (MaterialGraph::IsComponentConstant(node.Kind) && node.Kind != Kind::Constant))
         {
             return 176.0f;
@@ -636,22 +476,7 @@ namespace
     }
 
     // UE と同じ：未接続は中抜きの円、接続済みは塗りつぶしの円
-    void PinIcon(ImU32 color, bool connected)
-    {
-        const float size = ImGui::GetTextLineHeight() * 0.72f;
-        ImGui::Dummy(ImVec2(size, ImGui::GetTextLineHeight()));
-        const ImVec2 min = ImGui::GetItemRectMin();
-        const ImVec2 center(min.x + size * 0.5f, min.y + ImGui::GetTextLineHeight() * 0.5f);
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        if (connected)
-        {
-            draw->AddCircleFilled(center, size * 0.5f, color, 16);
-        }
-        else
-        {
-            draw->AddCircle(center, size * 0.5f - 0.75f, color, 16, 1.5f);
-        }
-    }
+    using GraphVisuals::PinIcon;
 
     float PinCenterY()
     {
@@ -1371,7 +1196,7 @@ namespace
             changed = false;
         }
         TrackValueEdit(document, node, before, changed);
-        if (node.Kind == Kind::VectorParameter)
+        if (node.Kind == Kind::VectorParameter || node.Kind == Kind::Vector2Parameter)
         {
             CanvasTooltip("%s の値\nドラッグ / ダブルクリックで入力。", ComponentName(input));
         }
@@ -1540,8 +1365,9 @@ namespace
             case Kind::Constant:
             case Kind::Constant2Vector:
                 break; // 値は成分ピンの横のボックスで編集する
+            case Kind::Vector2Parameter:
             case Kind::VectorParameter:
-                for (size_t component = 0; component < 3; ++component)
+                for (size_t component = 0; component < static_cast<size_t>(MaterialGraph::Definition(node.Kind).OutputType); ++component)
                 {
                     ImGui::TextColored(ComponentColor(component), "%s", ComponentName(component));
                     DrawComponentValueBox(document, node, component);
@@ -2987,7 +2813,7 @@ namespace
 
     // ============================================================ ノード追加（UE のパレット）
     const char* const kCategoryOrder[] = {"Parameters", "Constants", "Texture",         "Coordinates", "Object", "Math",
-                                          "Vector",     "Color",     "Normal / Height", "Procedural",  "Utility",
+                                          "Vector",     "Color",     "Normal / Height", "Procedural", "Render / Original", "Utility",
                                           "Comment"};
 
     uint64_t AddNodeAt(GraphDocument& document, Kind kind, ImVec2 position)
@@ -3083,6 +2909,7 @@ namespace
                 return "vec4 float4 constant4 vector4 rgba";
             case Kind::ScalarParameter:
                 return "sp scalarparam scalar parameter スカラー パラメータ";
+            case Kind::Vector2Parameter:
             case Kind::VectorParameter:
                 return "vp vectorparam vector parameter ベクトル パラメータ";
             case Kind::ComponentMask:

@@ -100,6 +100,11 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
         snapshot.HasProceduralTerrain = true;
         snapshot.ProceduralTerrain = ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(entity);
     }
+    if (ComponentManager::HasComponent<NiagaraComponent>(entity))
+    {
+        snapshot.HasNiagara = true;
+        snapshot.Niagara = ComponentManager::GetComponentUnchecked<NiagaraComponent>(entity);
+    }
     if (ComponentManager::HasComponent<ProceduralMotionComponent>(entity))
     {
         snapshot.HasProceduralMotion = true;
@@ -256,6 +261,14 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
     if (snapshot.HasProceduralTerrain)
     {
         RestoreSnapshotComponent(snapshot.Entity, snapshot.ProceduralTerrain);
+    }
+    if (snapshot.HasNiagara)
+    {
+        RestoreSnapshotComponent(snapshot.Entity, snapshot.Niagara);
+    }
+    else if (ComponentManager::HasComponent<NiagaraComponent>(snapshot.Entity))
+    {
+        ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::NIAGARA);
     }
     if (snapshot.HasProceduralMotion)
     {

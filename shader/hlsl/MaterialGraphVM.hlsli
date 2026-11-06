@@ -1,4 +1,4 @@
-#ifndef MATERIAL_GRAPH_VM_INCLUDED
+﻿#ifndef MATERIAL_GRAPH_VM_INCLUDED
 #define MATERIAL_GRAPH_VM_INCLUDED
 // =====================================================================================================
 // マテリアルグラフの描画時評価（GPU）

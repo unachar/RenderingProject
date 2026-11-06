@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "pch.h"
 #include "ecs.h"
 #include "materialasset.h"
@@ -67,6 +67,7 @@ class ImGuiManager
     inline static bool m_ShowAtmosphereWindow = false;
     inline static bool m_ShowProceduralWindow = false;
     inline static bool m_ShowProceduralStudioWindow = false;
+    inline static bool m_ShowNiagaraWindow = false;
     inline static bool m_ShowAnimationPreviewWindow = false;
     inline static bool m_ShowSequencerWindow = true;
     inline static bool m_ShowRaytracingWindow = false;
@@ -183,6 +184,8 @@ class ImGuiManager
         MoveComponent Move{};
         bool HasPhysics = false;
         PhysicsComponent Physics{};
+        bool HasNiagara = false;
+        NiagaraComponent Niagara{};
         bool HasTimeline = false;
         TimelineComponent Timeline{};
         bool HasObb = false;
@@ -396,6 +399,8 @@ class ImGuiManager
     static string GetSceneDisplayName();
 
   public:
+    static void ShowNiagaraAsset(const filesystem::path& path);
+    static EntityID PlaceNiagaraAsset(const filesystem::path& path);
     // シーン操作（未保存なら「保存しますか？」を出してから実行する）
     static void RequestOpenScene(const filesystem::path& path)
     {

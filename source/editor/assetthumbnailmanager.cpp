@@ -55,7 +55,13 @@ namespace
 
     uint64_t SourceVersion(const std::filesystem::path& path)
     {
-        return ThumbnailRenderer::SourceRevision(path) ^ ThumbnailRenderer::SourceRevision(path.wstring() + L".meta");
+        auto version = ThumbnailRenderer::SourceRevision(path) ^
+                       ThumbnailRenderer::SourceRevision(path.wstring() + L".meta");
+        if (AssetRegistry::Classify(path) == AssetType::Niagara)
+        {
+            version ^= ThumbnailRenderer::SourceRevision("shader/hlsl/niagaraparticles.hlsl");
+        }
+        return version;
     }
 
     uint64_t ShaderVersion()
@@ -181,6 +187,12 @@ namespace
         const auto allocationBytes = [](const D3D12_RESOURCE_DESC& description) {
             return GraphicsDevice::GetDevice()->GetResourceAllocationInfo(0, 1, &description).SizeInBytes;
         };
+        if (input.Type == AssetType::Niagara)
+        {
+            const auto effectTarget = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, input.Size,
+                input.Size, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+            return allocationBytes(effectTarget);
+        }
         const auto target = CD3DX12_RESOURCE_DESC::Tex2D(RendererState::GetSceneColorFormat(), input.Size, input.Size,
                                                          1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
         const auto depth = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT, input.Size, input.Size, 1, 1, 1, 0,
@@ -631,7 +643,7 @@ void AssetThumbnailManager::ProcessGenerationBudget()
                 continue;
             }
             if (prepared->Error.empty() && !prepared->Cached && prepared->Type != AssetType::Texture &&
-                !prepared->Preview)
+                !prepared->Preview && !prepared->PreviewDescriptor)
             {
                 prepared->PreviewDescriptor = EditorDescriptors::Allocate();
                 if (!prepared->PreviewDescriptor)

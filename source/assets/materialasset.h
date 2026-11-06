@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -11,7 +11,8 @@ enum class AssetType : uint32_t
     Material,
     Texture,
     Mesh,
-    Noise
+    Noise,
+    Niagara
 };
 
 struct AssetDragPayload

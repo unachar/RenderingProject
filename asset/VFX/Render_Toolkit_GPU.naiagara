@@ -1,0 +1,521 @@
+{
+  "duration" : 6.0,
+  "emitters" : 
+  [
+    {
+      "backend" : 1,
+      "enabled" : true,
+      "end" : 6.0,
+      "id" : 1,
+      "localSpace" : true,
+      "maxParticles" : 2000,
+      "modules" : 
+      [
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 2,
+          "kind" : 0,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            80.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 3,
+          "kind" : 2,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            3.0,
+            0.079999998211860657,
+            0.60000002384185791,
+            0.0
+          ],
+          "stage" : 0,
+          "target" : 1,
+          "value" : 
+          [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 4,
+          "kind" : 12,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            25.0,
+            0.40000000596046448,
+            0.0,
+            0.0
+          ],
+          "stage" : 0,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : false,
+          "graph" : 
+          {
+            "links" : 
+            [
+              {
+                "id" : 18,
+                "source" : 8,
+                "target" : 10
+              },
+              {
+                "id" : 19,
+                "source" : 5,
+                "target" : 15
+              },
+              {
+                "id" : 20,
+                "source" : 13,
+                "target" : 16
+              }
+            ],
+            "nodeNames" : 2,
+            "nodes" : 
+            [
+              {
+                "id" : 1,
+                "inputs" : 
+                [
+                  2,
+                  3,
+                  4
+                ],
+                "kind" : "Constant3Vector",
+                "name" : "Constant3Vector",
+                "output" : 5,
+                "position" : 
+                [
+                  0.0,
+                  0.0
+                ],
+                "size" : 
+                [
+                  300.0,
+                  200.0
+                ],
+                "texture" : "guid:0000000000000000",
+                "value" : 
+                [
+                  0.0,
+                  1.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "id" : 6,
+                "inputs" : 
+                [
+                  7
+                ],
+                "kind" : "Exponential2",
+                "name" : "Exponential2",
+                "output" : 8,
+                "position" : 
+                [
+                  0.0,
+                  180.0
+                ],
+                "size" : 
+                [
+                  300.0,
+                  200.0
+                ],
+                "texture" : "guid:0000000000000000",
+                "value" : 
+                [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "id" : 9,
+                "inputs" : 
+                [
+                  10,
+                  11,
+                  12
+                ],
+                "kind" : "Inverse Lerp",
+                "name" : "Inverse Lerp",
+                "output" : 13,
+                "position" : 
+                [
+                  250.0,
+                  180.0
+                ],
+                "size" : 
+                [
+                  300.0,
+                  200.0
+                ],
+                "texture" : "guid:0000000000000000",
+                "value" : 
+                [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "id" : 14,
+                "inputs" : 
+                [
+                  15,
+                  16
+                ],
+                "kind" : "Reflect Vector",
+                "name" : "Reflect Vector",
+                "output" : 17,
+                "position" : 
+                [
+                  500.0,
+                  0.0
+                ],
+                "size" : 
+                [
+                  300.0,
+                  200.0
+                ],
+                "texture" : "guid:0000000000000000",
+                "value" : 
+                [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "id" : 21,
+                "inputs" : 
+                [
+                  22,
+                  23,
+                  24,
+                  25,
+                  26,
+                  27,
+                  28,
+                  29,
+                  30,
+                  31,
+                  32,
+                  33,
+                  34,
+                  35,
+                  36,
+                  37,
+                  38,
+                  39
+                ],
+                "kind" : "Material Output",
+                "name" : "Material Output",
+                "output" : 0,
+                "position" : 
+                [
+                  800.0,
+                  0.0
+                ],
+                "size" : 
+                [
+                  300.0,
+                  200.0
+                ],
+                "texture" : "guid:0000000000000000",
+                "value" : 
+                [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            ],
+            "version" : 1
+          },
+          "id" : 5,
+          "kind" : 11,
+          "output" : 17,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 6,
+          "kind" : 13,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            5.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            0.5,
+            0.0,
+            1.2000000476837158
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 7,
+          "kind" : 14,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            5.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            1.0,
+            0.0,
+            5.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 8,
+          "kind" : 16,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.80000001192092896,
+            0.69999998807907104,
+            0.0,
+            5.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            3.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 9,
+          "kind" : 5,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.30000001192092896,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 10,
+          "kind" : 15,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            4.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 11,
+          "kind" : 17,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            1.0,
+            0.15000000596046448,
+            0.029999999329447746,
+            4.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.10000000149011612,
+            0.5,
+            1.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 12,
+          "kind" : 7,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 13,
+          "kind" : 4,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            -2.8599998950958252,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        }
+      ],
+      "name" : "Toolkit GPU",
+      "position" : 
+      [
+        300.0,
+        30.0
+      ],
+      "renderer" : 0,
+      "solo" : false,
+      "start" : 0.0
+    }
+  ],
+  "format" : "Niagara",
+  "loop" : true,
+  "modules" : [],
+  "name" : "Render Toolkit GPU",
+  "parameters" : [],
+  "seed" : 1729,
+  "version" : 1
+}

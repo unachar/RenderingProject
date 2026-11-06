@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <DirectXShaderCompilerPackageVersion>1.9.2602.24</DirectXShaderCompilerPackageVersion>
@@ -43,6 +43,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>
+        $(MSBuildThisFileDirectory)source\effects;
         $(MSBuildThisFileDirectory)source\assets;
         $(MSBuildThisFileDirectory)External\RTXNS\external\donut\thirdparty\jsoncpp\include;
         $(MSBuildThisFileDirectory)source\core;

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialgraphcompiler.h"
 #include "materialgraphmath.h"
 #include <algorithm>
@@ -114,7 +114,8 @@ namespace
             else
             {
                 std::string code = HlslType(target) + "(" + value.Code;
-                for (int component = static_cast<int>(value.ValueType); component < static_cast<int>(target); ++component)
+                for (int component = static_cast<int>(value.ValueType); component < static_cast<int>(target);
+                     ++component)
                 {
                     code += ",0";
                 }
@@ -161,11 +162,24 @@ namespace
             std::string result;
             if (m_Program.MaterialOutput)
             {
-                const char* fields[] = {"BaseColor",   "Metallic",        "Roughness",    "Normal",
-                                        "Emissive",    "Opacity",         "OpacityMask",  "AO",
-                                        "Height",      "NormalIntensity", "ParallaxDepth", "ParallaxSteps",
-                                        "IOR",         "Transmission",    "TransmissionRoughness",
-                                        "Thickness",   "Absorption",      "ShadingStrength"};
+                const char* fields[] = {"BaseColor",
+                                        "Metallic",
+                                        "Roughness",
+                                        "Normal",
+                                        "Emissive",
+                                        "Opacity",
+                                        "OpacityMask",
+                                        "AO",
+                                        "Height",
+                                        "NormalIntensity",
+                                        "ParallaxDepth",
+                                        "ParallaxSteps",
+                                        "IOR",
+                                        "Transmission",
+                                        "TransmissionRoughness",
+                                        "Thickness",
+                                        "Absorption",
+                                        "ShadingStrength"};
                 static_assert(sizeof(fields) / sizeof(fields[0]) == static_cast<size_t>(MaterialOutputPin::Count));
                 const auto source = "material_node_" + std::to_string(node->Id);
                 result = "#line 1 \"" + source + "\"\nGeneratedMaterial result;\n";
@@ -224,7 +238,8 @@ namespace
                 const auto library = std::filesystem::absolute("shader/hlsl/noise.hlsl", pathError);
                 if (pathError || !std::filesystem::exists(library, pathError))
                 {
-                    m_Program.Error = "shader/hlsl/noise.hlsl が見つかりません（Procedural Noise / Fractal Noise に必要）";
+                    m_Program.Error =
+                        "shader/hlsl/noise.hlsl が見つかりません（Procedural Noise / Fractal Noise に必要）";
                     return m_Program;
                 }
                 header += "#include \"" + library.generic_string() + "\"\n";
@@ -298,9 +313,11 @@ namespace
             }
             if (m_Runtime)
             {
-                header += "float4 MG_Parameter(MaterialGraphContext context, uint index) { return LoadMaterialTexture(context.ParameterTexture).Load(int3(index,0,0)); }\n";
-                header += "Texture2D<float4> MG_GraphTexture(MaterialGraphContext context, uint index) { return LoadMaterialTexture(asuint(MG_Parameter(context," +
-                          std::to_string(m_Program.Parameters.size()) + "u+index).x)); }\n";
+                header +=
+                    "float4 MG_Parameter(MaterialGraphContext context, uint index) { return LoadMaterialTexture(context.ParameterTexture).Load(int3(index,0,0)); }\n";
+                header +=
+                    "Texture2D<float4> MG_GraphTexture(MaterialGraphContext context, uint index) { return LoadMaterialTexture(asuint(MG_Parameter(context," +
+                    std::to_string(m_Program.Parameters.size()) + "u+index).x)); }\n";
             }
             else if (!m_Program.Parameters.empty())
             {
@@ -711,8 +728,8 @@ namespace
             }
             else if (node.Kind == Kind::ReflectionVector)
             {
-                expression = {"reflect(-normalize(context.CameraVector),normalize(context.WorldNormal))", Type::Vector3,
-                              {}};
+                expression = {
+                    "reflect(-normalize(context.CameraVector),normalize(context.WorldNormal))", Type::Vector3, {}};
             }
             else if (node.Kind == Kind::Desaturation)
             {
@@ -782,6 +799,40 @@ namespace
             {
                 expression = Literal({3.14159265f * node.Value[0]}, Type::Scalar);
             }
+            else if (node.Kind == Kind::InverseLerp)
+            {
+                const auto input = Input(node, 0);
+                const auto low = Promote(Input(node, 1), Type::Scalar);
+                const auto high = Promote(Input(node, 2), Type::Scalar);
+                const auto range = "(" + high.Code + "-" + low.Code + ")";
+                expression = {"(abs(" + range + ")>1e-8?(" + input.Code + "-" + low.Code + ")/" + range + ":0)",
+                              input.ValueType,
+                              {}};
+            }
+            else if (node.Kind == Kind::ReflectVector)
+            {
+                expression = {"MG_ReflectVector(" + Promote(Input(node, 0), Type::Vector3).Code + "," +
+                                  Promote(Input(node, 1), Type::Vector3).Code + ")",
+                              Type::Vector3,
+                              {}};
+            }
+            else if (node.Kind == Kind::RenderSoftBand || node.Kind == Kind::RenderRadialPulse ||
+                     node.Kind == Kind::RenderFlowUV)
+            {
+                const auto type = node.Kind == Kind::RenderSoftBand      ? Type::Scalar
+                                  : node.Kind == Kind::RenderRadialPulse ? Type::Vector3
+                                                                         : Type::Vector2;
+                const auto secondType = node.Kind == Kind::RenderFlowUV ? Type::Vector2 : Type::Scalar;
+                const std::string function = node.Kind == Kind::RenderSoftBand      ? "MG_RenderSoftBand"
+                                             : node.Kind == Kind::RenderRadialPulse ? "MG_RenderRadialPulse"
+                                                                                    : "MG_RenderFlowUV";
+                expression = {function + "(" + Promote(Input(node, 0), type).Code + "," +
+                                  Promote(Input(node, 1), secondType).Code + "," +
+                                  Promote(Input(node, 2), Type::Scalar).Code + "," +
+                                  Promote(Input(node, 3), Type::Scalar).Code + ")",
+                              node.Kind == Kind::RenderFlowUV ? Type::Vector2 : Type::Scalar,
+                              {}};
+            }
             else if (node.Kind == Kind::RemapValueRange)
             {
                 const auto input = Input(node, 0);
@@ -821,7 +872,8 @@ namespace
             else if (node.Kind == Kind::LinearGradient)
             {
                 const auto uv = Promote(Input(node, 0), Type::Vector2);
-                expression = {"saturate((" + uv.Code + ")." + (node.Value[0] > 0.5f ? "y" : "x") + ")", Type::Scalar, {}};
+                expression = {
+                    "saturate((" + uv.Code + ")." + (node.Value[0] > 0.5f ? "y" : "x") + ")", Type::Scalar, {}};
             }
             else if (node.Kind == Kind::RadialGradient)
             {
@@ -842,27 +894,32 @@ namespace
                 const auto uv = Promote(Input(node, 0), Type::Vector2);
                 const auto z = Promote(Input(node, 1), Type::Scalar);
                 const auto frequency = Promote(Input(node, 2), Type::Scalar);
-                const int basis = std::clamp(static_cast<int>(node.Value[0]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
+                const int basis =
+                    std::clamp(static_cast<int>(node.Value[0]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
                 const int fractalType =
-                    fractal ? std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseFractalCount - 1) : 6;
+                    fractal ? std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseFractalCount - 1)
+                            : 6;
                 const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[fractal ? 2 : 1], 0.0f));
                 const bool tileable = node.Value[fractal ? 3 : 2] > 0.5f;
                 std::string tail;
                 if (fractal)
                 {
-                    tail = Promote(Input(node, 3), Type::Scalar).Code + "," + Promote(Input(node, 4), Type::Scalar).Code + "," +
-                           Promote(Input(node, 5), Type::Scalar).Code + "," + Promote(Input(node, 6), Type::Scalar).Code + "," +
+                    tail = Promote(Input(node, 3), Type::Scalar).Code + "," +
+                           Promote(Input(node, 4), Type::Scalar).Code + "," +
+                           Promote(Input(node, 5), Type::Scalar).Code + "," +
+                           Promote(Input(node, 6), Type::Scalar).Code + "," +
                            Promote(Input(node, 7), Type::Scalar).Code + ",0,4,2,0";
                 }
                 else
                 {
                     tail = "1,2,0.5,0.6,1," + Promote(Input(node, 3), Type::Scalar).Code + "," +
-                           Promote(Input(node, 4), Type::Scalar).Code + "," + Promote(Input(node, 5), Type::Scalar).Code +
-                           "," + Promote(Input(node, 6), Type::Scalar).Code;
+                           Promote(Input(node, 4), Type::Scalar).Code + "," +
+                           Promote(Input(node, 5), Type::Scalar).Code + "," +
+                           Promote(Input(node, 6), Type::Scalar).Code;
                 }
                 expression = {"MG_ProcNoise(float3(" + uv.Code + "," + z.Code + ")," + std::to_string(basis) + "u," +
-                                  std::to_string(fractalType) + "u," + std::to_string(seed) + "u," + (tileable ? "1u," : "0u,") +
-                                  frequency.Code + "," + tail + ")",
+                                  std::to_string(fractalType) + "u," + std::to_string(seed) + "u," +
+                                  (tileable ? "1u," : "0u,") + frequency.Code + "," + tail + ")",
                               Type::Scalar,
                               {}};
             }
@@ -892,8 +949,10 @@ namespace
                 }
                 const std::string texture = m_Runtime ? "MG_GraphTexture(context," + std::to_string(index) + "u)"
                                                       : "GraphTextures[" + std::to_string(index) + "]";
-                const std::string common = std::to_string(std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kConvertChannelCount - 1)) +
-                                           "," + (node.Value[2] > 0.5f ? "1" : "0") + "," + contrast.Code + "," + bias.Code;
+                const std::string common = std::to_string(std::clamp(static_cast<int>(node.Value[1]), 0,
+                                                                     MaterialGraphMath::kConvertChannelCount - 1)) +
+                                           "," + (node.Value[2] > 0.5f ? "1" : "0") + "," + contrast.Code + "," +
+                                           bias.Code;
                 const bool normal = node.Kind == Kind::ConvertToNormal ||
                                     (node.Kind == Kind::ConvertToNormalHeight && node.Value[0] > 0.5f);
                 if (normal)
@@ -901,13 +960,15 @@ namespace
                     const auto strength = Promote(Input(node, 3), Type::Scalar);
                     const auto radius = Promote(Input(node, 4), Type::Scalar);
                     expression = {"MG_ConvertNormal(" + texture + ",GraphSampler," + uv.Code + "," + common + "," +
-                                      strength.Code + "," + radius.Code + "," + (node.Value[3] > 0.5f ? "1" : "0") + ")",
+                                      strength.Code + "," + radius.Code + "," + (node.Value[3] > 0.5f ? "1" : "0") +
+                                      ")",
                                   Type::Vector3,
                                   {}};
                 }
                 else
                 {
-                    expression = {"MG_ConvertTap(" + texture + ",GraphSampler," + uv.Code + "," + common + ")", Type::Scalar, {}};
+                    expression = {
+                        "MG_ConvertTap(" + texture + ",GraphSampler," + uv.Code + "," + common + ")", Type::Scalar, {}};
                 }
             }
             else if (node.Kind == Kind::SolidCoordinate)
@@ -924,9 +985,12 @@ namespace
                 m_UsesProceduralNoise = true;
                 const bool raw = m_Graph.InputLink(node.InputPins[0]) != nullptr;
                 const auto position = Promote(Input(node, 0), Type::Vector3);
-                const int kind = std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialSolidKind::Count) - 1);
-                const int basis = std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
-                const int fractal = std::clamp(static_cast<int>(node.Value[2]), 0, MaterialGraphMath::kNoiseFractalCount - 1);
+                const int kind =
+                    std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialSolidKind::Count) - 1);
+                const int basis =
+                    std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
+                const int fractal =
+                    std::clamp(static_cast<int>(node.Value[2]), 0, MaterialGraphMath::kNoiseFractalCount - 1);
                 const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[3], 0.0f));
                 std::string code = "MG_SolidScalar(" + (raw ? position.Code : "(" + position.Code + "*0.5+0.5)") + "," +
                                    std::to_string(kind) + "," + std::to_string(basis) + "u," + std::to_string(fractal) +
@@ -1010,7 +1074,8 @@ namespace
             {
                 const auto start = Promote(Input(node, 0), Type::Scalar);
                 const auto end = Promote(Input(node, 1), Type::Scalar);
-                expression = {"saturate((3-" + start.Code + ")/(" + end.Code + "-" + start.Code + "))", Type::Scalar, {}};
+                expression = {
+                    "saturate((3-" + start.Code + ")/(" + end.Code + "-" + start.Code + "))", Type::Scalar, {}};
             }
             else if (node.Kind == Kind::HeightGradient)
             {
@@ -1018,7 +1083,8 @@ namespace
                 const auto end = Promote(Input(node, 1), Type::Scalar);
                 const std::string y = static_cast<int>(node.Value[0]) == 2 ? "(context.WorldPosition.y*0.5+0.5)"
                                                                            : "context.WorldPosition.y";
-                expression = {"saturate((" + y + "-" + start.Code + ")/(" + end.Code + "-" + start.Code + "))", Type::Scalar, {}};
+                expression = {
+                    "saturate((" + y + "-" + start.Code + ")/(" + end.Code + "-" + start.Code + "))", Type::Scalar, {}};
             }
             else if (node.Kind == Kind::VertexColor)
             {
@@ -1042,15 +1108,16 @@ namespace
             {
                 auto a = Input(node, 0);
                 auto b = Input(node, 1);
-                const Type type = static_cast<Type>((std::max)({static_cast<int>(a.ValueType), static_cast<int>(b.ValueType),
-                                                                static_cast<int>(Type::Scalar)}));
+                const Type type =
+                    static_cast<Type>((std::max)({static_cast<int>(a.ValueType), static_cast<int>(b.ValueType),
+                                                  static_cast<int>(Type::Scalar)}));
                 a = Promote(std::move(a), type);
                 b = Promote(std::move(b), type);
                 const auto height = Promote(Input(node, 2), Type::Scalar);
                 const auto phase = Promote(Input(node, 3), Type::Scalar);
                 const auto contrast = Promote(Input(node, 4), Type::Scalar);
-                expression = {"lerp(" + a.Code + "," + b.Code + ",MG_HeightLerpAlpha(" + height.Code + "," + phase.Code +
-                                  "," + contrast.Code + "))",
+                expression = {"lerp(" + a.Code + "," + b.Code + ",MG_HeightLerpAlpha(" + height.Code + "," +
+                                  phase.Code + "," + contrast.Code + "))",
                               type,
                               {}};
             }
@@ -1069,7 +1136,8 @@ namespace
                 {
                     m_Program.Error = "Triplanar Texture node " + std::to_string(node.Id) + " has no texture.";
                 }
-                const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                const auto sampler =
+                    static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                 size_t index = 0;
                 for (; index < m_Program.Textures.size(); ++index)
                 {
@@ -1087,8 +1155,9 @@ namespace
                                                       : "GraphTextures[" + std::to_string(index) + "]";
                 const auto position = Promote(Input(node, 0), Type::Vector3);
                 const auto scale = Promote(Input(node, 1), Type::Scalar);
-                std::string code = "MG_SolidTriplanar(" + texture + ",GraphSampler,(" + position.Code + "*" + scale.Code +
-                                   "),normalize(context.WorldNormal)," + Promote(Input(node, 2), Type::Scalar).Code + ")";
+                std::string code = "MG_SolidTriplanar(" + texture + ",GraphSampler,(" + position.Code + "*" +
+                                   scale.Code + "),normalize(context.WorldNormal)," +
+                                   Promote(Input(node, 2), Type::Scalar).Code + ")";
                 if (sampler == MaterialSamplerType::Normal)
                 {
                     code = "MG_UnpackNormal(" + code + ")";
@@ -1123,14 +1192,15 @@ namespace
                 const bool raw = m_Graph.InputLink(node.InputPins[1]) != nullptr;
                 const auto position = Promote(Input(node, 1), Type::Vector3);
                 const auto scale = Promote(Input(node, 2), Type::Scalar);
-                const std::string p = "(" + (raw ? position.Code : "(" + position.Code + "*0.5+0.5)") + "*" + scale.Code + ")";
+                const std::string p =
+                    "(" + (raw ? position.Code : "(" + position.Code + "*0.5+0.5)") + "*" + scale.Code + ")";
                 std::string code;
                 if (static_cast<int>(node.Value[0]) == static_cast<int>(MaterialSolidConvertMethod::Stochastic))
                 {
                     const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[2], 0.0f));
                     code = "MG_SolidStochastic(" + texture + ",GraphSampler," + p + ",normalize(context.WorldNormal)," +
-                           Promote(Input(node, 5), Type::Scalar).Code + "," + Promote(Input(node, 6), Type::Scalar).Code +
-                           "," + std::to_string(seed) + "u)";
+                           Promote(Input(node, 5), Type::Scalar).Code + "," +
+                           Promote(Input(node, 6), Type::Scalar).Code + "," + std::to_string(seed) + "u)";
                 }
                 else if (static_cast<int>(node.Value[0]) == static_cast<int>(MaterialSolidConvertMethod::Triplanar))
                 {
@@ -1141,8 +1211,8 @@ namespace
                 {
                     const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[2], 0.0f));
                     code = "MG_SolidVolume(" + texture + ",GraphSampler," + p + "," +
-                           Promote(Input(node, 3), Type::Scalar).Code + "," + Promote(Input(node, 4), Type::Scalar).Code +
-                           "," + std::to_string(seed) + "u)";
+                           Promote(Input(node, 3), Type::Scalar).Code + "," +
+                           Promote(Input(node, 4), Type::Scalar).Code + "," + std::to_string(seed) + "u)";
                 }
                 if (node.Value[3] > 0.5f)
                 {
@@ -1164,9 +1234,10 @@ namespace
                 const auto a = Promote(Input(node, 0), Type::Scalar);
                 const auto b = Promote(Input(node, 1), Type::Scalar);
                 const auto factor = Promote(Input(node, 2), Type::Scalar);
-                const int mode = std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialNoiseCombineMode::Count) - 1);
-                expression = {"MG_NoiseCombine(" + std::to_string(mode) + "," + a.Code + "," + b.Code + "," + factor.Code + "," +
-                                  (node.Value[1] > 0.5f ? "1" : "0") + ")",
+                const int mode = std::clamp(static_cast<int>(node.Value[0]), 0,
+                                            static_cast<int>(MaterialNoiseCombineMode::Count) - 1);
+                expression = {"MG_NoiseCombine(" + std::to_string(mode) + "," + a.Code + "," + b.Code + "," +
+                                  factor.Code + "," + (node.Value[1] > 0.5f ? "1" : "0") + ")",
                               Type::Scalar,
                               {}};
             }
@@ -1204,20 +1275,22 @@ namespace
             {
                 const auto height = Promote(Input(node, 0), Type::Scalar);
                 const auto strength = Promote(Input(node, 1), Type::Scalar);
-                expression = {"MG_NormalFromHeight(" + height.Code + ",context.UV," + strength.Code + ")", Type::Vector3,
-                              {}};
+                expression = {
+                    "MG_NormalFromHeight(" + height.Code + ",context.UV," + strength.Code + ")", Type::Vector3, {}};
             }
             else if (node.Kind == Kind::BlendAngleCorrectedNormals)
             {
                 const auto base = Promote(Input(node, 0), Type::Vector3);
                 const auto detail = Promote(Input(node, 1), Type::Vector3);
-                expression = {"MG_BlendAngleCorrectedNormals(" + base.Code + "," + detail.Code + ")", Type::Vector3, {}};
+                expression = {
+                    "MG_BlendAngleCorrectedNormals(" + base.Code + "," + detail.Code + ")", Type::Vector3, {}};
             }
             else if (node.Kind == Kind::FlattenNormal)
             {
                 const auto normal = Promote(Input(node, 0), Type::Vector3);
                 const auto flatness = Promote(Input(node, 1), Type::Scalar);
-                expression = {"normalize(" + normal.Code + "+(float3(0,0,1)-" + normal.Code + ")*" + flatness.Code + ")",
+                expression = {"normalize(" + normal.Code + "+(float3(0,0,1)-" + normal.Code + ")*" + flatness.Code +
+                                  ")",
                               Type::Vector3,
                               {}};
             }
@@ -1227,10 +1300,12 @@ namespace
                 const auto ratio = Promote(Input(node, 1), Type::Scalar);
                 const auto reference = Promote(Input(node, 2), Type::Scalar);
                 const auto coordinate = Promote(Input(node, 3), Type::Vector2);
-                expression = {"(" + coordinate.Code + "+float2(dot(context.CameraVector,context.Tangent),dot(context.CameraVector,context.Bitangent))*((" +
-                                  height.Code + "-" + reference.Code + ")*" + ratio.Code + "))",
-                              Type::Vector2,
-                              {}};
+                expression = {
+                    "(" + coordinate.Code +
+                        "+float2(dot(context.CameraVector,context.Tangent),dot(context.CameraVector,context.Bitangent))*((" +
+                        height.Code + "-" + reference.Code + ")*" + ratio.Code + "))",
+                    Type::Vector2,
+                    {}};
             }
             else if (node.Kind == Kind::RotateAboutAxis)
             {
@@ -1259,7 +1334,8 @@ namespace
                     m_Program.Error = "Texture Sample node " + std::to_string(node.Id) + " has no texture.";
                 }
                 const auto uv = Promote(Input(node, node.Kind == Kind::ConvertToTexture ? 1 : 0), Type::Vector2);
-                const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                const auto sampler =
+                    static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                 size_t index = 0;
                 for (; index < m_Program.Textures.size(); ++index)
                 {
@@ -1370,10 +1446,6 @@ MaterialGraphProgram MaterialGraphCompiler::GenerateRuntime(const MaterialGraph&
 {
     return Generator(graph, true).Run(targetNode);
 }
-
-
-
-
 
 // ============================================================================
 // 描画時評価（GPU）用プログラム（MaterialGraphVM.hlsli が解釈する）
@@ -1515,7 +1587,9 @@ namespace MaterialGraphVm
         class Generator
         {
           public:
-            Generator(const MaterialGraph& graph, const TextureResolver& resolve) : m_Graph(graph), m_Resolve(resolve) {}
+            Generator(const MaterialGraph& graph, const TextureResolver& resolve) : m_Graph(graph), m_Resolve(resolve)
+            {
+            }
 
             Program Run(const Options& options)
             {
@@ -1559,12 +1633,15 @@ namespace MaterialGraphVm
                         program.Error = "Material Output がありません";
                         return program;
                     }
-                    // Out0 / Out1：描画時評価で上書きする出力。Out2：ベイク / プレビュー用（Height / Normal Intensity / Transmission）
+
+                    // Out0 / Out1：描画時評価で上書きする出力。Out2：ベイク / プレビュー用（Height / Normal Intensity /
+                    // Transmission）
                     struct OutputPin
                     {
                         MaterialOutputPin Pin;
                         Type T;
                     };
+
                     const OutputPin pins[11] = {{MaterialOutputPin::BaseColor, Type::Vector4},
                                                 {MaterialOutputPin::Metallic, Type::Scalar},
                                                 {MaterialOutputPin::Roughness, Type::Scalar},
@@ -1584,7 +1661,8 @@ namespace MaterialGraphVm
                             continue;
                         }
                         const size_t index = static_cast<size_t>(pins[i].Pin);
-                        const bool linked = index < output->InputPins.size() && m_Graph.InputLink(output->InputPins[index]);
+                        const bool linked =
+                            index < output->InputPins.size() && m_Graph.InputLink(output->InputPins[index]);
                         // 直値（ピン横のボックス）が入った未接続のピンも、描画時評価の出力に含める
                         const bool direct = m_Graph.HasOutputDirectValue(*output, index);
                         if (!linked && !direct && !(options.IncludeDefaults && index < output->InputPins.size()))
@@ -1864,13 +1942,49 @@ namespace MaterialGraphVm
 
             Expr Unary(Kind kind, Expr a)
             {
-                return Emit(OpUnary, a.T, {a.Reg}, {static_cast<float>(static_cast<int>(kind) - static_cast<int>(Kind::Abs))});
+                if (kind == Kind::Logarithm10)
+                {
+                    const auto positive = BinaryOp(Kind::Max, a.T, a, Scalar(1e-8f));
+                    return Arith(ArMul, a.T, {Unary(Kind::Logarithm2, positive).Reg, Scalar(0.301029995664f).Reg});
+                }
+                if (kind == Kind::Exponential2)
+                {
+                    const auto bounded = Arith(ArClamp, a.T, {a.Reg, Scalar(-126).Reg, Scalar(126).Reg});
+                    const auto exponent = Arith(ArMul, a.T, {bounded.Reg, Scalar(0.69314718056f).Reg});
+                    return Unary(Kind::Exponential, exponent);
+                }
+                return Emit(OpUnary, a.T, {a.Reg},
+                            {static_cast<float>(static_cast<int>(kind) - static_cast<int>(Kind::Abs))});
             }
 
             Expr BinaryOp(Kind kind, Type type, Expr a, Expr b)
             {
                 return Emit(OpBinary, type, {a.Reg, b.Reg},
                             {static_cast<float>(static_cast<int>(kind) - static_cast<int>(Kind::Power))});
+            }
+
+            // 複合ノードは既存のVM命令へ展開し、共通シェーダーの分岐を増やさない。
+            Expr SafeQuotient(Expr numerator, Expr denominator)
+            {
+                const auto magnitude = Unary(Kind::Abs, denominator);
+                const auto safeMagnitude = BinaryOp(Kind::Max, denominator.T, magnitude, Scalar(1e-8f));
+                const auto quotient = Arith(ArDiv, numerator.T, {numerator.Reg, safeMagnitude.Reg});
+                const auto signedValue = Arith(ArMul, numerator.T, {quotient.Reg, Unary(Kind::Sign, denominator).Reg});
+                const auto zero = Scalar(0);
+                return Emit(OpIf, numerator.T, {magnitude.Reg, Scalar(1e-8f).Reg, signedValue.Reg, zero.Reg, zero.Reg});
+            }
+
+            Expr SoftBand(Expr value, Expr center, Expr halfWidth, Expr feather)
+            {
+                const auto distance = Unary(Kind::Abs, Arith(ArSub, Type::Scalar, {value.Reg, center.Reg}));
+                const auto width = BinaryOp(Kind::Max, Type::Scalar, halfWidth, Scalar(0));
+                const auto edge = Arith(ArSub, Type::Scalar, {distance.Reg, width.Reg});
+                const auto softness = BinaryOp(Kind::Max, Type::Scalar, feather, Scalar(1e-5f));
+                const auto t = Unary(Kind::Saturate, Arith(ArDiv, Type::Scalar, {edge.Reg, softness.Reg}));
+                const auto square = Arith(ArMul, Type::Scalar, {t.Reg, t.Reg});
+                const auto twice = Arith(ArMul, Type::Scalar, {Scalar(2).Reg, t.Reg});
+                const auto factor = Arith(ArSub, Type::Scalar, {Scalar(3).Reg, twice.Reg});
+                return Unary(Kind::OneMinus, Arith(ArMul, Type::Scalar, {square.Reg, factor.Reg}));
             }
 
             void Unsupported(const MaterialGraphNode& node, const char* reason)
@@ -1983,9 +2097,12 @@ namespace MaterialGraphVm
             Expr SolidScalar(const MaterialGraphNode& node)
             {
                 const Expr p = SolidPosition(node, 0);
-                const int kind = std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialSolidKind::Count) - 1);
-                const int basis = std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
-                const int fractal = std::clamp(static_cast<int>(node.Value[2]), 0, MaterialGraphMath::kNoiseFractalCount - 1);
+                const int kind =
+                    std::clamp(static_cast<int>(node.Value[0]), 0, static_cast<int>(MaterialSolidKind::Count) - 1);
+                const int basis =
+                    std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
+                const int fractal =
+                    std::clamp(static_cast<int>(node.Value[2]), 0, MaterialGraphMath::kNoiseFractalCount - 1);
                 const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[3], 0.0f));
                 Expr in[13];
                 for (size_t i = 1; i <= 12; ++i)
@@ -1999,8 +2116,9 @@ namespace MaterialGraphVm
                 const Expr& softness = in[10];
                 const Expr& contrast = in[11];
                 const Expr& bias = in[12];
-                const std::array<Expr, 10> settings = {frequency, in[2],      in[3],       in[4],      in[5],
-                                                       in[6],     Scalar(0.0f), Scalar(4.0f), Scalar(2.0f), Scalar(0.0f)};
+                const std::array<Expr, 10> settings = {frequency,    in[2],       in[3],        in[4],
+                                                       in[5],        in[6],       Scalar(0.0f), Scalar(4.0f),
+                                                       Scalar(2.0f), Scalar(0.0f)};
                 Expr v;
                 const auto S = Type::Scalar;
                 switch (static_cast<MaterialSolidKind>(kind))
@@ -2022,10 +2140,12 @@ namespace MaterialGraphVm
                         const Expr n = Noise(p, basis, fractal, seed, settings);
                         const Expr cx = Arith(ArSub, S, {Component(p, 0).Reg, Scalar(0.5f).Reg});
                         const Expr cz = Arith(ArSub, S, {Component(p, 2).Reg, Scalar(0.5f).Reg});
-                        Expr r = Arith(ArAdd, S, {Arith(ArMul, S, {cx.Reg, cx.Reg}).Reg, Arith(ArMul, S, {cz.Reg, cz.Reg}).Reg});
+                        Expr r = Arith(ArAdd, S,
+                                       {Arith(ArMul, S, {cx.Reg, cx.Reg}).Reg, Arith(ArMul, S, {cz.Reg, cz.Reg}).Reg});
                         r = Unary(Kind::SquareRoot, r);
                         r = Arith(ArMul, S, {r.Reg, Arith(ArMul, S, {rings.Reg, Scalar(2.0f).Reg}).Reg});
-                        const Expr wobble = Arith(ArMul, S, {Arith(ArMul, S, {n.Reg, turbulence.Reg}).Reg, Scalar(0.5f).Reg});
+                        const Expr wobble =
+                            Arith(ArMul, S, {Arith(ArMul, S, {n.Reg, turbulence.Reg}).Reg, Scalar(0.5f).Reg});
                         r = Arith(ArAdd, S, {r.Reg, wobble.Reg});
                         const Expr f = Unary(Kind::Frac, r);
                         const Expr rise = Arith(ArSmooth, S, {Scalar(0.0f).Reg, Scalar(0.8f).Reg, f.Reg});
@@ -2037,8 +2157,9 @@ namespace MaterialGraphVm
                         const Expr cells = Noise(p, 2, 0, seed, settings); // Worley, fBm
                         const Expr grainPosition = Arith(ArMul, Type::Vector3, {p.Reg, Scalar(4.0f).Reg});
                         const Expr grain = Noise(grainPosition, basis, fractal, seed, settings);
-                        Expr t = Arith(ArAdd, S, {Arith(ArMul, S, {cells.Reg, Scalar(0.6f).Reg}).Reg,
-                                                  Arith(ArMul, S, {grain.Reg, Scalar(0.4f).Reg}).Reg});
+                        Expr t = Arith(ArAdd, S,
+                                       {Arith(ArMul, S, {cells.Reg, Scalar(0.6f).Reg}).Reg,
+                                        Arith(ArMul, S, {grain.Reg, Scalar(0.4f).Reg}).Reg});
                         t = Unary(Kind::Saturate, t);
                         // v > 0.62 ? 1 : (v < 0.3 ? 0 : v)
                         t = Emit(OpIf, S, {t.Reg, Scalar(0.62f).Reg, Scalar(1.0f).Reg, t.Reg, t.Reg});
@@ -2056,12 +2177,14 @@ namespace MaterialGraphVm
                     case MaterialSolidKind::Cloud: {
                         const Expr base = Noise(p, basis, 0, seed, settings);
                         const Expr billows = Unary(Kind::OneMinus, Noise(p, 2, 0, seed ^ 0x7f4a7c15u, settings));
-                        const Expr shape = Arith(ArAdd, S, {Arith(ArMul, S, {base.Reg, Scalar(0.65f).Reg}).Reg,
-                                                            Arith(ArMul, S, {billows.Reg, Scalar(0.35f).Reg}).Reg});
+                        const Expr shape = Arith(ArAdd, S,
+                                                 {Arith(ArMul, S, {base.Reg, Scalar(0.65f).Reg}).Reg,
+                                                  Arith(ArMul, S, {billows.Reg, Scalar(0.35f).Reg}).Reg});
                         const Expr threshold = Unary(Kind::OneMinus, coverage);
                         const Expr half = Arith(ArMul, S, {softness.Reg, Scalar(0.5f).Reg});
-                        v = Arith(ArSmooth, S, {Arith(ArSub, S, {threshold.Reg, half.Reg}).Reg,
-                                                Arith(ArAdd, S, {threshold.Reg, half.Reg}).Reg, shape.Reg});
+                        v = Arith(ArSmooth, S,
+                                  {Arith(ArSub, S, {threshold.Reg, half.Reg}).Reg,
+                                   Arith(ArAdd, S, {threshold.Reg, half.Reg}).Reg, shape.Reg});
                         break;
                     }
                     default:
@@ -2180,7 +2303,8 @@ namespace MaterialGraphVm
                             args.push_back(Promote(input, type).Reg);
                         }
                         static const int codes[] = {ArAdd, ArSub, ArMul, ArDiv, ArLerp, ArClamp, ArSmoothstep};
-                        return Arith(codes[static_cast<int>(node.Kind) - static_cast<int>(Kind::Add)], type, std::move(args));
+                        return Arith(codes[static_cast<int>(node.Kind) - static_cast<int>(Kind::Add)], type,
+                                     std::move(args));
                     }
                     case Kind::TextureCoordinate:
                         return Emit(OpTexCoord, V2, {}, {node.Value[0], node.Value[1]});
@@ -2250,22 +2374,61 @@ namespace MaterialGraphVm
                         const Expr b = In(node, 1, S);
                         Expr branches[3] = {Input(node, 2), Input(node, 3), Input(node, 4)};
                         const Type type = MaxType({branches[0].T, branches[1].T, branches[2].T});
-                        return Emit(OpIf, type, {a.Reg, b.Reg, Promote(branches[0], type).Reg, Promote(branches[1], type).Reg,
-                                                 Promote(branches[2], type).Reg});
+                        return Emit(OpIf, type,
+                                    {a.Reg, b.Reg, Promote(branches[0], type).Reg, Promote(branches[1], type).Reg,
+                                     Promote(branches[2], type).Reg});
                     }
                     case Kind::SphereMask:
-                        return Emit(OpSphereMask, S, {In(node, 0, V3).Reg, In(node, 1, V3).Reg, In(node, 2, S).Reg,
-                                                      In(node, 3, S).Reg});
+                        return Emit(OpSphereMask, S,
+                                    {In(node, 0, V3).Reg, In(node, 1, V3).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg});
                     case Kind::CheapContrast:
                         return Emit(OpCheapContrast, S, {In(node, 0, S).Reg, In(node, 1, S).Reg});
                     case Kind::Noise:
                         return Emit(OpValueNoise, S, {In(node, 0, V3).Reg, In(node, 1, S).Reg});
                     case Kind::Pi:
                         return Scalar(3.14159265f * node.Value[0]);
+                    case Kind::InverseLerp: {
+                        const auto value = Input(node, 0);
+                        const auto numerator = Arith(ArSub, value.T, {value.Reg, In(node, 1, S).Reg});
+                        const auto denominator = Arith(ArSub, S, {In(node, 2, S).Reg, In(node, 1, S).Reg});
+                        return SafeQuotient(numerator, denominator);
+                    }
+                    case Kind::ReflectVector: {
+                        const auto incident = In(node, 0, V3);
+                        const auto normal = In(node, 1, V3);
+                        const auto dot = Emit(OpDot3, S, {incident.Reg, normal.Reg});
+                        const auto lengthSquared = Emit(OpDot3, S, {normal.Reg, normal.Reg});
+                        const auto scale = Arith(ArMul, S, {SafeQuotient(dot, lengthSquared).Reg, Scalar(2).Reg});
+                        const auto projection = Arith(ArMul, V3, {normal.Reg, scale.Reg});
+                        return Arith(ArSub, V3, {incident.Reg, projection.Reg});
+                    }
+                    case Kind::RenderSoftBand:
+                        return SoftBand(In(node, 0, S), In(node, 1, S), In(node, 2, S), In(node, 3, S));
+                    case Kind::RenderRadialPulse: {
+                        const auto radius = Emit(OpLength, S, {In(node, 0, V3).Reg}, {3});
+                        const auto frequency = Arith(ArMul, S, {radius.Reg, In(node, 2, S).Reg});
+                        const auto phase = Arith(ArSub, S, {frequency.Reg, In(node, 1, S).Reg});
+                        const auto wave = Unary(Kind::Frac, Arith(ArAdd, S, {phase.Reg, Scalar(0.5f).Reg}));
+                        const auto width = Arith(ArClamp, S, {In(node, 3, S).Reg, Scalar(0).Reg, Scalar(0.5f).Reg});
+                        return SoftBand(wave, Scalar(0.5f), width, Scalar(0.05f));
+                    }
+                    case Kind::RenderFlowUV: {
+                        const auto uv = In(node, 0, V2);
+                        const auto time = In(node, 2, S);
+                        const auto scroll = Arith(ArMul, V2, {In(node, 1, V2).Reg, time.Reg});
+                        const auto swapped = Emit(OpSwizzle, V2, {uv.Reg}, {1, 0, 4, 4});
+                        const auto angles = Arith(ArMul, V2, {swapped.Reg, Scalar(6.283185307f).Reg});
+                        const auto negativeTime = Arith(ArMul, S, {time.Reg, Scalar(-1).Reg});
+                        const auto phase = Emit(OpAppend, V2, {time.Reg, negativeTime.Reg}, {1, 1});
+                        const auto wave = Unary(Kind::Sine, Arith(ArAdd, V2, {angles.Reg, phase.Reg}));
+                        const auto offset = Arith(ArMul, V2, {wave.Reg, In(node, 3, S).Reg});
+                        return Arith(ArAdd, V2, {Arith(ArAdd, V2, {uv.Reg, scroll.Reg}).Reg, offset.Reg});
+                    }
                     case Kind::RemapValueRange: {
                         const Expr a = Input(node, 0);
-                        return Emit(OpRemap, a.T, {a.Reg, In(node, 1, S).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg,
-                                                   In(node, 4, S).Reg});
+                        return Emit(
+                            OpRemap, a.T,
+                            {a.Reg, In(node, 1, S).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg, In(node, 4, S).Reg});
                     }
                     case Kind::Posterize: {
                         const Expr a = Input(node, 0);
@@ -2279,16 +2442,18 @@ namespace MaterialGraphVm
                     case Kind::LinearGradient:
                         return Unary(Kind::Saturate, Component(In(node, 0, V2), node.Value[0] > 0.5f ? 1 : 0));
                     case Kind::RadialGradient:
-                        return Emit(OpRadialGradient, S, {In(node, 0, V2).Reg, In(node, 1, V2).Reg, In(node, 2, S).Reg,
-                                                          In(node, 3, S).Reg});
+                        return Emit(OpRadialGradient, S,
+                                    {In(node, 0, V2).Reg, In(node, 1, V2).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg});
                     case Kind::ProceduralNoise:
                     case Kind::FractalNoise: {
                         const bool fractal = node.Kind == Kind::FractalNoise;
                         const Expr position =
                             Emit(OpAppend, V3, {In(node, 0, V2).Reg, In(node, 1, S).Reg}, {2.0f, 1.0f});
-                        const int basis = std::clamp(static_cast<int>(node.Value[0]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
-                        const int fractalType =
-                            fractal ? std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kNoiseFractalCount - 1) : 6;
+                        const int basis =
+                            std::clamp(static_cast<int>(node.Value[0]), 0, MaterialGraphMath::kNoiseBasisCount - 1);
+                        const int fractalType = fractal ? std::clamp(static_cast<int>(node.Value[1]), 0,
+                                                                     MaterialGraphMath::kNoiseFractalCount - 1)
+                                                        : 6;
                         const uint32_t seed = static_cast<uint32_t>((std::max)(node.Value[fractal ? 2 : 1], 0.0f));
                         const bool tileable = node.Value[fractal ? 3 : 2] > 0.5f;
                         std::array<Expr, 10> settings;
@@ -2324,17 +2489,18 @@ namespace MaterialGraphVm
                     case Kind::ConvertToHeight:
                     case Kind::ConvertToNormal: {
                         const int heap = Texture(node, MaterialSamplerType::Linear);
-                        const float channel = static_cast<float>(
-                            std::clamp(static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kConvertChannelCount - 1));
+                        const float channel = static_cast<float>(std::clamp(
+                            static_cast<int>(node.Value[1]), 0, MaterialGraphMath::kConvertChannelCount - 1));
                         const float invert = node.Value[2] > 0.5f ? 1.0f : 0.0f;
                         const bool normal = node.Kind == Kind::ConvertToNormal ||
                                             (node.Kind == Kind::ConvertToNormalHeight && node.Value[0] > 0.5f);
                         if (normal)
                         {
-                            return Emit(OpConvertNormal, V3,
-                                        {In(node, 0, V2).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg,
-                                         In(node, 4, S).Reg},
-                                        {static_cast<float>(heap), channel, invert, node.Value[3] > 0.5f ? 1.0f : 0.0f});
+                            return Emit(
+                                OpConvertNormal, V3,
+                                {In(node, 0, V2).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg,
+                                 In(node, 4, S).Reg},
+                                {static_cast<float>(heap), channel, invert, node.Value[3] > 0.5f ? 1.0f : 0.0f});
                         }
                         return Emit(OpConvertHeight, S, {In(node, 0, V2).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg},
                                     {static_cast<float>(heap), channel, invert});
@@ -2352,19 +2518,22 @@ namespace MaterialGraphVm
                         {
                             // lerp(空色, lerp(B, 1, 0.5), v)
                             const Expr sky = Const({0.32f, 0.52f, 0.86f, 0.0f}, V3);
-                            const Expr bright = Arith(ArLerp, V3, {In(node, 14, V3).Reg, Scalar(1.0f).Reg, Scalar(0.5f).Reg});
+                            const Expr bright =
+                                Arith(ArLerp, V3, {In(node, 14, V3).Reg, Scalar(1.0f).Reg, Scalar(0.5f).Reg});
                             return Arith(ArLerp, V3, {sky.Reg, bright.Reg, v.Reg});
                         }
-                        return Emit(OpThreeRamp, V3, {v.Reg, In(node, 13, V3).Reg, In(node, 14, V3).Reg, In(node, 15, V3).Reg});
+                        return Emit(OpThreeRamp, V3,
+                                    {v.Reg, In(node, 13, V3).Reg, In(node, 14, V3).Reg, In(node, 15, V3).Reg});
                     }
                     case Kind::ConvertToSolid: {
                         if (node.Texture == 0)
                         {
                             return In(node, 0, V4); // 元画像なし：入力をそのまま通す
                         }
-                        const auto sampler = static_cast<int>(node.Value[1]) == static_cast<int>(MaterialSamplerType::Color)
-                                                 ? MaterialSamplerType::Color
-                                                 : MaterialSamplerType::Linear;
+                        const auto sampler =
+                            static_cast<int>(node.Value[1]) == static_cast<int>(MaterialSamplerType::Color)
+                                ? MaterialSamplerType::Color
+                                : MaterialSamplerType::Linear;
                         const int heap = Texture(node, sampler);
                         const Expr position = SolidPosition(node, 1);
                         const Expr p = Arith(ArMul, V3, {position.Reg, In(node, 2, S).Reg});
@@ -2388,13 +2557,15 @@ namespace MaterialGraphVm
                         return Emit(OpSolidVolume, V4, {p.Reg, In(node, 3, S).Reg, In(node, 4, S).Reg}, std::move(imm));
                     }
                     case Kind::ThreeColorRamp:
-                        return Emit(OpThreeRamp, V3, {In(node, 0, S).Reg, In(node, 1, V3).Reg, In(node, 2, V3).Reg,
-                                                      In(node, 3, V3).Reg});
+                        return Emit(
+                            OpThreeRamp, V3,
+                            {In(node, 0, S).Reg, In(node, 1, V3).Reg, In(node, 2, V3).Reg, In(node, 3, V3).Reg});
                     case Kind::NoiseCombine:
-                        return Emit(OpNoiseCombine, S, {In(node, 0, S).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg},
-                                    {static_cast<float>(std::clamp(static_cast<int>(node.Value[0]), 0,
-                                                                   static_cast<int>(MaterialNoiseCombineMode::Count) - 1)),
-                                     node.Value[1] > 0.5f ? 1.0f : 0.0f});
+                        return Emit(
+                            OpNoiseCombine, S, {In(node, 0, S).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg},
+                            {static_cast<float>(std::clamp(static_cast<int>(node.Value[0]), 0,
+                                                           static_cast<int>(MaterialNoiseCombineMode::Count) - 1)),
+                             node.Value[1] > 0.5f ? 1.0f : 0.0f});
                     case Kind::NoiseLayers: {
                         Expr sum = Scalar(0.0f);
                         Expr weights = Scalar(0.0f);
@@ -2418,7 +2589,8 @@ namespace MaterialGraphVm
                         return Emit(OpVoronoi, S, {uv.Reg, In(node, 2, S).Reg}, {node.Value[0] > 0.5f ? 1.0f : 0.0f});
                     }
                     case Kind::NormalFromHeight:
-                        Unsupported(node, "画面微分を使うので描画時評価では使えません（Convert To Normal を使ってください）");
+                        Unsupported(node,
+                                    "画面微分を使うので描画時評価では使えません（Convert To Normal を使ってください）");
                         return {};
                     case Kind::BumpOffset:
                         Unsupported(node, "描画時評価では使えません（ベイクで評価します）");
@@ -2428,8 +2600,9 @@ namespace MaterialGraphVm
                     case Kind::FlattenNormal:
                         return Emit(OpFlatten, V3, {In(node, 0, V3).Reg, In(node, 1, S).Reg});
                     case Kind::RotateAboutAxis:
-                        return Emit(OpRotateAxis, V3, {In(node, 0, V3).Reg, In(node, 1, S).Reg, In(node, 2, V3).Reg,
-                                                       In(node, 3, V3).Reg});
+                        return Emit(
+                            OpRotateAxis, V3,
+                            {In(node, 0, V3).Reg, In(node, 1, S).Reg, In(node, 2, V3).Reg, In(node, 3, V3).Reg});
                     case Kind::BlackBody:
                         return Emit(OpBlackBody, V3, {In(node, 0, S).Reg});
                     case Kind::ConvertToTexture:
@@ -2439,7 +2612,8 @@ namespace MaterialGraphVm
                         }
                         [[fallthrough]];
                     case Kind::TextureSample: {
-                        const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                        const auto sampler =
+                            static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                         const int heap = Texture(node, sampler);
                         const Expr uv = In(node, node.Kind == Kind::ConvertToTexture ? 1 : 0, V2);
                         return Emit(OpTexSample, V4, {uv.Reg}, {static_cast<float>(heap), static_cast<float>(sampler)});
@@ -2501,18 +2675,23 @@ namespace MaterialGraphVm
                         const Expr distance = Special(InCameraDistance, S);
                         const Expr start = In(node, 0, S);
                         const Expr end = In(node, 1, S);
-                        const Expr t = Arith(ArDiv, S, {Arith(ArSub, S, {distance.Reg, start.Reg}).Reg,
-                                                        Arith(ArSub, S, {end.Reg, start.Reg}).Reg});
+                        const Expr t = Arith(ArDiv, S,
+                                             {Arith(ArSub, S, {distance.Reg, start.Reg}).Reg,
+                                              Arith(ArSub, S, {end.Reg, start.Reg}).Reg});
                         return Unary(Kind::Saturate, t);
                     }
                     case Kind::HeightGradient: {
                         const int mode = std::clamp(static_cast<int>(node.Value[0]), 0, 2);
-                        const Expr position = Special(mode == 0 ? InWorldPosition : mode == 1 ? InObjectPosition : InBoundsUVW, V3);
+                        const Expr position = Special(mode == 0   ? InWorldPosition
+                                                      : mode == 1 ? InObjectPosition
+                                                                  : InBoundsUVW,
+                                                      V3);
                         const Expr y = Component(position, 1);
                         const Expr start = In(node, 0, S);
                         const Expr end = In(node, 1, S);
-                        const Expr t = Arith(ArDiv, S, {Arith(ArSub, S, {y.Reg, start.Reg}).Reg,
-                                                        Arith(ArSub, S, {end.Reg, start.Reg}).Reg});
+                        const Expr t =
+                            Arith(ArDiv, S,
+                                  {Arith(ArSub, S, {y.Reg, start.Reg}).Reg, Arith(ArSub, S, {end.Reg, start.Reg}).Reg});
                         return Unary(Kind::Saturate, t);
                     }
                     case Kind::VertexColor:
@@ -2530,10 +2709,11 @@ namespace MaterialGraphVm
                         return Arith(ArLerp, type, {Promote(a, type).Reg, Promote(b, type).Reg, alpha.Reg});
                     }
                     case Kind::ColorAdjust:
-                        return Emit(OpColorAdjust, V3, {In(node, 0, V3).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg,
-                                                        In(node, 3, S).Reg});
+                        return Emit(OpColorAdjust, V3,
+                                    {In(node, 0, V3).Reg, In(node, 1, S).Reg, In(node, 2, S).Reg, In(node, 3, S).Reg});
                     case Kind::TriplanarTexture: {
-                        const auto sampler = static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
+                        const auto sampler =
+                            static_cast<MaterialSamplerType>(std::clamp(static_cast<int>(node.Value[0]), 0, 2));
                         const int heap = Texture(node, sampler);
                         const Expr p = Arith(ArMul, V3, {In(node, 0, V3).Reg, In(node, 1, S).Reg});
                         return Emit(OpTriplanar, V4, {p.Reg, In(node, 2, S).Reg},
@@ -2589,5 +2769,3 @@ namespace MaterialGraphVm
         return Generator(graph, resolveTexture).Run(Options{});
     }
 } // namespace MaterialGraphVm
-
-

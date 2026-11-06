@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialgraphpreview.h"
 #include "materialgraph.h"
 #include "materialgraphmath.h"
@@ -1198,6 +1198,8 @@ namespace MaterialGraphPreview
             {
                 case Kind::UV:
                 case Kind::TextureCoordinate:
+                case Kind::RenderFlowUV:
+                case Kind::RenderRadialPulse:
                 case Kind::Panner:
                 case Kind::Rotator:
                 case Kind::WorldPosition:

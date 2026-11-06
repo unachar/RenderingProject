@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialgraph.h"
 #include <json/json.h>
 #include <algorithm>
@@ -148,12 +148,18 @@ namespace
         {Kind::SphereMask,
          "Sphere Mask",
          Type::Scalar,
-         {{"A", Type::Vector3}, {"B", Type::Vector3}, {"Radius", Type::Scalar, {0.5f}}, {"Hardness", Type::Scalar, {0.5f}}}},
+         {{"A", Type::Vector3},
+          {"B", Type::Vector3},
+          {"Radius", Type::Scalar, {0.5f}},
+          {"Hardness", Type::Scalar, {0.5f}}}},
         {Kind::CheapContrast, "Cheap Contrast", Type::Scalar, {{"In", Type::Scalar}, {"Contrast", Type::Scalar, {1}}}},
         {Kind::Noise, "Noise", Type::Scalar, {{"Position", Type::Vector3}, {"Scale", Type::Scalar, {4}}}},
         {Kind::Reroute, "Reroute", Type::Numeric, {{"In", Type::Numeric}}},
         // ---- 2026-11 追加（UE のノード / マテリアル関数）
-        {Kind::StaticSwitch, "Static Switch", Type::Numeric, {{"True", Type::Numeric, {1, 1, 1, 1}}, {"False", Type::Numeric}}},
+        {Kind::StaticSwitch,
+         "Static Switch",
+         Type::Numeric,
+         {{"True", Type::Numeric, {1, 1, 1, 1}}, {"False", Type::Numeric}}},
         {Kind::Pi, "Pi", Type::Scalar, {}},
         {Kind::RemapValueRange,
          "Remap Value Range",
@@ -168,12 +174,17 @@ namespace
         {Kind::Blend,
          "Blend",
          Type::Vector3,
-         {{"Base", Type::Vector3, {0.5f, 0.5f, 0.5f}}, {"Blend", Type::Vector3, {0.5f, 0.5f, 0.5f}}, {"Opacity", Type::Scalar, {1}}}},
+         {{"Base", Type::Vector3, {0.5f, 0.5f, 0.5f}},
+          {"Blend", Type::Vector3, {0.5f, 0.5f, 0.5f}},
+          {"Opacity", Type::Scalar, {1}}}},
         {Kind::LinearGradient, "Linear Gradient", Type::Scalar, {{"UV", Type::Vector2}}},
         {Kind::RadialGradient,
          "Radial Gradient",
          Type::Scalar,
-         {{"UV", Type::Vector2}, {"Center", Type::Vector2, {0.5f, 0.5f}}, {"Radius", Type::Scalar, {0.5f}}, {"Density", Type::Scalar, {2}}}},
+         {{"UV", Type::Vector2},
+          {"Center", Type::Vector2, {0.5f, 0.5f}},
+          {"Radius", Type::Scalar, {0.5f}},
+          {"Density", Type::Scalar, {2}}}},
         {Kind::Voronoi,
          "Voronoi",
          Type::Scalar,
@@ -186,7 +197,10 @@ namespace
          "Blend Angle Corrected Normals",
          Type::Vector3,
          {{"Base Normal", Type::Vector3, {0, 0, 1}}, {"Additional Normal", Type::Vector3, {0, 0, 1}}}},
-        {Kind::FlattenNormal, "Flatten Normal", Type::Vector3, {{"Normal", Type::Vector3, {0, 0, 1}}, {"Flatness", Type::Scalar}}},
+        {Kind::FlattenNormal,
+         "Flatten Normal",
+         Type::Vector3,
+         {{"Normal", Type::Vector3, {0, 0, 1}}, {"Flatness", Type::Scalar}}},
         {Kind::BumpOffset,
          "Bump Offset",
          Type::Vector2,
@@ -249,7 +263,10 @@ namespace
           {"Normal Strength", Type::Scalar, {8}},
           {"Radius (UV)", Type::Scalar, {0.001f}}}},
         {Kind::BreakVector, "Break Vector", Type::Numeric, {{"Vector", Type::Numeric}}},
-        {Kind::ConvertToTexture, "Convert To Texture", Type::Vector4, {{"Value", Type::Numeric}, {"UV", Type::Vector2}}},
+        {Kind::ConvertToTexture,
+         "Convert To Texture",
+         Type::Vector4,
+         {{"Value", Type::Numeric}, {"UV", Type::Vector2}}},
         // ---- ソリッドテクスチャ（入力の並びは Solid Texture / Solid Pattern で共通。色は Solid Texture のみ）
         {Kind::SolidTexture,
          "Solid Texture",
@@ -323,14 +340,22 @@ namespace
         {Kind::PixelDepth, "Pixel Depth", Type::Scalar, {}},
         {Kind::ScreenPosition, "Screen Position", Type::Vector2, {}},
         {Kind::DitherOpacity, "Dither Opacity", Type::Scalar, {{"Opacity", Type::Scalar, {0.5f}}}},
-        {Kind::DistanceFade, "Distance Fade", Type::Scalar, {{"Start", Type::Scalar, {5}}, {"End", Type::Scalar, {20}}}},
-        {Kind::HeightGradient, "Height Gradient", Type::Scalar, {{"Start", Type::Scalar, {0}}, {"End", Type::Scalar, {1}}}},
+        {Kind::DistanceFade,
+         "Distance Fade",
+         Type::Scalar,
+         {{"Start", Type::Scalar, {5}}, {"End", Type::Scalar, {20}}}},
+        {Kind::HeightGradient,
+         "Height Gradient",
+         Type::Scalar,
+         {{"Start", Type::Scalar, {0}}, {"End", Type::Scalar, {1}}}},
         {Kind::VertexColor, "Vertex Color", Type::Vector4, {}},
         {Kind::CameraDistance, "Camera Distance", Type::Scalar, {}},
         {Kind::SlopeMask,
          "Slope Mask",
          Type::Scalar,
-         {{"Up", Type::Vector3, {0, 1, 0, 0}}, {"Threshold", Type::Scalar, {0.7f}}, {"Softness", Type::Scalar, {0.1f}}}},
+         {{"Up", Type::Vector3, {0, 1, 0, 0}},
+          {"Threshold", Type::Scalar, {0.7f}},
+          {"Softness", Type::Scalar, {0.1f}}}},
         {Kind::HeightLerp,
          "Height Lerp",
          Type::Numeric,
@@ -360,7 +385,39 @@ namespace
           {"Layer 3", Type::Scalar},
           {"Weight 3", Type::Scalar, {1}},
           {"Layer 4", Type::Scalar},
-          {"Weight 4", Type::Scalar, {1}}}}};
+          {"Weight 4", Type::Scalar, {1}}}},
+        {Kind::Vector2Parameter, "Vector2 Parameter", Type::Vector2, {}},
+        {Kind::Logarithm10, "Logarithm10", Type::Numeric, {{"Input", Type::Numeric, {1, 1, 1, 1}}}},
+        {Kind::Exponential2, "Exponential2", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::InverseLerp,
+         "Inverse Lerp",
+         Type::Numeric,
+         {{"Value", Type::Numeric}, {"Min", Type::Scalar}, {"Max", Type::Scalar, {1}}}},
+        {Kind::ReflectVector,
+         "Reflect Vector",
+         Type::Vector3,
+         {{"Incident", Type::Vector3, {0, -1, 0}}, {"Normal", Type::Vector3, {0, 1, 0}}}},
+        {Kind::RenderSoftBand,
+         "Render Soft Band",
+         Type::Scalar,
+         {{"Value", Type::Scalar},
+          {"Center", Type::Scalar, {0.5f}},
+          {"Half Width", Type::Scalar, {0.1f}},
+          {"Feather", Type::Scalar, {0.05f}}}},
+        {Kind::RenderRadialPulse,
+         "Render Radial Pulse",
+         Type::Scalar,
+         {{"Position", Type::Vector3},
+          {"Phase", Type::Scalar},
+          {"Frequency", Type::Scalar, {1}},
+          {"Half Width", Type::Scalar, {0.1f}}}},
+        {Kind::RenderFlowUV,
+         "Render Flow UV",
+         Type::Vector2,
+         {{"UV", Type::Vector2},
+          {"Flow", Type::Vector2, {0.1f, 0}},
+          {"Time", Type::Scalar},
+          {"Distortion", Type::Scalar, {0.025f}}}}};
 
     int Dimensions(Type type)
     {
@@ -429,7 +486,8 @@ MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
     const auto link = [&](uint64_t sourceNode, uint64_t targetPin) {
         graph.Connect(outputOf(sourceNode), targetPin, error);
     };
-    const auto texture = [&](MaterialTextureSlot slot, MaterialSamplerType sampler, const char* name, float y) -> uint64_t {
+    const auto texture = [&](MaterialTextureSlot slot, MaterialSamplerType sampler, const char* name,
+                             float y) -> uint64_t {
         const AssetHandle handle = material.Textures[static_cast<size_t>(slot)];
         if (handle == 0)
         {
@@ -463,15 +521,19 @@ MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
     // Base Color（テクスチャ × 色）
     {
         const auto base = texture(MaterialTextureSlot::BaseColor, MaterialSamplerType::Color, "Base Color Texture", y);
-        const auto color = add(Kind::ColorParameter, "Base Color", material.BaseColor, base ? 300.0f : 40.0f, base ? y + 120 : y);
+        const auto color =
+            add(Kind::ColorParameter, "Base Color", material.BaseColor, base ? 300.0f : 40.0f, base ? y + 120 : y);
         link(base ? multiply(base, color, y + 40) : color, pinOf(MaterialOutputPin::BaseColor));
         y += base ? 260.0f : 150.0f;
     }
     // Metallic / Roughness（エンジンの MR テクスチャは R = Metallic, G = Roughness）
     {
-        const auto mr = texture(MaterialTextureSlot::MetallicRoughness, MaterialSamplerType::Linear, "Metallic Roughness", y);
-        const auto metallic = add(Kind::ScalarParameter, "Metallic", {material.Metallic}, mr ? 300.0f : 40.0f, y + (mr ? 180.0f : 0.0f));
-        const auto roughness = add(Kind::ScalarParameter, "Roughness", {material.Roughness}, mr ? 300.0f : 40.0f, y + (mr ? 260.0f : 100.0f));
+        const auto mr =
+            texture(MaterialTextureSlot::MetallicRoughness, MaterialSamplerType::Linear, "Metallic Roughness", y);
+        const auto metallic =
+            add(Kind::ScalarParameter, "Metallic", {material.Metallic}, mr ? 300.0f : 40.0f, y + (mr ? 180.0f : 0.0f));
+        const auto roughness = add(Kind::ScalarParameter, "Roughness", {material.Roughness}, mr ? 300.0f : 40.0f,
+                                   y + (mr ? 260.0f : 100.0f));
         if (mr)
         {
             link(multiply(mask(mr, 0, y), metallic, y), pinOf(MaterialOutputPin::Metallic));
@@ -493,12 +555,14 @@ MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
     }
     if (material.NormalScale != 1.0f)
     {
-        link(add(Kind::ScalarParameter, "Normal Intensity", {material.NormalScale}, 40, y), pinOf(MaterialOutputPin::NormalIntensity));
+        link(add(Kind::ScalarParameter, "Normal Intensity", {material.NormalScale}, 40, y),
+             pinOf(MaterialOutputPin::NormalIntensity));
         y += 100.0f;
     }
     // Emissive（テクスチャ × 色 × 強度）
     {
-        const auto emissiveTexture = texture(MaterialTextureSlot::Emissive, MaterialSamplerType::Color, "Emissive Texture", y);
+        const auto emissiveTexture =
+            texture(MaterialTextureSlot::Emissive, MaterialSamplerType::Color, "Emissive Texture", y);
         const std::array<float, 4> emissive = {material.EmissiveColor[0] * material.EmissiveIntensity,
                                                material.EmissiveColor[1] * material.EmissiveIntensity,
                                                material.EmissiveColor[2] * material.EmissiveIntensity, 0};
@@ -535,8 +599,10 @@ MaterialGraph MaterialGraph::FromMaterial(const MaterialAssetData& material)
     }
     if (material.ParallaxDepth > 0.0f || material.Textures[static_cast<size_t>(MaterialTextureSlot::Height)] != 0)
     {
-        link(add(Kind::ScalarParameter, "Parallax Depth", {material.ParallaxDepth}, 40, y), pinOf(MaterialOutputPin::ParallaxDepth));
-        link(add(Kind::ScalarParameter, "Parallax Steps", {material.ParallaxSteps}, 40, y + 100), pinOf(MaterialOutputPin::ParallaxSteps));
+        link(add(Kind::ScalarParameter, "Parallax Depth", {material.ParallaxDepth}, 40, y),
+             pinOf(MaterialOutputPin::ParallaxDepth));
+        link(add(Kind::ScalarParameter, "Parallax Steps", {material.ParallaxSteps}, 40, y + 100),
+             pinOf(MaterialOutputPin::ParallaxSteps));
         y += 200.0f;
     }
     // ---- マテリアルモード（Opaque / Masked / Translucent / Glass）と Details の設定
@@ -1146,6 +1212,10 @@ bool MaterialGraph::IsPinValueEditable(MaterialNodeKind kind, size_t input)
         case Kind::Panner:
         case Kind::Rotator:
             return input >= 2;
+        case Kind::RenderRadialPulse:
+            return input >= 2;
+        case Kind::RenderFlowUV:
+            return input != 2;
         case Kind::TextureSample:
             return input != 0;
         case Kind::BumpOffset:
@@ -1365,8 +1435,9 @@ bool MaterialGraph::Validate(std::string& error) const
             error = "Invalid output pin identity.";
             return false;
         }
-        if (node.SplitPins.size() > 4 || ((node.Kind == Kind::Output || node.Kind == Kind::Group ||
-                                           node.Kind == Kind::Reroute) && !node.SplitPins.empty()))
+        if (node.SplitPins.size() > 4 ||
+            ((node.Kind == Kind::Output || node.Kind == Kind::Group || node.Kind == Kind::Reroute) &&
+             !node.SplitPins.empty()))
         {
             error = "Invalid split output pins.";
             return false;
@@ -1444,8 +1515,7 @@ bool MaterialGraph::Validate(std::string& error) const
     for (const auto& node : Nodes)
     {
         if (Definition(node.Kind).OutputType != Type::Numeric || node.Kind == Kind::Output ||
-            node.Kind == Kind::AppendVector || node.Kind == Kind::ComponentMask ||
-            IsConvertTextureNode(node.Kind))
+            node.Kind == Kind::AppendVector || node.Kind == Kind::ComponentMask || IsConvertTextureNode(node.Kind))
         {
             continue;
         }
@@ -1625,7 +1695,8 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         }
         return true;
     };
-    const int nodeNames = document.isMember("nodeNames") && document["nodeNames"].isInt() ? document["nodeNames"].asInt() : 1;
+    const int nodeNames =
+        document.isMember("nodeNames") && document["nodeNames"].isInt() ? document["nodeNames"].asInt() : 1;
     for (const auto& value : document["nodes"])
     {
         if (!value.isObject() || !value["id"].isUInt64() || !value["kind"].isString() || !value["name"].isString() ||
@@ -1870,8 +1941,3 @@ bool MaterialGraph::Load(const std::filesystem::path& path, MaterialGraph& graph
     }
     return Deserialize(contents.str(), graph, error);
 }
-
-
-
-
-

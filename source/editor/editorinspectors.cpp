@@ -6,6 +6,7 @@
 #include "modelmeshtable.h"
 #include "materialopticsui.h"
 #include "proceduralio.h"
+#include "effects/niagarascene.h"
 #include "animationpreviewwindow.h"
 #include "imguimanager.h"
 #include "world.h"
@@ -2275,6 +2276,15 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         }
         ImGui::TextWrapped("EditorCamera: 右ドラッグ + WASDQE、Shiftで高速移動");
         if (changed)
+        {
+            BeginUndoCapture(entity, before);
+        }
+    }
+
+    if (ComponentManager::HasComponent<NiagaraComponent>(entity))
+    {
+        const auto before = CaptureEntity(entity);
+        if (NiagaraScene::DrawInspector(entity))
         {
             BeginUndoCapture(entity, before);
         }

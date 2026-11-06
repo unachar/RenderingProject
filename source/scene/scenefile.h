@@ -1076,6 +1076,22 @@ namespace SceneFile
         a("previewInEditor", c.PreviewInEditor);
     }
 
+    inline void Visit(Archive& a, NiagaraComponent& c)
+    {
+        a("asset", c.AssetPath);
+        a("enabled", c.Enabled);
+        a("autoPlay", c.AutoPlay);
+        a("previewInEditor", c.PreviewInEditor);
+        a("playbackRate", c.PlaybackRate);
+        a("loopOverride", c.LoopOverride);
+        if (a.Reading())
+        {
+            c.PlaybackRate = std::isfinite(c.PlaybackRate) ? std::clamp(c.PlaybackRate, 0.0f, 16.0f) : 1.0f;
+            c.LoopOverride = std::clamp(c.LoopOverride, -1, 1);
+            c.Instance.reset();
+        }
+    }
+
     inline void VisitPart(Archive& a, MaterialPartParams& p)
     {
         a("metallic", p.Metallic);

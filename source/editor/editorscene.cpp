@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "editorworkspace.h"
 #include "editorshell.h"
 #include "editorpreferences.h"
@@ -13,6 +13,8 @@
 #include "systemmanager.h"
 #include "timelinesystem.h"
 #include "proceduralscene.h"
+#include "effects/niagarascene.h"
+#include "niagarawindow.h"
 #include "animator.h"
 #include "texturemanager.h"
 #include "modelmanager.h"
@@ -103,6 +105,10 @@ namespace
         if (ComponentManager::HasComponent<MeshComponent>(entity))
         {
             return {"■", "Mesh", IM_COL32(110, 190, 235, 255)};
+        }
+        if (ComponentManager::HasComponent<NiagaraComponent>(entity))
+        {
+            return {"*", "Niagara", IM_COL32(230, 170, 100, 255)};
         }
         if (ComponentManager::HasComponent<TimelineComponent>(entity))
         {
@@ -248,6 +254,7 @@ void ImGuiManager::DrawSceneViewWindow()
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     VirtualGeometryDebug::DrawViewport(drawList, cursor, imageSize, m_SelectedEntity);
+    NiagaraScene::DrawBoundsGrid(drawList, cursor, imageSize, m_SelectedEntity);
     ImGuizmo::SetID(static_cast<int>(ImGui::GetID("SceneTransformGizmo")));
     DrawTransformGizmo();
     // 修正：ホバー判定を Image に限定しない（ギズモの軸が画像の端からはみ出しても掴めるように）
@@ -736,7 +743,7 @@ void ImGuiManager::DrawHierarchyWindow()
     // #5 種類で絞り込み（UE のアウトライナーのフィルター）
     static int typeFilter = 0;
     static const char* const kOutlinerTypes[] = {"すべて", "StaticMesh", "Skeletal", "Mesh",    "Light",
-                                                 "Sun",    "Camera",     "Terrain",  "Timeline", "Empty"};
+                                                 "Sun",    "Camera",     "Terrain",  "Timeline", "Empty", "Niagara"};
     {
         const float comboWidth = 110.0f * EditorPreferences::Get().UiScale;
         ImGui::BeginChild("EntitySearchArea",
@@ -1331,6 +1338,30 @@ string ImGuiManager::MakeDuplicateName(const string& sourceName)
     return baseName + " (copy)";
 }
 
+EntityID ImGuiManager::PlaceNiagaraAsset(const filesystem::path& path)
+{
+    if (ProjectManager::IsPlaying())
+    {
+        AddLog("Niagara: stop scene playback before placing an effect");
+        return g_kINVALID_ENTITY;
+    }
+    FinalizeUndoCaptureIfIdle(true);
+    string error;
+    const EntityID entity = NiagaraScene::Create(path, error);
+    if (entity == g_kINVALID_ENTITY)
+    {
+        AddLog("Niagara: %s", error.c_str());
+        return entity;
+    }
+    EntitySnapshot undo{};
+    undo.Entity = entity;
+    undo.WasAlive = false;
+    PushUndoSnapshot(undo);
+    SelectEntity(entity);
+    AddLog("Niagara: placed effect in scene");
+    return entity;
+}
+
 // Ctrl+D：選択中のエンティティを同じ位置に複製し、複製した側を選択する（Unityと同じ）。
 // ・モデル / メッシュ / マテリアル / GPUバッファは参照を共有する（静的モデルのキャッシュと同じ扱い）
 // ・物理ボディは物理システムが新しいエンティティ用に作り直す
@@ -1772,6 +1803,7 @@ namespace
         VisitLiveComponent<SunComponent>(archive, "sun", entity);
         VisitLiveComponent<ProceduralTerrainComponent>(archive, "terrain", entity);
         VisitLiveComponent<ProceduralMotionComponent>(archive, "motion", entity);
+        VisitLiveComponent<NiagaraComponent>(archive, "niagara", entity);
         VisitLiveComponent<MaterialComponent>(archive, "material", entity);
         VisitLiveComponent<AABBComponent>(archive, "aabb", entity);
         VisitLiveComponent<SpriteComponent>(archive, "sprite", entity);
@@ -2285,6 +2317,7 @@ void ImGuiManager::RestoreLoadedEntity(EntityID entity, Json::Value& record,
     SceneFile::Component(archive, "sun", snapshot.HasSun, snapshot.Sun);
     SceneFile::Component(archive, "terrain", snapshot.HasProceduralTerrain, snapshot.ProceduralTerrain);
     SceneFile::Component(archive, "motion", snapshot.HasProceduralMotion, snapshot.ProceduralMotion);
+    SceneFile::Component(archive, "niagara", snapshot.HasNiagara, snapshot.Niagara);
     SceneFile::Component(archive, "material", snapshot.HasMaterial, snapshot.Material);
     SceneFile::Component(archive, "aabb", snapshot.HasAabb, snapshot.Aabb);
     SceneFile::Component(archive, "sprite", snapshot.HasSprite, snapshot.Sprite);
@@ -2742,6 +2775,11 @@ void ImGuiManager::RequestSceneAction(SceneAction action, const filesystem::path
 
 void ImGuiManager::RequestQuit()
 {
+    if (!NiagaraWindow::CanQuit())
+    {
+        m_ShowNiagaraWindow = true;
+        return;
+    }
     if (!IsSceneDirty())
     {
         PostQuitMessage(0);

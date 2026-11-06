@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "materialasset.h"
 #include <array>
 #include <cstdint>
@@ -138,22 +138,33 @@ enum class MaterialNodeKind
     ObjectBounds,      // ローカルの範囲。Value[0] = 出力：0 大きさ / 1 中心 / 2 最小 / 3 最大
     BoundingBoxUVW,    // 範囲内の 0〜1 座標（ローカル。UE の BoundingBoxBased_0-1_UVW）
     PerInstanceRandom, // オブジェクトごとに固定の 0〜1 の乱数
-    TransformVector,   // 方向の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル / 2 ワールド→ビュー / 3 ビュー→ワールド
+    TransformVector, // 方向の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル / 2 ワールド→ビュー / 3
+                     // ビュー→ワールド
     TransformPosition, // 位置の変換。Value[0] = 0 ローカル→ワールド / 1 ワールド→ローカル
     CameraPosition,    // カメラのワールド座標
     PixelDepth,        // カメラからの奥行き（ビュー空間の Z）
     ScreenPosition,    // 画面上の 0〜1 座標
     DitherOpacity,     // ディザ（4x4）で不透明度を 0 / 1 にする（Masked のフェード）
     DistanceFade,      // カメラ距離で 0（Start）→ 1（End）
-    HeightGradient     // 高さで 0（Start）→ 1（End）。Value[0] = 0 ワールド Y / 1 ローカル Y / 2 範囲内 0〜1
+    HeightGradient,    // 高さで 0（Start）→ 1（End）。Value[0] = 0 ワールド Y / 1 ローカル Y / 2 範囲内 0〜1
+    Vector2Parameter,
+    // 既存の保存番号は変えず、拡張は末尾に追加する。
+    Logarithm10,
+    Exponential2,
+    InverseLerp,
+    ReflectVector,
+    RenderSoftBand,
+    RenderRadialPulse,
+    RenderFlowUV
 };
 
 // Convert To Solid の方式（node.Value[0]）
 enum class MaterialSolidConvertMethod : int
 {
-    Stochastic = 0, // 3 方向投影 + ヘックス タイル（タイルごとにランダムな位置 / 回転で混ぜる）：繰り返し・縞が出ない（既定）
-    Triplanar = 1,  // 3 方向（YZ / XZ / XY）から投影し、法線で混ぜる（元画像の見た目を保つ。拡大すると繰り返す）
-    Volume = 2,     // スタジオの「画像からボリューム」と同じ（互換用。拡大すると繰り返し、面によって縞が出る）
+    Stochastic =
+        0, // 3 方向投影 + ヘックス タイル（タイルごとにランダムな位置 / 回転で混ぜる）：繰り返し・縞が出ない（既定）
+    Triplanar = 1, // 3 方向（YZ / XZ / XY）から投影し、法線で混ぜる（元画像の見た目を保つ。拡大すると繰り返す）
+    Volume = 2,    // スタジオの「画像からボリューム」と同じ（互換用。拡大すると繰り返し、面によって縞が出る）
     Count
 };
 // 旧ファイル（solidMethods < 2）の値 0 は Volume だったが、繰り返しの問題があるため Stochastic として読む
@@ -172,6 +183,7 @@ enum class MaterialSolidKind : int
 
 // ノードがテクスチャ（node.Texture）を持つ / 読むか
 inline bool IsConvertTextureNode(MaterialNodeKind kind);
+
 inline bool UsesNodeTexture(MaterialNodeKind kind)
 {
     return kind == MaterialNodeKind::TextureSample || kind == MaterialNodeKind::ConvertToTexture ||
@@ -442,8 +454,3 @@ class MaterialGraph
     MaterialGraphType OutputType(uint64_t node, std::vector<uint64_t>& visiting) const;
     MaterialGraphType SourcePinType(uint64_t pin, std::vector<uint64_t>& visiting) const;
 };
-
-
-
-
-

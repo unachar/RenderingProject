@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "niagarawindow.h"
 #include "imguimanager.h"
 #include "editorworkspace.h"
 #include "animationpreviewwindow.h"
@@ -31,6 +32,9 @@ void ImGuiManager::InitializeWorkspaces()
             {"animation", "Animation Preview", "アニメーションプレビュー", &m_ShowAnimationPreviewWindow, [] {
                  AnimationPreviewWindow::Draw(&m_ShowAnimationPreviewWindow);
              }});
+        registry.RegisterWindow({"niagara", "Niagara", "Niagara", &m_ShowNiagaraWindow, [] {
+            NiagaraWindow::Draw(&m_ShowNiagaraWindow);
+        }});
         registry.RegisterWindow({"sequencer", "Sequencer", "シーケンサー", &m_ShowSequencerWindow, [] {
                                      SequencerEditorBridge::Draw(&m_ShowSequencerWindow);
                                  }});

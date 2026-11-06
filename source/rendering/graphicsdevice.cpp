@@ -1,4 +1,7 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "niagararenderer.h"
+#include "../effects/niagaragpu.h"
+#include "../effects/niagarascene.h"
 #include "noisecachebindings.h"
 #include "proceduralstudiowindow.h"
 #include "animationpreviewwindow.h"
@@ -665,6 +668,9 @@ void GraphicsDevice::Uninit()
     RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 
+    NiagaraScene::Shutdown();
+    Niagara::ShutdownGPU();
+    NiagaraRenderer::Shutdown();
     AnimationPreviewWindow::Shutdown();
     ProceduralStudioWindow::Shutdown(); // エディターの記述子プールを破棄する前に終了する
     AssetThumbnailManager::Shutdown();

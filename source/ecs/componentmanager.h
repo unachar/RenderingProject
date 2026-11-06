@@ -9,6 +9,7 @@
 #include "physicscomponent.h"
 #include "timelinecomponent.h"
 #include "proceduralcomponents.h"
+#include "effects/niagaracomponent.h"
 #include "visibility/visibilitytypes.h"
 #include <cassert>
 #include <array>
@@ -690,6 +691,7 @@ inline const ComponentType ComponentType::PROCEDURAL_TERRAIN =
     ComponentTypeRegistry::GetType<ProceduralTerrainComponent>();
 inline const ComponentType ComponentType::PROCEDURAL_MOTION =
     ComponentTypeRegistry::GetType<ProceduralMotionComponent>();
+inline const ComponentType ComponentType::NIAGARA = ComponentTypeRegistry::GetType<NiagaraComponent>();
 
 class ComponentManager
 {

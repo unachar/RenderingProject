@@ -1,0 +1,183 @@
+{
+  "duration" : 5.0,
+  "emitters" : 
+  [
+    {
+      "backend" : 1,
+      "enabled" : true,
+      "end" : 5.0,
+      "id" : 1,
+      "localSpace" : true,
+      "maxParticles" : 10000,
+      "modules" : 
+      [
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 2,
+          "kind" : 0,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            10.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 3,
+          "kind" : 2,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            2.0,
+            0.10000000149011612,
+            0.20000000298023224,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            1.0,
+            0.5,
+            0.10000000149011612,
+            1.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 4,
+          "kind" : 3,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            1.0,
+            1.0,
+            1.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            2.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 5,
+          "kind" : 4,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            0.0,
+            -9.8100004196166992,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 6,
+          "kind" : 6,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            1.0,
+            0.10000000149011612,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "writeParameter" : ""
+        },
+        {
+          "curve" : [],
+          "enabled" : true,
+          "id" : 7,
+          "kind" : 7,
+          "output" : 0,
+          "parameter" : "",
+          "secondary" : 
+          [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "stage" : 1,
+          "target" : 1,
+          "value" : 
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "writeParameter" : ""
+        }
+      ],
+      "name" : "Emitter",
+      "position" : 
+      [
+        0.0,
+        0.0
+      ],
+      "renderer" : 0,
+      "solo" : false,
+      "start" : 0.0
+    }
+  ],
+  "format" : "Niagara",
+  "loop" : true,
+  "modules" : [],
+  "name" : "Niagara System",
+  "parameters" : [],
+  "seed" : 1,
+  "version" : 1
+}

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // ============================================================================
 // マテリアルグラフの演算定義（HLSL 生成と CPU プレビューで共有する）
 //  ・単項 / 二項演算の CPU 実装と HLSL 関数名
@@ -16,7 +16,7 @@ namespace MaterialGraphMath
 
     inline bool IsUnary(Kind kind)
     {
-        return kind >= Kind::Abs && kind <= Kind::DDY;
+        return (kind >= Kind::Abs && kind <= Kind::DDY) || kind == Kind::Logarithm10 || kind == Kind::Exponential2;
     }
 
     inline bool IsBinary(Kind kind)
@@ -28,7 +28,7 @@ namespace MaterialGraphMath
     {
         return kind == Kind::Constant || kind == Kind::ScalarParameter || kind == Kind::VectorParameter ||
                kind == Kind::ColorParameter || kind == Kind::Constant2Vector || kind == Kind::Constant3Vector ||
-               kind == Kind::Constant4Vector;
+               kind == Kind::Constant4Vector || kind == Kind::Vector2Parameter;
     }
 
     enum class SpecialInput
@@ -42,6 +42,18 @@ namespace MaterialGraphMath
     // 未接続の入力が「定数」ではなく、ピクセル / 時間の値を使うピン（UE と同じ挙動）
     inline SpecialInput DefaultInput(Kind kind, size_t input)
     {
+        if (kind == Kind::RenderFlowUV && input == 0)
+        {
+            return SpecialInput::UV;
+        }
+        if ((kind == Kind::RenderFlowUV && input == 2) || (kind == Kind::RenderRadialPulse && input == 1))
+        {
+            return SpecialInput::Time;
+        }
+        if (kind == Kind::RenderRadialPulse && input == 0)
+        {
+            return SpecialInput::WorldPosition;
+        }
         if ((kind == Kind::TextureSample || kind == Kind::Panner || kind == Kind::Rotator) && input == 0)
         {
             return SpecialInput::UV;
@@ -95,25 +107,51 @@ namespace MaterialGraphMath
     // ---- プロシージャルスタジオのノイズ（名前は ProcStudio::Basis / FractalType の並び）
     inline constexpr int kNoiseBasisCount = 22;
     inline constexpr int kNoiseFractalCount = 9;
+
     inline const char* NoiseBasisName(int index)
     {
-        static const char* names[kNoiseBasisCount] = {
-            "Perlin",  "Value",          "Worley",     "Cell Edge",   "White",          "Simplex",
-            "Voronoi", "Cell",           "Gabor",      "Wavelet",     "Curl",           "Value Gradient",
-            "Sparse Convolution",        "Spot",       "Local Random", "Chevron",       "Lattice Free",
-            "Phasor",  "Anisotropic Gabor",            "Harmonic",    "Flow",           "Ridged"};
+        static const char* names[kNoiseBasisCount] = {"Perlin",
+                                                      "Value",
+                                                      "Worley",
+                                                      "Cell Edge",
+                                                      "White",
+                                                      "Simplex",
+                                                      "Voronoi",
+                                                      "Cell",
+                                                      "Gabor",
+                                                      "Wavelet",
+                                                      "Curl",
+                                                      "Value Gradient",
+                                                      "Sparse Convolution",
+                                                      "Spot",
+                                                      "Local Random",
+                                                      "Chevron",
+                                                      "Lattice Free",
+                                                      "Phasor",
+                                                      "Anisotropic Gabor",
+                                                      "Harmonic",
+                                                      "Flow",
+                                                      "Ridged"};
         return names[std::clamp(index, 0, kNoiseBasisCount - 1)];
     }
+
     inline const char* NoiseFractalName(int index)
     {
-        static const char* names[kNoiseFractalCount] = {"fBm",         "Ridged",      "Billow",
-                                                        "Turbulence",  "Hybrid Multifractal", "Domain Warp",
-                                                        "None",        "Multifractal", "Heterogeneous Multifractal"};
+        static const char* names[kNoiseFractalCount] = {"fBm",
+                                                        "Ridged",
+                                                        "Billow",
+                                                        "Turbulence",
+                                                        "Hybrid Multifractal",
+                                                        "Domain Warp",
+                                                        "None",
+                                                        "Multifractal",
+                                                        "Heterogeneous Multifractal"};
         return names[std::clamp(index, 0, kNoiseFractalCount - 1)];
     }
+
     inline const char* NoiseCombineModeName(int index)
     {
-        static const char* names[] = {"Mix",    "Add", "Subtract", "Multiply",   "Screen",
+        static const char* names[] = {"Mix",     "Add", "Subtract", "Multiply",   "Screen",
                                       "Overlay", "Min", "Max",      "Difference", "Height Blend"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MaterialNoiseCombineMode::Count));
         return names[std::clamp(index, 0, static_cast<int>(MaterialNoiseCombineMode::Count) - 1)];
@@ -123,7 +161,9 @@ namespace MaterialGraphMath
     //  Mix 以外は「A に B を合成した結果」へ Factor（不透明度）で寄せる。Height Blend は Factor = 境界の幅
     inline float NoiseCombine(int mode, float a, float b, float factor, bool clampResult)
     {
-        const auto saturate = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
+        const auto saturate = [](float v) {
+            return std::clamp(v, 0.0f, 1.0f);
+        };
         float result = a;
         switch (static_cast<MaterialNoiseCombineMode>(mode))
         {
@@ -177,11 +217,13 @@ namespace MaterialGraphMath
 
     // ---- Convert To Normal / Height（プロシージャルスタジオ ImageMaps と同じ式）
     inline constexpr int kConvertChannelCount = 7;
+
     inline const char* ConvertChannelName(int index)
     {
         static const char* names[kConvertChannelCount] = {"輝度", "平均", "R", "G", "B", "A", "最大"};
         return names[std::clamp(index, 0, kConvertChannelCount - 1)];
     }
+
     // 格納値（8 ビット画像なら sRGB 値）からチャンネルを取り出す
     inline float ConvertChannel(const float* c, int channel)
     {
@@ -203,6 +245,7 @@ namespace MaterialGraphMath
                 return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
         }
     }
+
     // 高さ：反転 → (v - 0.5) * Contrast + 0.5 + Bias → 0..1
     inline float ConvertHeight(const float* c, int channel, bool invert, float contrast, float bias)
     {
@@ -214,11 +257,12 @@ namespace MaterialGraphMath
     // ---- ソリッドテクスチャ
     inline const char* SolidKindName(int index)
     {
-        static const char* names[] = {"フラクタルノイズ", "大理石 (Marble)", "木目 (Wood)", "御影石 (Granite)",
-                                      "ボロノイ",         "フラクタル雲"};
+        static const char* names[] = {"フラクタルノイズ", "大理石 (Marble)", "木目 (Wood)",
+                                      "御影石 (Granite)", "ボロノイ",        "フラクタル雲"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MaterialSolidKind::Count));
         return names[std::clamp(index, 0, static_cast<int>(MaterialSolidKind::Count) - 1)];
     }
+
     // 3 色ランプ（スタジオの TextureColor の既定配色）
     inline void ThreeColorRamp(float t, const float* a, const float* b, const float* c, float* out)
     {
@@ -230,7 +274,8 @@ namespace MaterialGraphMath
 
     inline const char* SolidConvertMethodName(int index)
     {
-        static const char* names[] = {"ストキャスティック（繰り返しなし）", "トライプラナー", "ボリューム（スタジオ互換）"};
+        static const char* names[] = {"ストキャスティック（繰り返しなし）", "トライプラナー",
+                                      "ボリューム（スタジオ互換）"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MaterialSolidConvertMethod::Count));
         return names[std::clamp(index, 0, static_cast<int>(MaterialSolidConvertMethod::Count) - 1)];
     }
@@ -241,22 +286,26 @@ namespace MaterialGraphMath
         static const char* names[] = {"大きさ", "中心", "最小", "最大"};
         return names[std::clamp(index, 0, 3)];
     }
+
     inline const char* TransformVectorModeName(int index)
     {
         static const char* names[] = {"ローカル → ワールド", "ワールド → ローカル", "ワールド → ビュー",
                                       "ビュー → ワールド"};
         return names[std::clamp(index, 0, 3)];
     }
+
     inline const char* TransformPositionModeName(int index)
     {
         static const char* names[] = {"ローカル → ワールド", "ワールド → ローカル"};
         return names[std::clamp(index, 0, 1)];
     }
+
     inline const char* HeightGradientSpaceName(int index)
     {
         static const char* names[] = {"ワールド Y", "ローカル Y", "範囲内 0〜1"};
         return names[std::clamp(index, 0, 2)];
     }
+
     // 4x4 の順序ディザの閾値（0〜1）
     inline float BayerThreshold(int x, int y)
     {
@@ -270,6 +319,7 @@ namespace MaterialGraphMath
         int Vertex[3][2];
         float Weight[3];
     };
+
     inline HexTiles HexGrid(float u, float v)
     {
         const float sx = u * 3.4641016f;
@@ -347,6 +397,10 @@ namespace MaterialGraphMath
                 return expf(x);
             case Kind::Logarithm2:
                 return log2f(x);
+            case Kind::Logarithm10:
+                return log10f((std::max)(x, 1e-8f));
+            case Kind::Exponential2:
+                return exp2f(std::clamp(x, -126.0f, 126.0f));
             default: // DDX / DDY は CPU では 0
                 return 0.0f;
         }
@@ -375,6 +429,14 @@ namespace MaterialGraphMath
 
     inline std::string UnaryHlsl(Kind kind, const std::string& x)
     {
+        if (kind == Kind::Logarithm10)
+        {
+            return "log10(max(" + x + ",1e-8))";
+        }
+        if (kind == Kind::Exponential2)
+        {
+            return "exp2(clamp(" + x + ",-126,126))";
+        }
         switch (kind)
         {
             case Kind::Abs:
@@ -528,9 +590,9 @@ namespace MaterialGraphMath
 
     inline const char* BlendModeName(int mode)
     {
-        static const char* names[] = {"Normal",      "Multiply",    "Screen",      "Overlay",    "Soft Light",
-                                      "Hard Light",  "Color Dodge", "Color Burn",  "Linear Dodge", "Linear Burn",
-                                      "Difference",  "Darken",      "Lighten",     "Subtract"};
+        static const char* names[] = {"Normal",     "Multiply",    "Screen",     "Overlay",      "Soft Light",
+                                      "Hard Light", "Color Dodge", "Color Burn", "Linear Dodge", "Linear Burn",
+                                      "Difference", "Darken",      "Lighten",    "Subtract"};
         return mode >= 0 && mode < static_cast<int>(MaterialBlendMode::Count) ? names[mode] : names[0];
     }
 
@@ -625,9 +687,28 @@ namespace MaterialGraphMath
         }
     }
 
+    inline float RenderSoftBand(float value, float center, float halfWidth, float feather)
+    {
+        const float t = std::clamp(
+            (std::abs(value - center) - (std::max)(halfWidth, 0.0f)) / (std::max)(feather, 1e-5f), 0.0f, 1.0f);
+        return 1.0f - t * t * (3.0f - 2.0f * t);
+    }
+
+    inline float RenderRadialPulse(const float* position, float phase, float frequency, float halfWidth)
+    {
+        const float distance =
+            std::sqrt(position[0] * position[0] + position[1] * position[1] + position[2] * position[2]);
+        const float wave = distance * frequency - phase + 0.5f;
+        return RenderSoftBand(wave - std::floor(wave), 0.5f, std::clamp(halfWidth, 0.0f, 0.5f), 0.05f);
+    }
+
     inline const char* HlslHelpers()
     {
-        return "float MG_Hash(float3 p) { p = frac(p * 0.3183099 + 0.1) * 17.0; return frac(p.x * p.y * p.z * (p.x + "
+        return "float MG_RenderSoftBand(float v,float c,float w,float f) { float t=saturate((abs(v-c)-max(w,0))/max(f,1e-5)); return 1-t*t*(3-2*t); }\n"
+               "float MG_RenderRadialPulse(float3 p,float phase,float f,float w) { return MG_RenderSoftBand(frac(length(p)*f-phase+0.5),0.5,clamp(w,0,0.5),0.05); }\n"
+               "float2 MG_RenderFlowUV(float2 uv,float2 flow,float t,float d) { return uv+flow*t+sin(float2(uv.y*6.283185307+t,uv.x*6.283185307-t))*d; }\n"
+               "float3 MG_ReflectVector(float3 i,float3 n) { float q=dot(n,n); return q>1e-8?i-2*dot(i,n)*n/q:i; }\n"
+               "float MG_Hash(float3 p) { p = frac(p * 0.3183099 + 0.1) * 17.0; return frac(p.x * p.y * p.z * (p.x + "
                "p.y + p.z)); }\n"
                "float MG_Noise(float3 x) { float3 i = floor(x); float3 f = frac(x); f = f * f * (3.0 - 2.0 * f);\n"
                "  return lerp(lerp(lerp(MG_Hash(i), MG_Hash(i + float3(1,0,0)), f.x), lerp(MG_Hash(i + float3(0,1,0)), "
@@ -710,7 +791,3 @@ namespace MaterialGraphMath
                "float4 MG_UnpackNormal(float4 v) { float3 n = v.xyz * 2 - 1; if (v.z <= 0) n.z = sqrt(saturate(1 - dot(n.xy,n.xy))); return float4(n, 1); }\n";
     }
 } // namespace MaterialGraphMath
-
-
-
-
