@@ -1310,7 +1310,7 @@ void GPUDrivenRenderer::DrawDebug()
     }
     if (state.Failed)
     {
-        ImGui::TextUnformatted("Pipeline initialization failed; see init_log.txt");
+        ImGui::TextUnformatted("Pipeline initialization failed; see Data/Logs/init_log.txt");
     }
     ImGui::Text("ExecuteIndirect calls: %u", state.Calls);
     ImGui::Text("Max command capacity: %u", Frame().Commands.Capacity());

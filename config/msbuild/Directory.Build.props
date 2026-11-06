@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <RenderRoot>$(MSBuildProjectDirectory)\</RenderRoot>
+    <DirectXShaderCompilerPackageVersion>1.9.2602.24</DirectXShaderCompilerPackageVersion>
+    <DirectXShaderCompilerPackageRoot>$(RenderRoot)packages\Microsoft.Direct3D.DXC.$(DirectXShaderCompilerPackageVersion)\</DirectXShaderCompilerPackageRoot>
+    <DlssSdkRoot>$(RenderRoot)External\DLSS\sdk\</DlssSdkRoot>
+    <EnableDlss Condition="'$(EnableDlss)' == '' and '$(Platform)' == 'x64' and Exists('$(DlssSdkRoot)include\nvsdk_ngx.h') and Exists('$(DlssSdkRoot)lib\Windows_x86_64\x64\nvsdk_ngx_s.lib') and Exists('$(DlssSdkRoot)lib\Windows_x86_64\x64\nvsdk_ngx_s_dbg.lib') and Exists('$(DlssSdkRoot)lib\Windows_x86_64\rel\nvngx_dlss.dll')">true</EnableDlss>
+    <EnableDlss Condition="'$(EnableDlss)' == ''">false</EnableDlss>
+    <DlssLibrary Condition="'$(Configuration)' == 'Debug'">nvsdk_ngx_s_dbg.lib</DlssLibrary>
+    <DlssLibrary Condition="'$(Configuration)' != 'Debug'">nvsdk_ngx_s.lib</DlssLibrary>
+    <NrdSdkRoot>$(RenderRoot)External\NRD\sdk\</NrdSdkRoot>
+    <EnableNrd Condition="'$(EnableNrd)' == '' and '$(Platform)' == 'x64' and Exists('$(NrdSdkRoot)Include\NRD.h') and Exists('$(NrdSdkRoot)_Bin\$(Configuration)\NRD.lib') and Exists('$(NrdSdkRoot)_Build\_deps\shadermake-build\$(Configuration)\ShaderMakeBlob.lib')">true</EnableNrd>
+    <EnableNrd Condition="'$(EnableNrd)' == ''">false</EnableNrd>
+    <OptixSdkRoot>$(RenderRoot)External\OptiX\sdk\</OptixSdkRoot>
+    <CudaHeaderRoot>$(RenderRoot)External\CUDA\sdk\include\</CudaHeaderRoot>
+    <EnableOptix Condition="'$(EnableOptix)' == '' and '$(Platform)' == 'x64' and Exists('$(OptixSdkRoot)include\optix.h') and Exists('$(CudaHeaderRoot)cuda.h')">true</EnableOptix>
+    <EnableOptix Condition="'$(EnableOptix)' == ''">false</EnableOptix>
+    <OcioRoot>$(RenderRoot)External\OpenColorIO\</OcioRoot>
+    <EnableOcio Condition="'$(EnableOcio)' == '' and '$(Platform)' == 'x64' and Exists('$(OcioRoot)include\OpenColorIO\OpenColorIO.h') and Exists('$(OcioRoot)lib\OpenColorIO.lib')">true</EnableOcio>
+    <EnableOcio Condition="'$(EnableOcio)' == ''">false</EnableOcio>
+    <AclRoot>$(RenderRoot)External\ACL\</AclRoot>
+    <EnableAcl Condition="'$(EnableAcl)' == '' and '$(Platform)' == 'x64' and Exists('$(AclRoot)upstream\includes\acl\compression\compress.h') and Exists('$(AclRoot)upstream\external\rtm\includes\rtm\quatf.h')">true</EnableAcl>
+    <EnableAcl Condition="'$(EnableAcl)' == ''">false</EnableAcl>
+    <KtxRoot>$(RenderRoot)External\KTX-Software\</KtxRoot>
+    <KtxSdkRoot Condition="'$(KtxSdkRoot)' == ''">$(KtxRoot)install-dx12\</KtxSdkRoot>
+    <BasisRoot>$(RenderRoot)External\basis_universal\</BasisRoot>
+    <EnableBasis>false</EnableBasis>
+    <EnableKtx Condition="'$(EnableKtx)' == '' and '$(Platform)' == 'x64' and Exists('$(KtxSdkRoot)include\ktx.h') and Exists('$(KtxSdkRoot)include\KHR\khr_df.h') and Exists('$(KtxSdkRoot)lib\ktx.lib') and Exists('$(KtxSdkRoot)bin\ktx.dll')">true</EnableKtx>
+    <EnableKtx Condition="'$(EnableKtx)' == ''">false</EnableKtx>
+    <ShaderMakeRoot>$(RenderRoot)External\ShaderMake\</ShaderMakeRoot>
+    <EnableShaderMake Condition="'$(EnableShaderMake)' == '' and '$(Platform)' == 'x64' and Exists('$(ShaderMakeRoot)ShaderMake\ShaderMake.cpp')">true</EnableShaderMake>
+    <EnableShaderMake Condition="'$(EnableShaderMake)' == ''">false</EnableShaderMake>
+    <EnableTracy Condition="'$(EnableTracy)' == ''">false</EnableTracy>
+    <FastGltfRoot>$(RenderRoot)External\fastgltf\</FastGltfRoot>
+    <FastGltfSdkRoot Condition="'$(FastGltfSdkRoot)' == '' and Exists('$(FastGltfRoot)install-dx12-md\Release\bin\FastGltfAdapter.dll') and Exists('$(FastGltfRoot)install-dx12-md\Release\lib\FastGltfAdapter.lib')">$(FastGltfRoot)install-dx12-md\Release\</FastGltfSdkRoot>
+    <FastGltfSdkRoot Condition="'$(FastGltfSdkRoot)' == ''">$(FastGltfRoot)install-dx12\Release\</FastGltfSdkRoot>
+    <EnableFastGltf Condition="'$(EnableFastGltf)' == '' and '$(Platform)' == 'x64' and Exists('$(FastGltfSdkRoot)lib\FastGltfAdapter.lib') and Exists('$(FastGltfSdkRoot)bin\FastGltfAdapter.dll')">true</EnableFastGltf>
+    <EnableFastGltf Condition="'$(EnableFastGltf)' == ''">false</EnableFastGltf>
+  </PropertyGroup>
+
+
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(RenderRoot)External\include;
+        $(RenderRoot)source\effects;
+        $(RenderRoot)source\assets;
+        $(RenderRoot)External\RTXNS\external\donut\thirdparty\jsoncpp\include;
+        $(RenderRoot)source\core;
+        $(RenderRoot)source\ecs;
+        $(RenderRoot)source\editor;
+        $(RenderRoot)source\entities;
+        $(RenderRoot)source\models;
+        $(RenderRoot)source\physics;
+        $(RenderRoot)source\procedural;
+        $(RenderRoot)source\rendering;
+        $(RenderRoot)source\scene;
+        $(RenderRoot)source\systems;
+        $(RenderRoot)External\ImGUI;
+        $(RenderRoot)External\NVAPI\include;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>
+        $(RenderRoot)External\NVAPI\lib\x64;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableDlss)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(DlssSdkRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_DLSS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(DlssSdkRoot)lib\Windows_x86_64\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(DlssLibrary);advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableOptix)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(OptixSdkRoot)include;$(CudaHeaderRoot);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_OPTIX=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(NrdSdkRoot)Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_NRD=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(NrdSdkRoot)_Bin\$(Configuration);$(NrdSdkRoot)_Build\_deps\shadermake-build\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>NRD.lib;ShaderMakeBlob.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableOcio)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(OcioRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_OCIO=1;OCIO_BUILD_SHARED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(OcioRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>OpenColorIO.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableAcl)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(AclRoot)upstream\includes;$(AclRoot)upstream\external\rtm\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_ACL=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableKtx)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(KtxSdkRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_KTX=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(KtxSdkRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ktx.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableBasis)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(BasisRoot)transcoder;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_BASIS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(BasisRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>basisu.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableShaderMake)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ShaderMakeRoot)ShaderMake;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_SHADERMAKE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <!-- NRD must use its matching-configuration ShaderMakeBlob, not the standalone Release build. -->
+    <Link Condition="'$(EnableNrd)' != 'true'">
+      <AdditionalLibraryDirectories>$(ShaderMakeRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ShaderMakeBlob.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>TRACY_ENABLE;TRACY_ON_DEMAND;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>ws2_32.lib;dbghelp.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(EnableFastGltf)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_FASTGLTF=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(FastGltfSdkRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>FastGltfAdapter.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile Include="$(RenderRoot)External\tracy\public\TracyClient.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+
+
+
+
+
+
+  <Import Project="$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.props"
+          Condition="'$(Platform)' == 'x64' and Exists('$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.props')" />
+
+  <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>RENDERINGPROJECT_BUILD_SHARED_PCH=1;RENDERINGPROJECT_USE_DXC=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+
+      <AdditionalDependencies>dxcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

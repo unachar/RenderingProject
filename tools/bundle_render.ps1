@@ -1,9 +1,10 @@
-# bundle_render.ps1：「source」と「shader」の内容を1つのテキストファイルにまとめる。
-# 使い方：このファイルを「Render」フォルダーに置き、次のコマンドを実行する。
-#   powershell -ExecutionPolicy Bypass -File .\bundle_render.ps1
+﻿# bundle_render.ps1：「source」と「shader」の内容を1つのテキストファイルにまとめる。
+# 使い方：「Render」フォルダーで、次のコマンドを実行する。
+#   powershell -ExecutionPolicy Bypass -File .\tools\bundle_render.ps1
 
-$workspace = (Get-Location).Path
-$bundlePath = Join-Path $workspace "render_bundle.txt"
+$workspace = Split-Path $PSScriptRoot -Parent
+$bundlePath = Join-Path $workspace "build\reports\render_bundle.txt"
+New-Item -ItemType Directory -Path (Split-Path $bundlePath) -Force | Out-Null
 $folders = @("source", "shader")
 $sourcePatterns = @("*.h", "*.hpp", "*.hxx", "*.inl", "*.cpp", "*.cxx", "*.cc", "*.ixx",
              "*.hlsl", "*.hlsli", "*.fx", "*.slang", "*.rc")

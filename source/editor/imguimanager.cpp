@@ -95,9 +95,9 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
         error_code error;
         filesystem::create_directories("Save", error);
         io.IniFilename = "Save/editor_layout.cfg";
-        if (!filesystem::exists(io.IniFilename, error) && filesystem::exists("imgui.ini", error))
+        if (!filesystem::exists(io.IniFilename, error) && filesystem::exists("Save/legacy_imgui.ini", error))
         {
-            ImGui::LoadIniSettingsFromDisk("imgui.ini");
+            ImGui::LoadIniSettingsFromDisk("Save/legacy_imgui.ini");
         }
     }
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

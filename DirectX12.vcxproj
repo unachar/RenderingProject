@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -53,8 +53,8 @@
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IntDir>$(Platform)\$(Configuration)\</IntDir>
-    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\DirectX12\$(Platform)\$(Configuration)\</IntDir>
+    <OutDir>$(ProjectDir)bin\$(Platform)\$(Configuration)\runtime\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -64,8 +64,8 @@
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IntDir>$(Platform)\$(Configuration)\</IntDir>
-    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\DirectX12\$(Platform)\$(Configuration)\</IntDir>
+    <OutDir>$(ProjectDir)bin\$(Platform)\$(Configuration)\runtime\</OutDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -97,6 +97,8 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
+      <ProgramDatabaseFile>$(ProjectDir)build\symbols\$(Platform)\$(Configuration)\$(TargetName).pdb</ProgramDatabaseFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <FxCompile>
@@ -116,6 +118,8 @@
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+      <ProgramDatabaseFile>$(ProjectDir)build\symbols\$(Platform)\$(Configuration)\$(TargetName).pdb</ProgramDatabaseFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <FxCompile>
@@ -134,11 +138,13 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)source\assets;$(ProjectDir)source\core;$(ProjectDir)source\ecs;$(ProjectDir)source\editor;$(ProjectDir)source\entities;$(ProjectDir)source\models;$(ProjectDir)source\physics;$(ProjectDir)source\rendering;$(ProjectDir)source\scene;$(ProjectDir)source\systems;$(ProjectDir)source\utils;$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)source\assets;$(ProjectDir)source\core;$(ProjectDir)source\ecs;$(ProjectDir)source\editor;$(ProjectDir)source\entities;$(ProjectDir)source\models;$(ProjectDir)source\physics;$(ProjectDir)source\rendering;$(ProjectDir)source\scene;$(ProjectDir)source\systems;$(ProjectDir)source\utils;$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)External\include\assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
+      <ProgramDatabaseFile>$(ProjectDir)build\symbols\$(Platform)\$(Configuration)\$(TargetName).pdb</ProgramDatabaseFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Debug;$(ProjectDir)External\Build\Bullet-vs18\lib\Debug;$(ProjectDir)External\Build\Jolt-vs18\Debug;$(ProjectDir)External\Build\PhysX-output-static\bin\win.x86_64.vc143.mt\debug;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>BulletDynamics_Debug.lib;BulletCollision_Debug.lib;LinearMath_Debug.lib;Jolt.lib;PhysXExtensions_static.lib;PhysX_static.lib;PhysXCommon_static.lib;PhysXFoundation_static.lib;PhysXPvdSDK_static.lib;DirectXTex.lib;$(RtxnsLibDir)NeuralShading.lib;$(RtxnsLibDir)Utils.lib;$(RtxnsLibDir)nvrhi.lib;$(RtxnsLibDir)nvrhi_d3d12.lib;$(RtxnsLibDir)donut_core.lib;$(RtxnsLibDir)donut_engine.lib;$(RtxnsLibDir)jsoncpp.lib;$(RtxnsLibDir)miniz.lib;$(RtxnsLibDir)slang.lib;$(RtxnsLibDir)slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -171,13 +177,15 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)source\assets;$(ProjectDir)source\core;$(ProjectDir)source\ecs;$(ProjectDir)source\editor;$(ProjectDir)source\entities;$(ProjectDir)source\models;$(ProjectDir)source\physics;$(ProjectDir)source\rendering;$(ProjectDir)source\scene;$(ProjectDir)source\systems;$(ProjectDir)source\utils;$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)source\assets;$(ProjectDir)source\core;$(ProjectDir)source\ecs;$(ProjectDir)source\editor;$(ProjectDir)source\entities;$(ProjectDir)source\models;$(ProjectDir)source\physics;$(ProjectDir)source\rendering;$(ProjectDir)source\scene;$(ProjectDir)source\systems;$(ProjectDir)source\utils;$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)External\include\assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+      <ProgramDatabaseFile>$(ProjectDir)build\symbols\$(Platform)\$(Configuration)\$(TargetName).pdb</ProgramDatabaseFile>
+      <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Release;$(ProjectDir)External\Build\Bullet-vs18\lib\Release;$(ProjectDir)External\Build\Jolt-vs18\Release;$(ProjectDir)External\Build\PhysX-output-static\bin\win.x86_64.vc143.mt\release;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>BulletDynamics.lib;BulletCollision.lib;LinearMath.lib;Jolt.lib;PhysXExtensions_static.lib;PhysX_static.lib;PhysXCommon_static.lib;PhysXFoundation_static.lib;PhysXPvdSDK_static.lib;DirectXTex.lib;$(RtxnsLibDir)NeuralShading.lib;$(RtxnsLibDir)Utils.lib;$(RtxnsLibDir)nvrhi.lib;$(RtxnsLibDir)nvrhi_d3d12.lib;$(RtxnsLibDir)donut_core.lib;$(RtxnsLibDir)donut_engine.lib;$(RtxnsLibDir)jsoncpp.lib;$(RtxnsLibDir)miniz.lib;$(RtxnsLibDir)slang.lib;$(RtxnsLibDir)slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -1520,4 +1528,11 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\editor\materialgraphbake.h" />
     <ClInclude Include="source\assets\materialgraphmath.h" />
   </ItemGroup>
+  <Target Name="EnsureSymbolDirectory" BeforeTargets="Link">
+    <MakeDir Directories="$(ProjectDir)build\symbols\$(Platform)\$(Configuration)" />
+  </Target>
+  <Target Name="BuildDesktopLauncher" AfterTargets="Build" Condition="'$(Platform)' == 'x64'">
+    <MSBuild Projects="$(ProjectDir)tools\launcher\Launcher.vcxproj" Targets="Build"
+             Properties="Configuration=$(Configuration);Platform=$(Platform);SolutionDir=$(ProjectDir)" />
+  </Target>
 </Project>

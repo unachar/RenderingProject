@@ -169,3 +169,8 @@ bundle_render.ps1
 render_bundle.txt
 /docs
 /tests
+# Organized project files and runtime logs
+!/tools/
+!/tools/bundle_render.ps1
+/Data/Logs/
+/source/*.aps

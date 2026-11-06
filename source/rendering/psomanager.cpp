@@ -45,7 +45,7 @@ bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE
         }
         Debug::Log("ERROR: Failed to create %s graphics PSO. HRESULT: 0x%08X\n", pipelineName, hr);
         FILE* log = nullptr;
-        fopen_s(&log, "init_log.txt", "a");
+        fopen_s(&log, "Data/Logs/init_log.txt", "a");
         if (log)
         {
             const char* pipelineNameValue;

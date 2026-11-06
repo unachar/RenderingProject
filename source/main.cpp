@@ -187,6 +187,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     {
         SetCurrentDirectoryW(runtimeRoot.c_str());
     }
+    filesystem::create_directories("Data/Logs");
     CachePaths::Initialize();
     WriteGraphicsLog("Step: WinMain begin\n");
 

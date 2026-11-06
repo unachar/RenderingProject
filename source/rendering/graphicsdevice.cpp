@@ -789,7 +789,7 @@ bool GraphicsDevice::CheckDeviceHealth(HRESULT operationResult, const char* oper
     g_DeviceRemovalLogged = true;
 
     FILE* log = nullptr;
-    fopen_s(&log, "device_removed.log", "a");
+    fopen_s(&log, "Data/Logs/device_removed.log", "a");
     if (!log)
     {
         return false;
