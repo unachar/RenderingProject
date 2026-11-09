@@ -1,5 +1,5 @@
 {
-  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":1944,\"y\":160}},\"node:136\":{\"location\":{\"x\":1736,\"y\":520}},\"node:152\":{\"location\":{\"x\":600,\"y\":728}},\"node:178\":{\"location\":{\"x\":1016,\"y\":-93}},\"node:182\":{\"location\":{\"x\":1144,\"y\":-288}},\"node:187\":{\"location\":{\"x\":1301,\"y\":-72}},\"node:201\":{\"location\":{\"x\":1528,\"y\":68}},\"node:207\":{\"location\":{\"x\":1736,\"y\":232}},\"node:213\":{\"location\":{\"x\":728,\"y\":-285}},\"node:218\":{\"location\":{\"x\":1144,\"y\":104}},\"node:230\":{\"location\":{\"x\":1593,\"y\":-173}},\"node:69\":{\"location\":{\"x\":584,\"y\":-77}},\"node:85\":{\"location\":{\"x\":840,\"y\":564}},\"node:91\":{\"location\":{\"x\":600,\"y\":819}}},\"selection\":[\"node:152\"],\"view\":{\"scroll\":{\"x\":379,\"y\":193},\"visible_rect\":{\"max\":{\"x\":1981,\"y\":1033},\"min\":{\"x\":379,\"y\":193}},\"zoom\":1}}",
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":1944,\"y\":160}},\"node:136\":{\"location\":{\"x\":1736,\"y\":520}},\"node:152\":{\"location\":{\"x\":600,\"y\":728}},\"node:178\":{\"location\":{\"x\":1016,\"y\":-93}},\"node:182\":{\"location\":{\"x\":1144,\"y\":-288}},\"node:187\":{\"location\":{\"x\":1301,\"y\":-72}},\"node:201\":{\"location\":{\"x\":1528,\"y\":68}},\"node:207\":{\"location\":{\"x\":1736,\"y\":232}},\"node:213\":{\"location\":{\"x\":728,\"y\":-285}},\"node:218\":{\"location\":{\"x\":1144,\"y\":104}},\"node:230\":{\"location\":{\"x\":1593,\"y\":-173}},\"node:237\":{\"group_size\":{\"x\":368,\"y\":248},\"location\":{\"x\":3595,\"y\":174}},\"node:69\":{\"location\":{\"x\":584,\"y\":-77}},\"node:85\":{\"location\":{\"x\":840,\"y\":564}},\"node:91\":{\"location\":{\"x\":600,\"y\":819}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":1658,\"y\":-17},\"visible_rect\":{\"max\":{\"x\":1968,\"y\":421},\"min\":{\"x\":1658,\"y\":-17}},\"zoom\":1}}",
   "links" : 
   [
     {
@@ -53,11 +53,6 @@
       "target" : 208
     },
     {
-      "id" : 212,
-      "source" : 210,
-      "target" : 6
-    },
-    {
       "id" : 222,
       "source" : 83,
       "target" : 220
@@ -81,6 +76,11 @@
       "id" : 236,
       "source" : 233,
       "target" : 203
+    },
+    {
+      "id" : 238,
+      "source" : 204,
+      "target" : 6
     }
   ],
   "nodeNames" : 2,
@@ -291,8 +291,8 @@
       "output" : 155,
       "pinValues" : 
       {
-        "0" : 5.0,
-        "1" : 20.0
+        "0" : 8.6700000762939453,
+        "1" : 68.099998474121094
       },
       "position" : 
       [
@@ -446,7 +446,7 @@
       "output" : 210,
       "pinValues" : 
       {
-        "1" : 0.69999998807907104
+        "1" : 0.0099999997764825821
       },
       "position" : 
       [
@@ -554,6 +554,31 @@
         0.0,
         0.0
       ]
+    },
+    {
+      "id" : 237,
+      "inputs" : [],
+      "kind" : "Comment Group",
+      "name" : "Comment",
+      "output" : 0,
+      "position" : 
+      [
+        3595.0,
+        174.0
+      ],
+      "size" : 
+      [
+        368.0,
+        248.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.30000001192092896,
+        0.41999998688697815,
+        0.60000002384185791,
+        1.0
+      ]
     }
   ],
   "settings" : 
@@ -563,8 +588,8 @@
     "bakeResolution" : 512,
     "bakeTime" : 0.0,
     "cull" : 0,
-    "liveRate" : 30.0,
-    "liveResolution" : 256,
+    "liveRate" : 16.0,
+    "liveResolution" : 64,
     "liveUpdate" : true,
     "materialMode" : 1,
     "runtimeEvaluation" : true,

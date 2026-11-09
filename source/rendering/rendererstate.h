@@ -51,7 +51,7 @@ class RendererState
     static HANDLE m_FenceEvent;
     static HANDLE m_FrameLatencyWaitableObject;
 
-    static CD3DX12_VIEWPORT m_Viewport;
+    static CD3DX12_VIEWPORT m_Viewport; 
     static CD3DX12_VIEWPORT m_FullViewport;
     static CD3DX12_RECT m_FullScissorRect;
     static CD3DX12_RECT m_ScissorRect;

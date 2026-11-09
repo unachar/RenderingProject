@@ -21,7 +21,7 @@
       1.0,
       1.0
     ],
-    "emissiveIntensity" : 0.69999998807907104,
+    "emissiveIntensity" : 1.0,
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 1.0,
