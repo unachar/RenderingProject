@@ -152,11 +152,10 @@ class RendererState
 
     static constexpr float m_kSceneClearColor[4] = {0.1f, 0.2f, 0.4f, 1.0f};
     static constexpr DXGI_FORMAT m_kDeferredRtvFormats[g_kGBUFFER_COUNT] = {
-        // Normal alpha stores the negative POM displacement along the camera ray.
-        // Signed floating point keeps the mesh shadow receiver independent of the displaced depth.
+
         DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32_FLOAT,
         DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
-        DXGI_FORMAT_R16G16B16A16_FLOAT, // 発光 RGB とマテリアル AO。
+        DXGI_FORMAT_R16G16B16A16_FLOAT,
         DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_UINT,
         DXGI_FORMAT_R16G16B16A16_FLOAT};
 
@@ -168,7 +167,6 @@ class RendererState
     static constexpr float g_kDEFAULT_RESOLUTION_SCALE = 0.5f;
 
     static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-    // カメラと HDR の56個の float、および品質設定の11個の float4（renderquality.h）。
     static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * (56 + 44) + 255) & ~255;
     static constexpr UINT g_kPP_CB_SLOTS_PER_FRAME = 32;
 
@@ -184,7 +182,6 @@ class RendererState
                                                      g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2 + g_kMAX_SHADER_LIGHTS +
                                                      5;
     static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
-    // 現在のマテリアルは15個のパーツ上書きを含み、2048バイトを超える。
     static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 784 + 511) & ~511;
     static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
     static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;

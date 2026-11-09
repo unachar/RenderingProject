@@ -1,0 +1,577 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":1944,\"y\":160}},\"node:136\":{\"location\":{\"x\":1736,\"y\":520}},\"node:152\":{\"location\":{\"x\":600,\"y\":728}},\"node:178\":{\"location\":{\"x\":1016,\"y\":-93}},\"node:182\":{\"location\":{\"x\":1144,\"y\":-288}},\"node:187\":{\"location\":{\"x\":1301,\"y\":-72}},\"node:201\":{\"location\":{\"x\":1528,\"y\":68}},\"node:207\":{\"location\":{\"x\":1736,\"y\":232}},\"node:213\":{\"location\":{\"x\":728,\"y\":-285}},\"node:218\":{\"location\":{\"x\":1144,\"y\":104}},\"node:230\":{\"location\":{\"x\":1593,\"y\":-173}},\"node:69\":{\"location\":{\"x\":584,\"y\":-77}},\"node:85\":{\"location\":{\"x\":840,\"y\":564}},\"node:91\":{\"location\":{\"x\":600,\"y\":819}}},\"selection\":[\"node:152\"],\"view\":{\"scroll\":{\"x\":379,\"y\":193},\"visible_rect\":{\"max\":{\"x\":1981,\"y\":1033},\"min\":{\"x\":379,\"y\":193}},\"zoom\":1}}",
+  "links" : 
+  [
+    {
+      "id" : 97,
+      "source" : 95,
+      "target" : 86
+    },
+    {
+      "id" : 98,
+      "source" : 96,
+      "target" : 87
+    },
+    {
+      "id" : 141,
+      "source" : 139,
+      "target" : 8
+    },
+    {
+      "id" : 173,
+      "source" : 83,
+      "target" : 138
+    },
+    {
+      "id" : 174,
+      "source" : 89,
+      "target" : 137
+    },
+    {
+      "id" : 176,
+      "source" : 155,
+      "target" : 88
+    },
+    {
+      "id" : 181,
+      "source" : 83,
+      "target" : 179
+    },
+    {
+      "id" : 191,
+      "source" : 186,
+      "target" : 188
+    },
+    {
+      "id" : 192,
+      "source" : 180,
+      "target" : 189
+    },
+    {
+      "id" : 211,
+      "source" : 204,
+      "target" : 208
+    },
+    {
+      "id" : 212,
+      "source" : 210,
+      "target" : 6
+    },
+    {
+      "id" : 222,
+      "source" : 83,
+      "target" : 220
+    },
+    {
+      "id" : 223,
+      "source" : 217,
+      "target" : 219
+    },
+    {
+      "id" : 234,
+      "source" : 190,
+      "target" : 231
+    },
+    {
+      "id" : 235,
+      "source" : 221,
+      "target" : 232
+    },
+    {
+      "id" : 236,
+      "source" : 233,
+      "target" : 203
+    }
+  ],
+  "nodeNames" : 2,
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "pinValues" : 
+      {
+        "6" : 1.0
+      },
+      "position" : 
+      [
+        1944.0,
+        160.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 69,
+      "inputs" : 
+      [
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82
+      ],
+      "kind" : "Solid Pattern",
+      "name" : "Solid Pattern",
+      "output" : 83,
+      "pinValues" : 
+      {
+        "1" : 6.0,
+        "2" : 5.0
+      },
+      "position" : 
+      [
+        584.0,
+        -77.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        5.0,
+        0.0,
+        1253.0
+      ]
+    },
+    {
+      "id" : 85,
+      "inputs" : 
+      [
+        86,
+        87,
+        88
+      ],
+      "kind" : "Lerp",
+      "name" : "Lerp",
+      "output" : 89,
+      "position" : 
+      [
+        840.0,
+        564.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 91,
+      "inputs" : 
+      [
+        92,
+        93
+      ],
+      "kind" : "Constant2Vector",
+      "name" : "Constant2Vector",
+      "output" : 94,
+      "position" : 
+      [
+        600.0,
+        819.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "split" : 
+      [
+        95,
+        96
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        3.059999942779541,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 136,
+      "inputs" : 
+      [
+        137,
+        138
+      ],
+      "kind" : "Step",
+      "name" : "Step",
+      "output" : 139,
+      "pinValues" : 
+      {
+        "0" : 0.0,
+        "1" : 1.0
+      },
+      "position" : 
+      [
+        1736.0,
+        520.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 152,
+      "inputs" : 
+      [
+        153,
+        154
+      ],
+      "kind" : "Distance Fade",
+      "name" : "Distance Fade",
+      "output" : 155,
+      "pinValues" : 
+      {
+        "0" : 5.0,
+        "1" : 20.0
+      },
+      "position" : 
+      [
+        600.0,
+        728.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 178,
+      "inputs" : 
+      [
+        179
+      ],
+      "kind" : "OneMinus",
+      "name" : "OneMinus",
+      "output" : 180,
+      "position" : 
+      [
+        1016.0,
+        -93.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 182,
+      "inputs" : 
+      [
+        183,
+        184,
+        185
+      ],
+      "kind" : "Constant3Vector",
+      "name" : "Constant3Vector",
+      "output" : 186,
+      "position" : 
+      [
+        1144.0,
+        -288.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 187,
+      "inputs" : 
+      [
+        188,
+        189
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 190,
+      "position" : 
+      [
+        1301.0,
+        -72.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 201,
+      "inputs" : 
+      [
+        202,
+        203
+      ],
+      "kind" : "Step",
+      "name" : "Step",
+      "output" : 204,
+      "pinValues" : 
+      {
+        "0" : 0.5,
+        "1" : 0.52999997138977051
+      },
+      "position" : 
+      [
+        1528.0,
+        68.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 207,
+      "inputs" : 
+      [
+        208,
+        209
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 210,
+      "pinValues" : 
+      {
+        "1" : 0.69999998807907104
+      },
+      "position" : 
+      [
+        1736.0,
+        232.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 213,
+      "inputs" : 
+      [
+        214,
+        215,
+        216
+      ],
+      "kind" : "Constant3Vector",
+      "name" : "Constant3Vector",
+      "output" : 217,
+      "position" : 
+      [
+        728.0,
+        -285.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 218,
+      "inputs" : 
+      [
+        219,
+        220
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 221,
+      "position" : 
+      [
+        1144.0,
+        104.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 230,
+      "inputs" : 
+      [
+        231,
+        232
+      ],
+      "kind" : "Add",
+      "name" : "Add",
+      "output" : 233,
+      "position" : 
+      [
+        1593.0,
+        -173.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "settings" : 
+  {
+    "alphaCutoff" : 0.33329999446868896,
+    "autoBake" : true,
+    "bakeResolution" : 512,
+    "bakeTime" : 0.0,
+    "cull" : 0,
+    "liveRate" : 30.0,
+    "liveResolution" : 256,
+    "liveUpdate" : true,
+    "materialMode" : 1,
+    "runtimeEvaluation" : true,
+    "shadingModel" : 0,
+    "shadowMode" : 4,
+    "solidSpace" : 0,
+    "surface" : 1
+  },
+  "version" : 1
+}
