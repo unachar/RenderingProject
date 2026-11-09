@@ -383,7 +383,8 @@ bool GraphicsDevice::Init(HWND hwnd)
     rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
-    rootParametersAll[3].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    // 球面法線補間では頂点シェーダーも PBRParams (b2) を参照する。
+    rootParametersAll[3].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[4].InitAsDescriptorTable(1, &rangesShadowTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[5].InitAsConstantBufferView(3, 0, D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[6].InitAsDescriptorTable(1, &rangesNormalTex[0], D3D12_SHADER_VISIBILITY_PIXEL);

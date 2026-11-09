@@ -19,9 +19,11 @@ PSInput3D main(VSInput3D input)
     output.InstanceID = GPUInstanceID;
 
     // 球面法線補間 (SNI): 頭部球の中心から頂点へのベクトル（ワールド空間）
-    float radius = max(SniParams.w, 0.0001f);
-    float3 toCenter = (world.xyz - SniParams.xyz) / radius;
-    output.SniVector = toCenter * step(0.0f, SniParams.w);
+    // GPU 駆動描画では b2 ではなく、インスタンスのマテリアルから取得する。
+    float4 sniParams = LoadSceneMaterialVector(gSceneMaterials, instance.MaterialIndex, 192u);
+    float radius = max(sniParams.w, 0.0001f);
+    float3 toCenter = (world.xyz - sniParams.xyz) / radius;
+    output.SniVector = toCenter * step(0.0f, sniParams.w);
 
     return output;
 }
