@@ -71,7 +71,8 @@ namespace
         float CastShadowThreshold = 0.28f;
         float CastShadowSoftness = 0.10f;
         // HLSL では float3 PBRPadding の次の float4 が16バイト境界から始まる。
-        float Padding[4]{};
+        // 旧 Padding[4] (1 XMFLOAT4) を Reserved (1 XMFLOAT4) に置換。x=ShadowMode, y=ShadowCutoff
+        XMFLOAT4 Reserved{0, 0, 0, 0};
         XMFLOAT4 Transparent0 = {1.50f, 0.98f, 0.02f, 0.035f};
         XMFLOAT4 Transparent1 = {0.10f, 0.02f, 0.01f, 0.005f};
         MaterialPartShaderConstants PartParams[kMaterialPartParamCount]{};
@@ -83,6 +84,9 @@ namespace
         std::array<ProcStudio::TextureGpuParams, 3> AssetNoise{};
         XMUINT4 LiveToonTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // Def、顔陰影反転、質感ランプ
         XMFLOAT4 LiveToonMaterialParams{1, 1, 1, 0};
+
+        // 球面法線補間 (SNI) パラメータ: xyz=球中心(ワールド空間), w=半径 (>0 で有効)
+        XMFLOAT4 SniParams{0, 1.5f, 0, 1.0f};
     };
     static_assert(offsetof(PBRConstants, LiveToonTextures) == 190 * sizeof(XMFLOAT4));
     static_assert(sizeof(PBRConstants) <= GpuSceneMaterialParameterVectors * sizeof(XMFLOAT4));
@@ -155,8 +159,8 @@ namespace
         constants.SkinShadowScatter = material.SkinShadowScatter;
         constants.CastShadowThreshold = material.CastShadowThreshold;
         constants.CastShadowSoftness = material.CastShadowSoftness;
-        constants.Padding[1] = static_cast<float>(MaterialSystem::ResolveShadowMode(material));
-        constants.Padding[2] = material.ShadowCutoff;
+        constants.Reserved.x = static_cast<float>(MaterialSystem::ResolveShadowMode(material));
+        constants.Reserved.y = material.ShadowCutoff;
         constants.Transparent0 =
             XMFLOAT4(max(material.IOR, 1.0f), clamp(material.Transmission, 0.0f, 1.0f),
                      clamp(material.TransmissionRoughness, 0.0f, 1.0f), max(material.RefractionStrength, 0.0f));
@@ -206,6 +210,11 @@ namespace
                                       LiveToonTextures::ResolveHeapOffset(material.LiveToonTextureRampPath), 0u};
         constants.LiveToonMaterialParams = {material.LiveToonDefStrength, material.LiveToonFaceStrength,
                                             material.LiveToonTextureRampMultiply, material.LiveToonTextureRampAdd};
+
+        // 球面法線補間 (SNI) パラメータ: xyz=球中心, w=半径（>0 で有効）
+        constants.SniParams = {material.SniSphereCenter.x, material.SniSphereCenter.y, material.SniSphereCenter.z,
+                               material.SniEnabled > 0.5f ? material.SniSphereRadius.x : 0.0f};
+
         return constants;
     }
 

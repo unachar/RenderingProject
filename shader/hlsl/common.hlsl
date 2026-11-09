@@ -145,6 +145,9 @@ struct PSInput3D
     float3 CameraPos : TEXCOORD3;
 #ifdef SHADER_GPU_DRIVEN
     nointerpolation uint InstanceID : TEXCOORD4;
+    float3 SniVector : TEXCOORD5;
+#else
+    float3 SniVector : TEXCOORD4;
 #endif
 };
 
@@ -1110,6 +1113,9 @@ cbuffer PBRParams : register(b2)
     // ライブトゥーンのマテリアルテクスチャ（ベクトル 190, 191。GPU Scene の 192 ベクトルにちょうど収まる）
     uint4 LiveToonTextures;       // x: Def, y: 顔陰影反転, z: 質感ランプ（テクスチャ表の番号、UINT_MAX で無効）, w: フラグ
     float4 LiveToonMaterialParams; // x: Def の強さ, y: 顔陰影反転の強さ, z: 質感ランプ（乗算）, w: 質感ランプ（加算）
+
+    // 球面法線補間 (SNI) パラメータ: xyz = 球中心(ワールド空間), w = 半径（>0 で有効）
+    float4 SniParams;
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)

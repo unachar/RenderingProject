@@ -10,6 +10,9 @@ SamplerState g_SamplerState : register(s0);
 uint4 main(PSInput3D input) : SV_Target0
 {
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(input.Diffuse.a, 0.0f);
+    // SNI ヘッドマスク: materialPartId + 100.0f でエンコードされている
+    float headMask = step(15.0f, materialPartId);
+    materialPartId = materialPartId - headMask * 100.0f;
     float4 baseColor = float4(input.Diffuse.rgb, 1.0f);
     float3 normal = input.Normal.xyz * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
@@ -26,6 +29,10 @@ uint4 main(PSInput3D input) : SV_Target0
         baseColor *= g_Texture.Sample(g_SamplerState, input.TexCoord);
     }
     clip(baseColor.a - 0.01f);
+
+    // 球面法線補間 (SNI): ヘッドマスク (materialPartId + 100 でエンコード) を使用
+    float3 sniNormal = SafeNormalizeCommon(input.SniVector, normal);
+    normal = lerp(normal, sniNormal, headMask);
 
     MaterialPartShaderParams part = ResolveMaterialPartParams(materialPartId);
     bool usePart = MaterialMode != 1;

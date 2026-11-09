@@ -34,6 +34,7 @@ enum MeshSemanticFlags : uint32_t
     MeshSemantic_Skin = 1u << 7,
     MeshSemantic_Cloth = 1u << 8,
     MeshSemantic_Accessory = 1u << 9,
+    MeshSemantic_Head = 1u << 10,         // 頭部（SNI 球面法線補間用）
 };
 
 // メカクレで髪越しに透かす既定の対象。
@@ -196,6 +197,11 @@ inline MeshSemanticInfo ResolveMeshSemantics(string_view materialNameRaw, string
         if (MaterialPartContainsAnyToken(key, kSemanticSkinTokens))
         {
             info.Flags |= MeshSemantic_Skin;
+        }
+        // 頭部判定：Face または Skin のメッシュを頭部として扱う（SNI 球面法線補間用）
+        if ((info.Flags & (MeshSemantic_Face | MeshSemantic_Skin)) != 0)
+        {
+            info.Flags |= MeshSemantic_Head;
         }
     }
     return info;

@@ -19,6 +19,9 @@ GBufferDepthOutput main(in PSInput3D In)
         ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
     float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
+    // SNI ヘッドマスク: materialPartId + 100.0f でエンコードされている
+    float headMask = step(15.0f, materialPartId);
+    materialPartId = materialPartId - headMask * 100.0f;
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
     {
@@ -66,6 +69,10 @@ GBufferDepthOutput main(in PSInput3D In)
         normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
     }
     normal = ApplyMaterialGraphNormal(materialGraph, assetMaterial, normal, In.Normal, In.WorldPos, In.TexCoord);
+
+    // 球面法線補間 (SNI): ヘッドマスク (materialPartId + 100 でエンコード) を使用
+    float3 sniNormal = SafeNormalizeCommon(In.SniVector, normal);
+    normal = lerp(normal, sniNormal, headMask);
 
     GBufferDepthOutput output;
     output.EmissionAO = assetEmissionAO;

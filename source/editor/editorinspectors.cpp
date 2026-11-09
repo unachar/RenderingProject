@@ -1139,6 +1139,21 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
     changed |= ImGui::SliderFloat("質感ランプ（乗算）", &material.LiveToonTextureRampMultiply, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("質感ランプ（加算）", &material.LiveToonTextureRampAdd, 0.0f, 1.0f);
 
+    ImGui::SeparatorText("球面法線補間 (SNI)");
+    ImGui::TextWrapped("頭部を球面として法線を補間し、トゥーン陰影の境界を滑らかにする");
+    bool sniChanged = false;
+    sniChanged |= ImGui::Checkbox("有効", reinterpret_cast<bool*>(&material.SniEnabled));
+    ImGui::SetItemTooltip("SNI を有効にする。");
+    sniChanged |= ImGui::SliderFloat3("球中心 (ワールド)", &material.SniSphereCenter.x, -10.0f, 10.0f, "%.3f");
+    ImGui::SetItemTooltip("球の中心位置（ワールド空間）");
+    sniChanged |= ImGui::SliderFloat3("球半径 (楕円対応)", &material.SniSphereRadius.x, 0.01f, 5.0f, "%.3f");
+    ImGui::SetItemTooltip("球の半径（X/Y/Z 独立）");
+
+    if (sniChanged)
+    {
+        BeginUndoCapture(entity, before);
+    }
+
     if (changed)
     {
         BeginUndoCapture(entity, before);

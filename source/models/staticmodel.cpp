@@ -1483,7 +1483,10 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
             semantic = ResolveMeshSemantics(materialName.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex);
         }
         const float materialPartId = semantic.MaterialPartId;
-        const XMFLOAT4 meshDiffuse(diffuse.r, diffuse.g, diffuse.b, materialPartId);
+        // 頭部メッシュ（Face/Skin）は SNI 球面法線補間を有効にするため、Diffuse.w にフラグを埋め込む
+        // materialPartId (0-14) + 100.0f で頭部フラグを表現。シェーダー側で step(15.0f, Diffuse.a) で判定。
+        const float diffuseW = (semantic.Flags & MeshSemantic_Head) != 0 ? materialPartId + 100.0f : materialPartId;
+        const XMFLOAT4 meshDiffuse(diffuse.r, diffuse.g, diffuse.b, diffuseW);
 
         vector<StaticModelVertex> vertices(mesh->mNumVertices);
         for (unsigned int v = 0; v < mesh->mNumVertices; ++v)

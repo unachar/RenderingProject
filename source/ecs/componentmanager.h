@@ -396,6 +396,12 @@ struct MaterialComponent
     string LiveToonTextureRampPath;     // 質感ランプ：横軸 = 視線角度（正面→縁）
     float LiveToonTextureRampMultiply = 1.0f;
     float LiveToonTextureRampAdd = 0.0f;
+
+    // 球面法線補間 (SNI) パラメータ
+    XMFLOAT3 SniSphereCenter = {0.0f, 1.5f, 0.0f};  // ワールド空間の球中心（毎フレーム更新推奨）
+    XMFLOAT3 SniSphereRadius = {1.0f, 1.0f, 1.0f};  // 楕円球対応の半径
+    float SniEnabled = 0.0f;                        // 0=無効, 1=有効
+
     float Alpha = 1.0f;
     MaterialShadowMode ShadowMode = MaterialShadowMode::Auto;
     float ShadowCutoff = 0.5f;

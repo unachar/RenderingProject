@@ -34,5 +34,11 @@ PSInput3D main(VSInput3D input)
     output.WorldPos = worldPos.xyz;
     output.ViewPos = mul(worldPos, View).xyz;
     output.CameraPos = CameraPos;
+
+    // 球面法線補間 (SNI): 頭部球の中心から頂点へのベクトル（ワールド空間）
+    float radius = max(SniParams.w, 0.0001f);
+    float3 toCenter = (worldPos.xyz - SniParams.xyz) / radius;
+    output.SniVector = toCenter * step(0.0f, SniParams.w);
+
     return output;
 }

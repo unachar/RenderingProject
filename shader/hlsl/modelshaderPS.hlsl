@@ -312,7 +312,10 @@ float4 ShadeForward(in PSInput3D In)
         g_PomSelfShadow = AssetParallaxSelfShadow(pom, g_PomSelfShadowLight, g_SamplerState);
     }
 #endif
-    float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
+    float rawPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
+    // SNI ヘッドマスク: materialPartId + 100.0f でエンコードされている
+    float headMask = step(15.0f, rawPartId);
+    float materialPartId = rawPartId - headMask * 100.0f;
     // 手動モードへ切り替えた後も、モデル色の alpha にマテリアルの分類が残る場合がある。
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -369,6 +372,11 @@ float4 ShadeForward(in PSInput3D In)
                                                g_SamplerState);
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
+
+    // 球面法線補間 (SNI): ヘッドマスク (materialPartId + 100 でエンコード) を使用
+    float3 sniNormal = SafeNormalizeCommon(In.SniVector, surfaceNormal);
+    surfaceNormal = lerp(surfaceNormal, sniNormal, headMask);
+
     surfaceNormal = ApplyMaterialGraphNormal(materialGraph, assetMaterial, surfaceNormal, graphGeometryNormal, In.WorldPos,
                                              In.TexCoord);
 #ifdef IMPOSTOR_FORWARD

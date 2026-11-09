@@ -1334,6 +1334,36 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 materialSelection = &(DefaultMaterial());
             }
             const MaterialComponent& material = *materialSelection;
+
+            // SNI 球面法線補間: 頭ボーン位置を球中心として毎フレーム更新
+            auto& srcMaterial = const_cast<MaterialComponent&>(ComponentManager::GetComponentUnchecked<MaterialComponent>(dc.EntityID));
+            if (srcMaterial.SniEnabled > 0.5f && dc.model)
+            {
+                XMFLOAT4X4 headTransform;
+                // 一般的な頭ボーン名を試行
+                static const char* headBoneNames[] = {"Head", "head", "J_Head", "J_head", "Head_Bone", "head_bone", "Bip01_Head", "Bip01_head"};
+                bool found = false;
+                for (const char* name : headBoneNames)
+                {
+                    if (dc.model->GetBoneGlobalTransform(name, headTransform))
+                    {
+                        srcMaterial.SniSphereCenter = {headTransform._41, headTransform._42, headTransform._43};
+                        // 半径を頭ボーンからの推定値に設定（Y軸のエクステントを使用）
+                        srcMaterial.SniSphereRadius.x = 0.2f; // デフォルト半径
+                        found = true;
+                        break;
+                    }
+                }
+                // 頭ボーンが見つからない場合は、モデルの AABB 中心 + 上方向オフセットを使用
+                if (!found)
+                {
+                    XMFLOAT3 center = dc.model->GetAabbCenter();
+                    XMFLOAT3 extents = dc.model->GetAabbExtents();
+                    srcMaterial.SniSphereCenter = {center.x, center.y + extents.y * 0.5f, center.z};
+                    srcMaterial.SniSphereRadius.x = extents.y * 0.5f;
+                }
+            }
+
             MaterialBindings::SetMaterial(dc.EntityID, material);
 
             if (dc.pso != lastPso)
@@ -1671,6 +1701,44 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 materialSelection = &(DefaultMaterial());
             }
             const MaterialComponent& material = *materialSelection;
+
+            // SNI 球面法線補間 (StaticModel): 頭部メッシュの境界球 (RayCenter/RayRadius) を使用
+            auto& srcMaterial = const_cast<MaterialComponent&>(ComponentManager::GetComponentUnchecked<MaterialComponent>(dc.EntityID));
+            if (srcMaterial.SniEnabled > 0.5f && dc.model)
+            {
+                XMFLOAT3 sphereCenter{0, 0, 0};
+                float sphereRadius = 1.0f;
+                bool found = false;
+                for (UINT m = 0; m < dc.model->GetMeshCount(); ++m)
+                {
+                    const StaticMeshData& meshData = dc.model->GetMeshData(m);
+                    if ((meshData.SemanticFlags & MeshSemantic_Head) != 0)
+                    {
+                        // ワールド空間に変換
+                        XMMATRIX world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
+                        XMVECTOR localCenter = XMLoadFloat3(&meshData.RayCenter);
+                        XMVECTOR worldCenter = XMVector3TransformCoord(localCenter, world);
+                        XMStoreFloat3(&sphereCenter, worldCenter);
+                        sphereRadius = meshData.RayRadius;
+                        found = true;
+                        break;
+                    }
+                }
+                if (found)
+                {
+                    srcMaterial.SniSphereCenter = sphereCenter;
+                    srcMaterial.SniSphereRadius.x = sphereRadius;
+                }
+                else
+                {
+                    // フォールバック: モデル全体の AABB 上部中心
+                    XMFLOAT3 center = dc.model->GetAabbCenter();
+                    XMFLOAT3 extents = dc.model->GetAabbExtents();
+                    srcMaterial.SniSphereCenter = {center.x, center.y + extents.y * 0.5f, center.z};
+                    srcMaterial.SniSphereRadius.x = extents.y * 0.5f;
+                }
+            }
+
             MaterialBindings::SetMaterial(dc.EntityID, material);
 
             if (dc.pso != lastPso)
