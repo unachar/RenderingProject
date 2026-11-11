@@ -1,0 +1,224 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":720,\"y\":40}},\"node:21\":{\"location\":{\"x\":40,\"y\":0}},\"node:24\":{\"location\":{\"x\":40,\"y\":150}},\"node:26\":{\"location\":{\"x\":40,\"y\":250}},\"node:30\":{\"location\":{\"x\":40,\"y\":350}},\"node:33\":{\"location\":{\"x\":-216,\"y\":-109}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-346,\"y\":-194},\"visible_rect\":{\"max\":{\"x\":1256,\"y\":666},\"min\":{\"x\":-346,\"y\":-194}},\"zoom\":1}}",
+  "links" : 
+  [
+    {
+      "id" : 23,
+      "source" : 22,
+      "target" : 2
+    },
+    {
+      "id" : 28,
+      "source" : 25,
+      "target" : 3
+    },
+    {
+      "id" : 29,
+      "source" : 27,
+      "target" : 4
+    },
+    {
+      "id" : 32,
+      "source" : 31,
+      "target" : 6
+    },
+    {
+      "id" : 35,
+      "source" : 34,
+      "target" : 20
+    }
+  ],
+  "nodeNames" : 2,
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        720.0,
+        40.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 21,
+      "inputs" : [],
+      "kind" : "Color Parameter",
+      "name" : "Base Color",
+      "output" : 22,
+      "position" : 
+      [
+        40.0,
+        0.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.48840194940567017,
+        0.30361756682395935,
+        0.83333331346511841,
+        1.0
+      ]
+    },
+    {
+      "id" : 24,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 25,
+      "position" : 
+      [
+        40.0,
+        150.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 26,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 27,
+      "position" : 
+      [
+        40.0,
+        250.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.085000000894069672,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 30,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 31,
+      "position" : 
+      [
+        40.0,
+        350.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 33,
+      "inputs" : [],
+      "kind" : "LiveToon Shading",
+      "name" : "LiveToon Shading",
+      "output" : 34,
+      "position" : 
+      [
+        -216.0,
+        -109.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        2.0,
+        0.75599998235702515,
+        0.22900000214576721,
+        1.0
+      ]
+    }
+  ],
+  "settings" : 
+  {
+    "alphaCutoff" : -1.0,
+    "autoBake" : true,
+    "bakeResolution" : 512,
+    "bakeTime" : 0.0,
+    "cull" : 0,
+    "liveRate" : 30.0,
+    "liveResolution" : 256,
+    "liveUpdate" : true,
+    "materialMode" : 0,
+    "runtimeEvaluation" : true,
+    "shadingModel" : 0,
+    "shadowMode" : 4,
+    "solidSpace" : 0,
+    "surface" : 0
+  },
+  "version" : 1
+}

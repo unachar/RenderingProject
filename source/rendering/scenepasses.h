@@ -24,4 +24,10 @@ class ScenePasses : protected RenderTargets
     static bool BuildOcclusionHierarchyAndBeginPhaseTwo();
     static void RenderVelocityBuffer();
     static void EndVelocityBuffer();
+    
+    // Hybrid Pipeline passes
+    static void BeginDeferredLightingPass();
+    static void EndDeferredLightingPass();
+    static void BeginForwardPlusPass();
+    static void EndForwardPlusPass();
 };

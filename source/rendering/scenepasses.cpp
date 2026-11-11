@@ -247,7 +247,7 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
     if (m_PostProcessConstantBuffer)
     {
         m_CommandList->SetGraphicsRootConstantBufferView(26, m_PostProcessConstantBuffer->GetGPUVirtualAddress() +
-                                                                 GetPostProcessFrameOffset());
+                                                                  GetPostProcessFrameOffset());
     }
     CloudRenderer::BindForwardLighting(m_CommandList.Get(), m_FrameIndex);
     m_CommandList->SetGraphicsRootDescriptorTable(28, ScreenSpaceEffects::GetAoSrv());
@@ -885,7 +885,7 @@ void ScenePasses::EndVelocityBuffer()
         m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
         ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
         const auto restoreDepth = CD3DX12_RESOURCE_BARRIER::Transition(depth, D3D12_RESOURCE_STATE_DEPTH_READ,
-                                                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                                                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         m_CommandList->ResourceBarrier(1, &restoreDepth);
         if (!m_UseLowResDepth)
         {
@@ -900,7 +900,169 @@ void ScenePasses::EndVelocityBuffer()
     }
     D3D12_RESOURCE_BARRIER toVelocitySrv =
         CD3DX12_RESOURCE_BARRIER::Transition(m_GBufferTargets[velocityIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
 
+// Hybrid Pipeline: Deferred Lighting Pass (Opaque only)
+void ScenePasses::BeginDeferredLightingPass()
+{
+    if (!m_CommandList || !GetRenderTarget(RenderTargetType::Scene))
+    {
+        return;
+    }
+    
+    // Scene Color をレンダーターゲットとして設定
+    D3D12_RESOURCE_BARRIER sceneBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        GetRenderTarget(RenderTargetType::Scene).Get(), 
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+    m_CommandList->ResourceBarrier(1, &sceneBarrier);
+    
+    // 深度は読み取り専用
+    ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+    if (depth)
+    {
+        D3D12_RESOURCE_BARRIER depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            depth, D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &depthBarrier);
+    }
+    
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = GetRenderTargetRtvHandle(RenderTargetType::Scene);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle;
+    if (m_UseLowResDepth)
+    {
+        dsvHandle = m_LowResDsvHandle;
+    }
+    else
+    {
+        dsvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+    }
+    
+    m_CommandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+    m_CommandList->RSSetViewports(1, &m_Viewport);
+    m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
+    
+    m_IsDeferredGeometryPass = false;
+    m_IsSceneColorForwardPass = true;
+}
+
+void ScenePasses::EndDeferredLightingPass()
+{
+    if (!m_CommandList || !GetRenderTarget(RenderTargetType::Scene))
+    {
+        return;
+    }
+    
+    // Scene Color をシェーダーリソースに戻す
+    D3D12_RESOURCE_BARRIER sceneBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        GetRenderTarget(RenderTargetType::Scene).Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    m_CommandList->ResourceBarrier(1, &sceneBarrier);
+    
+    // 深度を元に戻す
+    ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+    if (depth)
+    {
+        D3D12_RESOURCE_BARRIER depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            depth,
+            D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &depthBarrier);
+    }
+    
+    m_IsSceneColorForwardPass = false;
+}
+
+// Hybrid Pipeline: Forward+ Pass
+void ScenePasses::BeginForwardPlusPass()
+{
+    if (!m_CommandList || !GetRenderTarget(RenderTargetType::Scene))
+    {
+        return;
+    }
+    
+    // Scene Color と Editor Scene をレンダーターゲットとして設定（ブレンド用）
+    D3D12_RESOURCE_BARRIER sceneBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        GetRenderTarget(RenderTargetType::Scene).Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+    
+    D3D12_RESOURCE_BARRIER editorBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        GetRenderTarget(RenderTargetType::EditorScene).Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+    
+    m_CommandList->ResourceBarrier(1, &sceneBarrier);
+    m_CommandList->ResourceBarrier(1, &editorBarrier);
+    
+    // 深度は読み取り専用
+    ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+    if (depth)
+    {
+        D3D12_RESOURCE_BARRIER depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            depth,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &depthBarrier);
+    }
+    
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[2] = {
+        GetRenderTargetRtvHandle(RenderTargetType::Scene),
+        GetRenderTargetRtvHandle(RenderTargetType::EditorScene)
+    };
+    
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle;
+    if (m_UseLowResDepth)
+    {
+        dsvHandle = m_LowResDsvHandle;
+    }
+    else
+    {
+        dsvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+    }
+    
+    m_CommandList->OMSetRenderTargets(2, rtvHandles, FALSE, &dsvHandle);
+    m_CommandList->RSSetViewports(1, &m_Viewport);
+    m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
+    
+    m_IsDeferredGeometryPass = false;
+    m_IsSceneColorForwardPass = true;
+}
+
+void ScenePasses::EndForwardPlusPass()
+{
+    if (!m_CommandList || !GetRenderTarget(RenderTargetType::Scene))
+    {
+        return;
+    }
+    
+    // レンダーターゲットをシェーダーリソースに戻す
+    D3D12_RESOURCE_BARRIER sceneBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        GetRenderTarget(RenderTargetType::Scene).Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    
+    D3D12_RESOURCE_BARRIER editorBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        GetRenderTarget(RenderTargetType::EditorScene).Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    
+    m_CommandList->ResourceBarrier(1, &sceneBarrier);
+    m_CommandList->ResourceBarrier(1, &editorBarrier);
+    
+    // 深度を元に戻す
+    ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+    if (depth)
+    {
+        D3D12_RESOURCE_BARRIER depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            depth,
+            D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &depthBarrier);
+    }
+    
+    m_IsSceneColorForwardPass = false;
+}

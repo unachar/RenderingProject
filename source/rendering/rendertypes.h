@@ -17,22 +17,35 @@ enum class RenderMode
 
 enum class GBufferType : uint32_t
 {
-    BASE_COLOR = 0,
-    NORMAL,
-    DEPTH,
-    MATERIAL,
-    SHADOW,
-    EMISSION_AO,
-    ATMOSPHERE,
-    VELOCITY,
-    VISIBILITY,
-    BLOOM,
-    COUNT
+    // Hybrid Deferred + Forward+ Minimal GBuffer (4 render targets)
+    BASE_COLOR_METAL = 0,    // RT0: RGB=BaseColor, A=Metallic
+    NORMAL_ROUGHNESS,        // RT1: RGB=Normal, A=Roughness
+    MOTION_VECTOR,           // RT2: RG=MotionVec, B=Depth, A=MaterialID
+    EMISSION_AO,             // RT3: RGB=Emission, A=AO
+    
+    // Legacy GBuffer indices (for backward compatibility)
+    // These map to the same physical buffers as above
+    BASE_COLOR = 0,          // = BASE_COLOR_METAL
+    NORMAL = 1,              // = NORMAL_ROUGHNESS
+    DEPTH = 2,               // = MOTION_VECTOR (B channel)
+    MATERIAL = 3,            // = EMISSION_AO (or NORMAL_ROUGHNESS A)
+    SHADOW = 3,              // = EMISSION_AO
+    VISIBILITY = 3,          // = EMISSION_AO
+    BLOOM = 3,               // = EMISSION_AO
+    ATMOSPHERE = 3,          // = EMISSION_AO
+    VELOCITY = 2,            // = MOTION_VECTOR
+    
+    COUNT = 4                // Actual number of render targets
 };
 
+// Convenience aliases
+inline constexpr GBufferType GBufferBaseColorMetal = GBufferType::BASE_COLOR_METAL;
+inline constexpr GBufferType GBufferNormalRoughness = GBufferType::NORMAL_ROUGHNESS;
+inline constexpr GBufferType GBufferMotionVector = GBufferType::MOTION_VECTOR;
+inline constexpr GBufferType GBufferEmissionAO = GBufferType::EMISSION_AO;
+
 inline constexpr LPCWSTR g_GBufferTargetNames[] = {
-    L"ColorBuffer",      L"NormalBuffer",      L"DepthBuffer",    L"MaterialBuffer",   L"ShadowBuffer",
-    L"EmissionAOBuffer", L"AtmosphereGBuffer", L"VelocityBuffer", L"VisibilityBuffer", L"BloomBuffer"};
+    L"BaseColorMetalBuffer", L"NormalRoughnessBuffer", L"MotionVectorBuffer", L"EmissionAOBuffer"};
 
 struct Vertex
 {

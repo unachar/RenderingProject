@@ -31,6 +31,9 @@
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
+    "toonShadowSoftness" : 0.22900000214576721,
+    "toonShadowStrength" : 1.0,
+    "toonShadowThreshold" : 0.75599998235702515,
     "transmission" : 0.0,
     "transmissionRoughness" : 0.019999999552965164
   },
@@ -53,5 +56,6 @@
     "metallicRoughness" : "guid:0000000000000000",
     "normal" : "guid:0000000000000000"
   },
+  "toonShading" : 4,
   "version" : 1
 }

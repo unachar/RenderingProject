@@ -15,37 +15,27 @@ void RenderTargets::GetGBufferClearColor(UINT index, float outColor[4])
     outColor[2] = 0.0f;
     outColor[3] = 0.0f;
 
-    if (index == static_cast<UINT>(GBufferType::BASE_COLOR))
+    if (index == static_cast<UINT>(GBufferType::BASE_COLOR_METAL))
     {
         outColor[0] = RendererState::m_kSceneClearColor[0];
         outColor[1] = RendererState::m_kSceneClearColor[1];
         outColor[2] = RendererState::m_kSceneClearColor[2];
-        outColor[3] = RendererState::m_kSceneClearColor[3];
+        outColor[3] = 0.0f; // Metallic = 0 (dielectric default)
     }
-    else if (index == static_cast<UINT>(GBufferType::NORMAL))
+    else if (index == static_cast<UINT>(GBufferType::NORMAL_ROUGHNESS))
     {
-        outColor[3] = 1.0f;
+        outColor[3] = 1.0f; // Roughness = 1 (rough default)
     }
-    else if (index == static_cast<UINT>(GBufferType::DEPTH))
-    {
-        outColor[0] = 0.0f;
-        outColor[1] = 0.0f;
-        outColor[2] = 0.0f;
-        outColor[3] = 0.0f;
-    }
-    else if (index == static_cast<UINT>(GBufferType::MATERIAL))
-    {
-        outColor[3] = -1.0f;
-    }
-    else if (index == static_cast<UINT>(GBufferType::ATMOSPHERE) ||
-             index == static_cast<UINT>(GBufferType::EMISSION_AO))
-    {
-        outColor[3] = 1.0f;
-    }
-    else if (index == static_cast<UINT>(GBufferType::VELOCITY))
+    else if (index == static_cast<UINT>(GBufferType::MOTION_VECTOR))
     {
         outColor[0] = 0.5f;
         outColor[1] = 0.5f;
+        outColor[2] = 0.0f; // Depth = 0
+        outColor[3] = 0.0f; // MaterialID = 0
+    }
+    else if (index == static_cast<UINT>(GBufferType::EMISSION_AO))
+    {
+        outColor[3] = 1.0f; // AO = 1 (no occlusion)
     }
 }
 
