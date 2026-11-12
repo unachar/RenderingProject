@@ -16,12 +16,15 @@ class ScenePasses : protected RenderTargets
     static void EndShadowPass();
     static void EndShadowPassBatch();
     static void BeginEditorSceneOverlayPass();
-    static void BeginHdrTransparentPass();
-    static void EndHdrTransparentPass();
+    static void DrawForwardPlusTransparency();
     static void EndEditorSceneOverlayPass();
     static void BeginScenePass();
     static void EndScenePass();
     static bool BuildOcclusionHierarchyAndBeginPhaseTwo();
     static void RenderVelocityBuffer();
     static void EndVelocityBuffer();
+
+  private:
+    static void BeginHdrTransparentPass();
+    static void EndHdrTransparentPass();
 };

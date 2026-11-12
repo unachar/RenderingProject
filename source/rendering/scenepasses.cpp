@@ -6,6 +6,7 @@
 #include "envflags.h"
 #include "transmittanceshadows.h"
 #include "scenepasses.h"
+#include "systemmanager.h"
 #include "renderframe.h"
 #include "lightingresources.h"
 #include "materialbindings.h"
@@ -409,6 +410,14 @@ void ScenePasses::BeginEditorSceneOverlayPass()
 
     m_CommandList->RSSetViewports(1, &m_FullViewport);
     m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
+}
+
+void ScenePasses::DrawForwardPlusTransparency()
+{
+    RenderProfiler::ScopedEvent profile("Forward+ Transparency", m_CommandList.Get());
+    BeginHdrTransparentPass();
+    SystemManager::DrawSystem(RenderPass::TransparentScene, false);
+    EndHdrTransparentPass();
 }
 
 void ScenePasses::BeginHdrTransparentPass()
@@ -903,4 +912,3 @@ void ScenePasses::EndVelocityBuffer()
                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
-

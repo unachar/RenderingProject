@@ -235,7 +235,7 @@ void FramePipeline::Execute()
                 });
 
             graph.AddPass(
-                "Deferred Lighting / PostProcess",
+                "Deferred / Forward+ / PostProcess",
                 [shadowDepth, geometry, sceneDepth, velocity, sceneColor, editorScene,
                  gpuScene](RenderGraph::PassBuilder& builder) {
                     builder.Read(gpuScene)
@@ -247,7 +247,7 @@ void FramePipeline::Execute()
                         .Write(editorScene);
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
-                    RenderProfiler::ScopedEvent profile("Deferred Lighting / PostProcess", passCommandList);
+                    RenderProfiler::ScopedEvent profile("Deferred / Forward+ / PostProcess", passCommandList);
                     if (GPUDrivenValidation::IsGpuValidationRun())
                     {
                         return;
@@ -257,12 +257,12 @@ void FramePipeline::Execute()
                 });
 
             graph.AddPass(
-                "Transparent / Overlay",
+                "Editor Overlay / Niagara",
                 [sceneColor, editorScene](RenderGraph::PassBuilder& builder) {
                     builder.Read(sceneColor).ReadWrite(editorScene);
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
-                    RenderProfiler::ScopedEvent profile("Transparent / Overlay", passCommandList);
+                    RenderProfiler::ScopedEvent profile("Editor Overlay / Niagara", passCommandList);
                     if (GPUDrivenValidation::IsGpuValidationRun())
                     {
                         return;
