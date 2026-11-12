@@ -885,7 +885,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\systems\materialsystem.cpp" />
     <ClCompile Include="source\systems\modelsystem.cpp" />
     <ClCompile Include="source\systems\instancingsystem.cpp" />
-    <ClCompile Include="source\systems\forwardplussystem.cpp" />
     <ClCompile Include="source\systems\postprocesssystem.cpp" />
     <ClCompile Include="source\systems\rendersystem.cpp" />
     <ClCompile Include="source\systems\systemmanager.cpp" />
@@ -974,7 +973,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\systems\materialsystem.h" />
     <ClInclude Include="source\systems\modelsystem.h" />
     <ClInclude Include="source\systems\instancingsystem.h" />
-    <ClInclude Include="source\systems\forwardplussystem.h" />
     <ClInclude Include="source\systems\postprocesssystem.h" />
     <ClInclude Include="source\systems\rendersystem.h" />
     <ClInclude Include="source\systems\systembase.h" />

@@ -2,6 +2,7 @@
 #include "editorvisibility.h"
 #include "noisecachebindings.h"
 #include "rendering/scenedepth.h"
+#include "scenepasses.h"
 #include "materialmanager.h"
 #include "vertexdeformation.h"
 #include "instancingsystem.h"
@@ -667,7 +668,7 @@ bool InstancingSystem::SetupDrawContext(RenderPass renderPass, DrawContext& ctx)
     {
         return false;
     }
-    if (renderPass != RenderPass::PrimaryScene && renderPass != RenderPass::OverlayScene &&
+    if (renderPass != RenderPass::PrimaryScene && renderPass != RenderPass::TransparentScene &&
         renderPass != RenderPass::ShadowMap)
     {
         return false;
@@ -707,7 +708,7 @@ bool InstancingSystem::SetupDrawContext(RenderPass renderPass, DrawContext& ctx)
         ctx.cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
     }
 
-    ctx.transparentPass = renderPass == RenderPass::OverlayScene;
+    ctx.transparentPass = renderPass == RenderPass::TransparentScene;
     ctx.deferredOpaque =
         RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED && renderPass == RenderPass::PrimaryScene;
     ctx.defaultTexture = TextureManager::GetDefaultTextureIndex();
@@ -1595,6 +1596,10 @@ void InstancingSystem::ExecuteMainBatches(const DrawContext& ctx, vector<Instanc
     if (!CullBatchesOnGpu(ctx, batches, view, records))
     {
         return;
+    }
+    if (ctx.transparentPass)
+    {
+        ScenePasses::BeginModelPass();
     }
     size_t batchIndex = 0;
     for (auto& batch : batches)

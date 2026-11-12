@@ -5,7 +5,7 @@ class RendererState
 {
   public:
     static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
-    static constexpr UINT g_kGEOMETRY_GBUFFER_COUNT = 4; // BASE_COLOR_METAL, NORMAL_ROUGHNESS, MOTION_VECTOR, EMISSION_AO
+    static constexpr UINT g_kGEOMETRY_GBUFFER_COUNT = static_cast<UINT>(GBufferType::ATMOSPHERE);
     static constexpr uint32_t g_kFRAME_COUNT = 3;
 
     static constexpr UINT g_kMAX_SHADER_LIGHTS = 160;
@@ -151,13 +151,13 @@ class RendererState
     static CD3DX12_GPU_DESCRIPTOR_HANDLE m_AaSrvHandle;
 
     static constexpr float m_kSceneClearColor[4] = {0.1f, 0.2f, 0.4f, 1.0f};
-    // Hybrid GBuffer Formats (4 render targets, ~128 bits/pixel)
     static constexpr DXGI_FORMAT m_kDeferredRtvFormats[g_kGBUFFER_COUNT] = {
-        DXGI_FORMAT_R8G8B8A8_UNORM,       // BASE_COLOR_METAL: RGB=BaseColor, A=Metallic
-        DXGI_FORMAT_R16G16B16A16_FLOAT,   // NORMAL_ROUGHNESS: RGB=Normal (world space), A=Roughness
-        DXGI_FORMAT_R16G16B16A16_FLOAT,   // MOTION_VECTOR: RG=MotionVec, B=Depth, A=MaterialID
-        DXGI_FORMAT_R16G16B16A16_FLOAT    // EMISSION_AO: RGB=Emission, A=AO
-    };
+
+        DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32_FLOAT,
+        DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
+        DXGI_FORMAT_R16G16B16A16_FLOAT,
+        DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_UINT,
+        DXGI_FORMAT_R16G16B16A16_FLOAT};
 
   public:
     static constexpr uint32_t g_kSCREEN_WIDTH = 800;

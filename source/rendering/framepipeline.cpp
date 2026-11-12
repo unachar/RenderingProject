@@ -17,7 +17,6 @@
 #include "gpudriven/gpudrivenrenderer.h"
 #include "gpudriven/gpudrivenvalidation.h"
 #include "impostorrenderer.h"
-#include "materialsystem.h"
 
 void FramePipeline::Execute()
 {
@@ -35,9 +34,6 @@ void FramePipeline::Execute()
         graphReady = false;
         importedShadow = RenderTargets::GetShadowDepthResource();
     }
-
-    UINT sceneWidth = GraphicsDevice::GetSceneWidth();
-    UINT sceneHeight = GraphicsDevice::GetSceneHeight();
 
     if (!graphReady)
     {
@@ -61,8 +57,12 @@ void FramePipeline::Execute()
                     RenderProfiler::ScopedEvent profile("GPU Scene", list);
                     GpuScene::Execute(list);
                 });
+            const auto geometry = graph.CreateLogicalResource("Geometry Buffers");
+            const auto sceneDepth = graph.CreateLogicalResource("Scene Depth");
+            const auto velocity = graph.CreateLogicalResource("Velocity");
+            const auto sceneColor = graph.CreateLogicalResource("Scene Color");
+            const auto editorScene = graph.CreateLogicalResource("Editor Scene");
 
-            // ========== Shadow Passes ==========
             graph.AddPass(
                 "Shadow",
                 [shadowDepth, gpuScene](RenderGraph::PassBuilder& builder) {
@@ -70,21 +70,31 @@ void FramePipeline::Execute()
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
                     RenderProfiler::ScopedEvent profile("Shadow", passCommandList);
-                    if (GPUDrivenValidation::IsGpuValidationRun()) return;
-                    if (Raytracing::UsesRaytracedShadows()) return;
-                    
+                    // フェーズ3の GBV は本番の GPU Scene と不透明描画パスを検証する。
+                    // フルフレームの CPU フォールバックと補助パスは別途検証する。
+                    if (GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        return;
+                    }
+                    if (Raytracing::UsesRaytracedShadows())
+                    {
+                        return;
+                    }
                     const UINT shadowLightCount = LightingResources::GetShadowLightCount();
                     for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
                     {
-                        if (!LightingResources::ShouldRenderShadowPass(shadowIndex)) continue;
-                        
+                        if (!LightingResources::ShouldRenderShadowPass(shadowIndex))
+                        {
+                            continue;
+                        }
                         if (LightingResources::UseStaticShadowCache(shadowIndex))
                         {
                             if (LightingResources::ShouldRenderStaticShadowPass(shadowIndex) &&
                                 ScenePasses::BeginShadowPass(shadowIndex, false, true))
                             {
                                 RenderProfiler::ScopedEvent stationary("Stationary Shadow Update", passCommandList);
-                                LightingResources::SetShadowCasterSubset(LightingResources::ShadowCasterSubset::Stationary);
+                                LightingResources::SetShadowCasterSubset(
+                                    LightingResources::ShadowCasterSubset::Stationary);
                                 SystemManager::DrawSystem(RenderPass::ShadowMap, false);
                                 ScenePasses::EndStaticShadowPass();
                             }
@@ -124,14 +134,22 @@ void FramePipeline::Execute()
                 },
                 [](ID3D12GraphicsCommandList* list) {
                     RenderProfiler::ScopedEvent profile("Transparent Shadows", list);
-                    if (GPUDrivenValidation::IsGpuValidationRun() || !TransmittanceShadows::HasCasters()) return;
-                    
+                    if (GPUDrivenValidation::IsGpuValidationRun() || !TransmittanceShadows::HasCasters())
+                    {
+                        return;
+                    }
                     for (UINT shadow = 0; shadow < LightingResources::GetShadowLightCount(); ++shadow)
                     {
-                        if (!LightingResources::ShouldRenderShadowPass(shadow)) continue;
+                        if (!LightingResources::ShouldRenderShadowPass(shadow))
+                        {
+                            continue;
+                        }
                         for (UINT peel = 0; peel < RendererState::g_kTRANSMITTANCE_SHADOW_LAYERS; ++peel)
                         {
-                            if (!TransmittanceShadows::BeginPass(shadow, peel)) continue;
+                            if (!TransmittanceShadows::BeginPass(shadow, peel))
+                            {
+                                continue;
+                            }
                             SystemManager::DrawSystem(RenderPass::TransmittanceShadow, false);
                             TransmittanceShadows::EndPass();
                         }
@@ -141,54 +159,38 @@ void FramePipeline::Execute()
                     LightingResources::UpdateShadowConstantBuffer();
                 });
 
-            // ========== GBuffer / Opaque Pass (Hybrid - Minimal GBuffer) ==========
-            const auto gbufferBaseColorMetal = graph.CreateLogicalResource("GBuffer BaseColor+Metal");
-            const auto gbufferNormalRoughness = graph.CreateLogicalResource("GBuffer Normal+Roughness");
-            const auto gbufferMotionVector = graph.CreateLogicalResource("GBuffer MotionVector");
-            const auto gbufferEmissionAO = graph.CreateLogicalResource("GBuffer Emission+AO");
-            const auto sceneDepth = graph.CreateLogicalResource("Scene Depth");
-            const auto sceneColor = graph.CreateLogicalResource("Scene Color (HDR)");
-            const auto editorScene = graph.CreateLogicalResource("Editor Scene");
-
             graph.AddPass(
-                "GBuffer / Opaque (Hybrid)",
-                [shadowDepth, gbufferBaseColorMetal, gbufferNormalRoughness, 
-                 gbufferMotionVector, gbufferEmissionAO, sceneDepth, gpuScene, transmission]
-                (RenderGraph::PassBuilder& builder) {
+                "GBuffer / Opaque",
+                [shadowDepth, geometry, sceneDepth, gpuScene, transmission](RenderGraph::PassBuilder& builder) {
                     builder.Read(transmission)
                         .Read(gpuScene)
                         .Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Write(gbufferBaseColorMetal)
-                        .Write(gbufferNormalRoughness)
-                        .Write(gbufferMotionVector)
-                        .Write(gbufferEmissionAO)
+                        .Write(geometry)
                         .Write(sceneDepth);
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
-                    RenderProfiler::ScopedEvent profile("GBuffer / Opaque (Hybrid)", passCommandList);
+                    RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
                     const auto submissionStart = chrono::steady_clock::now();
                     if (!GPUDrivenValidation::IsGpuValidationRun())
                     {
+                        // 保留中のインポスターを1件ベイク（レンダーターゲット設定前に行う）。
                         RenderProfiler::ScopedEvent p("GBuffer: Impostor Bake", passCommandList);
                         ImpostorRenderer::ProcessPendingBakes(passCommandList);
                     }
-                    
+                    // 内訳を計測（GBuffer の CPU 時間がどこで使われているかを特定するため）
                     {
                         RenderProfiler::ScopedEvent p("GBuffer: Begin", passCommandList);
                         ScenePasses::BeginScenePass();
                     }
-                    
                     {
                         RenderProfiler::ScopedEvent p("GBuffer: GPU Driven Draw", passCommandList);
                         GPUDrivenRenderer::Draw(passCommandList);
                     }
-                    
                     if (!GPUDrivenValidation::IsGpuValidationRun())
                     {
                         RenderProfiler::ScopedEvent p("GBuffer: Systems (CPU path)", passCommandList);
                         SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
                     }
-                    
                     bool phaseTwo = false;
                     {
                         RenderProfiler::ScopedEvent p("GBuffer: Occlusion Hierarchy", passCommandList);
@@ -211,76 +213,88 @@ void FramePipeline::Execute()
                         RenderProfiler::ScopedEvent p("GBuffer: End", passCommandList);
                         ScenePasses::EndScenePass();
                     }
-                    
                     GPUDrivenRenderer::RecordOpaqueSubmission(
                         chrono::duration<double, milli>(chrono::steady_clock::now() - submissionStart).count());
                 });
 
-            // ========== Velocity Pass ==========
             graph.AddPass(
                 "Velocity",
-                [sceneDepth, gbufferMotionVector](RenderGraph::PassBuilder& builder) {
-                    builder.Read(sceneDepth).Write(gbufferMotionVector);
+                [sceneDepth, velocity](RenderGraph::PassBuilder& builder) {
+                    builder.Read(sceneDepth).Write(velocity);
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
                     RenderProfiler::ScopedEvent profile("Velocity", passCommandList);
-                    if (GPUDrivenValidation::IsGpuValidationRun()) return;
+                    if (GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        return;
+                    }
                     ScenePasses::RenderVelocityBuffer();
                     SystemManager::DrawSystem(RenderPass::Velocity, false);
                     GPUDrivenRenderer::DrawVelocity(passCommandList);
                     ScenePasses::EndVelocityBuffer();
                 });
 
-            // ========== Deferred Lighting Pass (Opaque only) ==========
             graph.AddPass(
-                "Deferred Lighting (Opaque)",
-                [shadowDepth, gbufferBaseColorMetal, gbufferNormalRoughness, 
-                 gbufferMotionVector, gbufferEmissionAO, sceneDepth, sceneColor, gpuScene]
-                (RenderGraph::PassBuilder& builder) {
+                "Deferred / Forward+ / PostProcess",
+                [shadowDepth, geometry, sceneDepth, velocity, sceneColor, editorScene,
+                 gpuScene](RenderGraph::PassBuilder& builder) {
                     builder.Read(gpuScene)
                         .Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Read(gbufferBaseColorMetal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Read(gbufferNormalRoughness, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Read(gbufferMotionVector, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Read(gbufferEmissionAO, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Read(sceneDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                        .Write(sceneColor);
+                        .Read(geometry)
+                        .Read(sceneDepth)
+                        .Read(velocity)
+                        .Write(sceneColor)
+                        .Write(editorScene);
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
-                    RenderProfiler::ScopedEvent profile("Deferred Lighting (Opaque)", passCommandList);
-                    if (GPUDrivenValidation::IsGpuValidationRun()) return;
-                    
-                    ScenePasses::BeginDeferredLightingPass();
+                    RenderProfiler::ScopedEvent profile("Deferred / Forward+ / PostProcess", passCommandList);
+                    if (GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        return;
+                    }
                     PostProcessSystem postProcess;
                     postProcess.Draw(RenderPass::PrimaryScene, false);
-                    ScenePasses::EndDeferredLightingPass();
                 });
 
-            // ========== Post Process / AntiAliasing ==========
             graph.AddPass(
-                "PostProcess / AntiAliasing",
-                [sceneDepth, gbufferMotionVector, sceneColor, editorScene]
-                (RenderGraph::PassBuilder& builder) {
-                    builder.Read(sceneDepth)
-                           .Read(gbufferMotionVector, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-                           .ReadWrite(sceneColor)
-                           .ReadWrite(editorScene);
+                "Editor Overlay / Niagara",
+                [sceneColor, editorScene](RenderGraph::PassBuilder& builder) {
+                    builder.Read(sceneColor).ReadWrite(editorScene);
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
-                    RenderProfiler::ScopedEvent profile("PostProcess / AntiAliasing", passCommandList);
-                    if (GPUDrivenValidation::IsGpuValidationRun()) return;
+                    RenderProfiler::ScopedEvent profile("Editor Overlay / Niagara", passCommandList);
+                    if (GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        return;
+                    }
+                    ScenePasses::BeginEditorSceneOverlayPass();
+                    SystemManager::DrawSystem(RenderPass::OverlayScene, false);
+                    NiagaraScene::Update();
+                    NiagaraScene::Draw();
+                    ScenePasses::EndEditorSceneOverlayPass();
+                });
+
+            graph.AddPass(
+                "AntiAliasing",
+                [sceneDepth, velocity, editorScene](RenderGraph::PassBuilder& builder) {
+                    builder.Read(sceneDepth).Read(velocity).ReadWrite(editorScene);
+                },
+                [](ID3D12GraphicsCommandList* passCommandList) {
+                    RenderProfiler::ScopedEvent profile("AntiAliasing", passCommandList);
+                    if (GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        return;
+                    }
                     PostProcessPass::ApplyAntiAliasing();
-                    PostProcessSystem postProcess;
-                    postProcess.Draw(RenderPass::PrimaryScene, false);
                 });
         }
-    }
 
-    graphReady = graph.Compile();
-    if (!graphReady)
-    {
-        Debug::Log("ERROR: Frame RenderGraph compile failed: %s\n", graph.GetLastError().c_str());
-        return;
+        graphReady = graph.Compile();
+        if (!graphReady)
+        {
+            Debug::Log("ERROR: Frame RenderGraph compile failed: %s\n", graph.GetLastError().c_str());
+            return;
+        }
     }
 
     if (!graph.Execute(commandList))

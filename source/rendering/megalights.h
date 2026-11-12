@@ -808,16 +808,6 @@ class MegaLights final
 
     // ---- グラフィックス（ポストプロセスのルートシグネチャ 28〜34）
     // 構築していないフレームでも、必ず有効なアドレスを入れる（定数の「有効」フラグは 0）
-    static ID3D12Resource* GetLightUploadBuffer()
-    {
-        return s_LightUpload.Get();
-    }
-
-    static UINT64 GetLightStride()
-    {
-        return kLightStride;
-    }
-
     static void BindGraphics(ID3D12GraphicsCommandList* commands, UINT lightsParameter, UINT cellsParameter,
                              UINT indicesParameter, UINT constantsParameter, UINT samplesParameter,
                              UINT accumulationParameter, UINT referenceParameter, UINT rawParameter,

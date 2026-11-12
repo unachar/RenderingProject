@@ -16,18 +16,15 @@ class ScenePasses : protected RenderTargets
     static void EndShadowPass();
     static void EndShadowPassBatch();
     static void BeginEditorSceneOverlayPass();
-    static void BeginHdrTransparentPass();
-    static void EndHdrTransparentPass();
+    static void DrawForwardPlusTransparency();
     static void EndEditorSceneOverlayPass();
     static void BeginScenePass();
     static void EndScenePass();
     static bool BuildOcclusionHierarchyAndBeginPhaseTwo();
     static void RenderVelocityBuffer();
     static void EndVelocityBuffer();
-    
-    // Hybrid Pipeline passes
-    static void BeginDeferredLightingPass();
-    static void EndDeferredLightingPass();
-    static void BeginForwardPlusPass();
-    static void EndForwardPlusPass();
+
+  private:
+    static void BeginHdrTransparentPass();
+    static void EndHdrTransparentPass();
 };

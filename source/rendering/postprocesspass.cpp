@@ -26,7 +26,6 @@
 #include "screenspaceeffects.h"
 #include "occlusionculling.h"
 #include "materialbindings.h"
-#include "systemmanager.h"
 #include "advancedeffects.h"
 #include "atmospherelut.h"
 #include "renderquality.h"
@@ -397,12 +396,9 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
         m_CommandList->RSSetViewports(1, &m_Viewport);
         m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 
-        {
-            RenderProfiler::ScopedEvent profile("HDR Transparent", m_CommandList.Get());
-            ScenePasses::BeginHdrTransparentPass();
-            SystemManager::DrawSystem(RenderPass::TransparentScene, false);
-            ScenePasses::EndHdrTransparentPass();
-        }
+        // Use the same light grids as the deferred pass. The forward shaders select
+        // lights using each transparent fragment's position before OIT composition.
+        ScenePasses::DrawForwardPlusTransparency();
         D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
             GetRenderTarget(RenderTargetType::Scene).Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -423,9 +419,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
         auto toTarget = CD3DX12_RESOURCE_BARRIER::Transition(scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                                                              D3D12_RESOURCE_STATE_RENDER_TARGET);
         m_CommandList->ResourceBarrier(1, &toTarget);
-        ScenePasses::BeginHdrTransparentPass();
-        SystemManager::DrawSystem(RenderPass::TransparentScene, false);
-        ScenePasses::EndHdrTransparentPass();
+        ScenePasses::DrawForwardPlusTransparency();
         auto toShader = CD3DX12_RESOURCE_BARRIER::Transition(scene, D3D12_RESOURCE_STATE_RENDER_TARGET,
                                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         m_CommandList->ResourceBarrier(1, &toShader);

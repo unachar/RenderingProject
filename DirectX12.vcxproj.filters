@@ -297,9 +297,6 @@
     <ClCompile Include="source\systems\instancingsystem.cpp">
       <Filter>systems</Filter>
     </ClCompile>
-    <ClCompile Include="source\systems\forwardplussystem.cpp">
-      <Filter>systems</Filter>
-    </ClCompile>
     <ClCompile Include="source\systems\postprocesssystem.cpp">
       <Filter>systems</Filter>
     </ClCompile>
@@ -645,9 +642,6 @@
       <Filter>systems</Filter>
     </ClInclude>
     <ClInclude Include="source\systems\instancingsystem.h">
-      <Filter>systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\forwardplussystem.h">
       <Filter>systems</Filter>
     </ClInclude>
     <ClInclude Include="source\systems\postprocesssystem.h">
