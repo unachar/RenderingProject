@@ -18,6 +18,7 @@
 #include "materialpreview.h"
 #include "materialgraphshader.h"
 #include "assetthumbnailmanager.h"
+#include "startupsplash.h"
 #include <chrono>
 
 extern "C"
@@ -190,6 +191,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     filesystem::create_directories("Data/Logs");
     CachePaths::Initialize();
     WriteGraphicsLog("Step: WinMain begin\n");
+    StartupSplash splash(hInstance, !automatedRun && nCmdShow != SW_HIDE);
 
     const char className[] = "DX12AI_WindowClass";
     WNDCLASSA wc = {0};
@@ -219,15 +221,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     }
     WriteGraphicsLog("Step: window created\n");
     DragAcceptFiles(hwnd, TRUE);
+    splash.SetProgress(5);
 
     if (!GraphicsDevice::Init(hwnd))
     {
+        splash.Close();
         if (!automatedRun)
         {
             MessageBoxA(hwnd, "Failed to initialize renderer.", "Error", MB_OK | MB_ICONERROR);
         }
         return 1;
     }
+    splash.SetProgress(40);
 
     RenderProfiler::SetPipelineStatisticsForced(automatedRun);
     if (renderingBenchmark)
@@ -238,8 +243,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     PerformanceGovernor::GetOptions().Enabled = !automatedRun;
     WriteGraphicsLog("Step: Game::Init\n");
     Game::Init();
+    splash.SetProgress(55);
     WriteGraphicsLog("Step: Game::Create\n");
     Game::Create();
+    splash.SetProgress(75);
     MSG msg = {0};
     // Validation sequences own their frames. Normal startup and its smoke test
     // prepare the restored editor while the main window is still hidden.
@@ -261,6 +268,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             WriteGraphicsLog("Startup material graph preview: CPU fallback (%s)\n", MaterialGraphGpu::LastError());
         }
         WriteGraphicsLog("Step: startup assets prepared\n");
+        splash.SetProgress(90);
         const auto preparationStart = std::chrono::steady_clock::now();
         unsigned preparedFrames = 0;
         for (;;)
@@ -296,6 +304,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
     }
+    splash.Complete();
     ShowWindow(hwnd, nCmdShow);
     WriteGraphicsLog("Step: window shown\n");
     WriteGraphicsLog("Step: initialization complete; entering main loop\n");

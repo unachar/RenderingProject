@@ -841,6 +841,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\scene\light.cpp" />
     <ClCompile Include="source\systems\lightsystem.cpp" />
     <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\startupsplash.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="source\models\modelmanager.cpp" />
     <ClCompile Include="source\systems\movementsystem.cpp" />
     <ClCompile Include="source\systems\cameracontrolsystem.cpp" />
@@ -936,6 +939,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\scene\light.h" />
     <ClInclude Include="source\systems\lightsystem.h" />
     <ClInclude Include="source\main.h" />
+    <ClInclude Include="source\startupsplash.h" />
     <ClInclude Include="source\models\materialpartresolver.h" />
     <ClInclude Include="source\models\modelmanager.h" />
     <ClInclude Include="source\systems\movementsystem.h" />

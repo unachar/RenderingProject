@@ -207,6 +207,9 @@
     <ClCompile Include="source\main.cpp">
       <Filter>core</Filter>
     </ClCompile>
+    <ClCompile Include="source\startupsplash.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
     <ClCompile Include="source\models\modelmanager.cpp">
       <Filter>models</Filter>
     </ClCompile>
@@ -534,6 +537,9 @@
       <Filter>systems</Filter>
     </ClInclude>
     <ClInclude Include="source\main.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\startupsplash.h">
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="source\models\materialpartresolver.h">
