@@ -258,6 +258,14 @@ namespace
 {
     int g_AssetBrowserItemCount = 0; // 前のフレームの一覧の件数（ツールバーの行に表示）
 
+    bool IsGraphBakeDirectory(const string& name)
+    {
+        constexpr char suffix[] = "_GraphBake";
+        constexpr size_t suffixLength = sizeof(suffix) - 1;
+        return name.size() >= suffixLength &&
+               _stricmp(name.c_str() + name.size() - suffixLength, suffix) == 0;
+    }
+
     // #8 付属ファイル（元のアセットの横に自動で作られるもの）
     bool IsCompanionFile(const string& name)
     {
@@ -431,7 +439,7 @@ namespace
             child.Path = it->path();
             const auto u8 = child.Path.filename().u8string();
             child.Name.assign(u8.begin(), u8.end());
-            if (!child.Name.empty() && child.Name[0] == '.')
+            if ((!child.Name.empty() && child.Name[0] == '.') || IsGraphBakeDirectory(child.Name))
             {
                 continue;
             }
@@ -933,7 +941,8 @@ void ImGuiManager::DrawAssetBrowserWindow()
         listedFilter = currentFilter;
         for (const auto& entry : listing.Items())
         {
-            if (!assetFilter.PassFilter(entry.Name.c_str()) ||
+            if ((entry.IsDirectory && IsGraphBakeDirectory(entry.Name)) ||
+                !assetFilter.PassFilter(entry.Name.c_str()) ||
                 !PassAssetTypeFilter(entry, browserPrefs.AssetTypeFilter) ||
                 (browserPrefs.AssetHideCompanions && !entry.IsDirectory && IsCompanionFile(entry.Name)))
             {

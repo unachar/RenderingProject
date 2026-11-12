@@ -44,6 +44,7 @@ struct SplashView
     void Paint(HDC dc)
     {
         using namespace Gdiplus;
+        const int progress = percent.load();
         {
             Graphics graphics(&frame);
             graphics.Clear(Color(24, 27, 33));
@@ -53,13 +54,43 @@ struct SplashView
                 const auto elapsed = (GetTickCount64() - startedAt) % 2400;
                 graphics.SetInterpolationMode(InterpolationModeHighQualityBilinear);
                 graphics.TranslateTransform(Width / 2.0f, 118.0f);
-                graphics.RotateTransform(static_cast<float>(elapsed) * 360.0f / revolutionMs);
+                if (progress < 100)
+                {
+                    graphics.RotateTransform(static_cast<float>(elapsed) * 360.0f / revolutionMs);
+                }
                 graphics.DrawImage(&cat, -ImageSize / 2, -ImageSize / 2, ImageSize, ImageSize);
                 graphics.ResetTransform();
             }
 
+            if (progress == 100 && hasImage)
+            {
+                GraphicsPath bubble;
+                bubble.AddArc(48, 74, 20, 20, 180, 90);
+                bubble.AddArc(124, 74, 20, 20, 270, 90);
+                bubble.AddLine(144, 94, 144, 100);
+                bubble.AddLine(144, 100, 151, 108);
+                bubble.AddLine(151, 108, 144, 112);
+                bubble.AddArc(124, 104, 20, 20, 0, 90);
+                bubble.AddArc(48, 104, 20, 20, 90, 90);
+                bubble.CloseFigure();
+                SolidBrush bubbleFill(Color(250, 249, 242));
+                Pen bubbleOutline(Color(55, 58, 64), 2.0f);
+                graphics.SetSmoothingMode(SmoothingModeAntiAlias);
+                graphics.FillPath(&bubbleFill, &bubble);
+                graphics.DrawPath(&bubbleOutline, &bubble);
+
+                Font bubbleFont(L"Meiryo", 23.0f, FontStyleBold, UnitPixel);
+                SolidBrush bubbleText(Color(35, 38, 43));
+                StringFormat bubbleFormat;
+                bubbleFormat.SetAlignment(StringAlignmentCenter);
+                bubbleFormat.SetLineAlignment(StringAlignmentCenter);
+                graphics.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+                graphics.DrawString(L"\u30e8\u30b7!", -1, &bubbleFont,
+                                    RectF(48, 74, 96, 50), &bubbleFormat, &bubbleText);
+            }
+
             wchar_t label[8]{};
-            swprintf_s(label, L"%d%%", percent.load());
+            swprintf_s(label, L"%d%%", progress);
             Font font(L"Segoe UI", 24.0f, FontStyleRegular, UnitPixel);
             SolidBrush text(Color(240, 242, 246));
             StringFormat format;
@@ -141,7 +172,7 @@ void ShowSplash(HINSTANCE instance, HANDLE stopEvent, const std::atomic<int>& pe
         {
             RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
             // Keep the final percentage visible briefly before showing the editor.
-            Sleep(120);
+            Sleep(700);
         }
         DestroyWindow(window);
     }

@@ -109,6 +109,15 @@
     <Filter Include="shader\hlsl\virtualgeometry">
       <UniqueIdentifier>{2705ad98-8ccd-4175-aa94-c0db65a90de3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="effects">
+      <UniqueIdentifier>{c36c6d2b-e2b8-4bda-bda0-42f9b91cce87}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\imgui-node-editor">
+      <UniqueIdentifier>{519a92ef-44a0-4a18-b580-880983aca7aa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\zstd">
+      <UniqueIdentifier>{b1bed816-248b-4718-bc25-50b44bc07612}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="External\ImGUI\imgui.cpp">
@@ -1000,9 +1009,6 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Filter Include="source\procedural">
-      <Filter>core</Filter>
-    </Filter>
     <ClCompile Include="source\editor\editorprocedural.cpp">
       <Filter>editor</Filter>
     </ClCompile>
@@ -1013,7 +1019,7 @@
       <Filter>procedural</Filter>
     </ClCompile>
     <ClInclude Include="source\procedural\noise.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClInclude Include="source\procedural\proceduralmath.h">
       <Filter>procedural</Filter>
@@ -1642,12 +1648,321 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="External\zstd\zstd.c" />
-    <ClInclude Include="source\shadercachecodec.h" />
+    <ClCompile Include="External\zstd\zstd.c">
+      <Filter>External\zstd</Filter>
+    </ClCompile>
+    <ClInclude Include="source\shadercachecodec.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="source\assets\texturecachecodec.h"><Filter>assets</Filter></ClInclude>
     <ClInclude Include="source\assets\texturecachestorage.h"><Filter>assets</Filter></ClInclude>
-    <ClInclude Include="External\zstd\zstd.h" />
-    <ClInclude Include="External\zstd\zstd_errors.h" />
-    <None Include="External\zstd\LICENSE" />
+    <ClInclude Include="External\zstd\zstd.h">
+      <Filter>External\zstd</Filter>
+    </ClInclude>
+    <ClInclude Include="External\zstd\zstd_errors.h">
+      <Filter>External\zstd</Filter>
+    </ClInclude>
+    <None Include="External\zstd\LICENSE">
+      <Filter>External\zstd</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="External\imgui-node-editor\crude_json.cpp">
+      <Filter>External\imgui-node-editor</Filter>
+    </ClCompile>
+    <ClCompile Include="External\imgui-node-editor\imgui_canvas.cpp">
+      <Filter>External\imgui-node-editor</Filter>
+    </ClCompile>
+    <ClCompile Include="External\imgui-node-editor\imgui_node_editor.cpp">
+      <Filter>External\imgui-node-editor</Filter>
+    </ClCompile>
+    <ClCompile Include="External\imgui-node-editor\imgui_node_editor_api.cpp">
+      <Filter>External\imgui-node-editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\assets\materialgraph.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\assets\materialgraphcompiler.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\assets\materialgraphevaluator.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\celestialocclusionvalidation.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\givalidation.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\temporallightingvalidation.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorpreferences.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorshell.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorworkspace.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorworkspaces.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\materialgraphbake.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\materialgrapheditor.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\materialgraphpreview.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\materialgraphtextures.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\niagaragraph.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\niagarawindow.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\proceduralio.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\proceduralstudiowindow.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\sequencerbridge.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\sequencerwaveform.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\sequencerwindow.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\effects\niagara.cpp">
+      <Filter>effects</Filter>
+    </ClCompile>
+    <ClCompile Include="source\effects\niagaragpu.cpp">
+      <Filter>effects</Filter>
+    </ClCompile>
+    <ClCompile Include="source\effects\niagaragpugraph.cpp">
+      <Filter>effects</Filter>
+    </ClCompile>
+    <ClCompile Include="source\effects\niagarascene.cpp">
+      <Filter>effects</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\fastgltfimport.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\fbxaclclip.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\procedural\proceduralnoisecache.cpp">
+      <Filter>procedural</Filter>
+    </ClCompile>
+    <ClCompile Include="source\procedural\proceduralstudio.cpp">
+      <Filter>procedural</Filter>
+    </ClCompile>
+    <ClCompile Include="source\procedural\proceduraltexturegpu.cpp">
+      <Filter>procedural</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\colormanagement.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\ktxbasis.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\lumensurfacecache.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\materialgraphshader.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\niagararenderer.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\optixdenoiser.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\optixinterop.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\assets\materialgraph.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\assets\materialgraphcompiler.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\assets\materialgraphevaluator.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\assets\materialgraphmath.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\assets\noiseasset.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\cachefile.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="source\cachepaths.h">
+      <Filter>utils</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\celestialocclusionvalidation.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\givalidation.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\temporallightingvalidation.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\viewportinputgate.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\editorpreferences.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\editorscenenavigation.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\editorshell.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\editorworkspace.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\materialgraphbake.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\materialgrapheditor.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\materialgraphpreview.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\materialgraphtextures.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\niagaragraph.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\niagarawindow.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\proceduralio.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\proceduralstudiowindow.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\sequencerbackend.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\sequencerbridge.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\sequencerwaveform.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\sequencerwindow.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\timelinewidgets.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\effects\niagara.h">
+      <Filter>effects</Filter>
+    </ClInclude>
+    <ClInclude Include="source\effects\niagaracomponent.h">
+      <Filter>effects</Filter>
+    </ClInclude>
+    <ClInclude Include="source\effects\niagaragpu.h">
+      <Filter>effects</Filter>
+    </ClInclude>
+    <ClInclude Include="source\effects\niagaragpugraph.h">
+      <Filter>effects</Filter>
+    </ClInclude>
+    <ClInclude Include="source\effects\niagarascene.h">
+      <Filter>effects</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\timelinecurve.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\fastgltfimport.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\fbxaclclip.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\gltfdraco.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\procedural\proceduralstudio.h">
+      <Filter>procedural</Filter>
+    </ClInclude>
+    <ClInclude Include="source\procedural\proceduraltexturegpu.h">
+      <Filter>procedural</Filter>
+    </ClInclude>
+    <ClInclude Include="source\procedural\proceduraltextureparams.h">
+      <Filter>procedural</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpumemorybudget.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\ktxbasis.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\lumencachemath.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\lumenscheduler.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\lumensurfacecache.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\materialgraphshader.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\niagararenderer.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\optixdenoiser.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\optixinterop.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\stbn.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <None Include="asset\Noise\stbn-vec2-128x128x64.rg8">
+      <Filter>resources</Filter>
+    </None>
+    <None Include="shader\hlsl\ProceduralTexture.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\SkinningNormal.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\StageLighting.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\Stbn.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\ToonLighting.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\ToonOutlineProjection.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\niagaraparticles.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </None>
   </ItemGroup>
 </Project>

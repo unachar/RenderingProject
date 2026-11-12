@@ -305,7 +305,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
     }
     splash.Complete();
-    ShowWindow(hwnd, nCmdShow);
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if (automatedRun || nCmdShow == SW_HIDE || !GetWindowPlacement(hwnd, &placement))
+    {
+        ShowWindow(hwnd, nCmdShow);
+    }
+    else
+    {
+        placement.showCmd = SW_SHOWMAXIMIZED;
+        if (!SetWindowPlacement(hwnd, &placement))
+        {
+            ShowWindow(hwnd, nCmdShow);
+        }
+    }
     WriteGraphicsLog("Step: window shown\n");
     WriteGraphicsLog("Step: initialization complete; entering main loop\n");
 
