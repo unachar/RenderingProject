@@ -329,7 +329,7 @@ float4 ShadeForward(in PSInput3D In)
     }
     if (UseTexture != 0)
     {
-        baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
+        baseColor *= SampleMaterialBiasCommon(g_Texture, g_SamplerState, materialUv);
     }
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
@@ -366,7 +366,7 @@ float4 ShadeForward(in PSInput3D In)
     float3 surfaceNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
+        float3 tangentNormal = DecodeTangentNormalSample(SampleMaterialBiasCommon(g_NormalTexture, g_SamplerState, materialUv));
         surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord,
                                              ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -689,6 +689,7 @@ ForwardOutput main(in PSInput3D In)
     return output;
 }
 #endif
+
 
 
 

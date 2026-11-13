@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
 #include "proceduralstudiowindow.h"
 #include "proceduralstudio.h"
@@ -1063,6 +1063,98 @@ namespace ProcStudioEditorDetail
         return changed;
     }
 
+    // リアルな地形用の形状・侵食・配色。スライダーは操作中も変更を返し、プレビューを更新する。
+    bool TerrainShapeWidgets(ProcStudio::TerrainShapeParams& t, bool terrainColors)
+    {
+        using ProcStudio::TerrainPreset;
+        bool changed = false;
+        constexpr ImGuiSliderFlags clamp = ImGuiSliderFlags_AlwaysClamp;
+        const auto tip = [](const char* text) {
+            ImGui::SetItemTooltip("%s", text);
+        };
+        if (ImGui::BeginCombo("地形プリセット", "プリセットを適用..."))
+        {
+            for (int i = 0; i < static_cast<int>(TerrainPreset::Count); ++i)
+            {
+                const auto preset = static_cast<TerrainPreset>(i);
+                if (ImGui::Selectable(ProcStudio::TerrainPresetName(preset)))
+                {
+                    ProcStudio::ApplyTerrainPreset(t, preset);
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        tip("形状・侵食・配色をまとめて設定します。ノイズ設定は変更しません。");
+
+        if (ImGui::TreeNodeEx("地形の形状", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            changed |= ImGui::SliderFloat("大域ワープ", &t.MacroWarp, 0.0f, 2.0f, "%.2f", clamp);
+            tip("低周波のドメインワープで、尾根や谷を自然に蛇行させます。");
+            changed |= ImGui::SliderFloat("稜線の鋭さ", &t.RidgeBlend, 0.0f, 1.0f, "%.2f", clamp);
+            tip("リッジノイズを合成し、鋭い稜線を持つ山脈にします。");
+            changed |= ImGui::SliderFloat("山地/平地の分布", &t.MountainMask, 0.0f, 1.0f, "%.2f", clamp);
+            tip("低周波マスクで山地と平地を分けます。0 で全域が同じ起伏になります。");
+            ImGui::BeginDisabled(t.MountainMask <= 0.0f);
+            changed |= ImGui::SliderFloat("分布の細かさ", &t.MaskFrequency, 0.2f, 4.0f, "%.2f", clamp);
+            ImGui::EndDisabled();
+            changed |= ImGui::SliderFloat("高さカーブ", &t.Exponent, 0.3f, 4.0f, "%.2f", clamp);
+            tip("1 より大きいと谷が広く平らになり、峰が鋭くなります。1 未満は台地状になります。");
+            changed |= ImGui::SliderFloat("岩肌の細部", &t.MicroDetail, 0.0f, 1.0f, "%.2f", clamp);
+            tip("高い場所に細かな岩の凹凸を加えます。");
+            changed |= ImGui::SliderInt("段丘の段数", &t.TerraceSteps, 0, 16, t.TerraceSteps == 0 ? "なし" : "%d", clamp);
+            ImGui::BeginDisabled(t.TerraceSteps == 0);
+            changed |= ImGui::SliderFloat("段丘の強さ", &t.TerraceStrength, 0.0f, 1.0f, "%.2f", clamp);
+            ImGui::EndDisabled();
+            changed |= ImGui::SliderFloat("海面", &t.SeaLevel, 0.0f, 0.6f, t.SeaLevel <= 0.0f ? "なし" : "%.2f", clamp);
+            tip("正規化した高さで指定します。海面より下は海底として平らになります。");
+            ImGui::BeginDisabled(t.SeaLevel <= 0.0f);
+            changed |= ImGui::SliderFloat("海底の平坦化", &t.SeaFlatten, 0.0f, 1.0f, "%.2f", clamp);
+            ImGui::EndDisabled();
+            changed |= ImGui::SliderFloat("外周の沈み込み", &t.EdgeFalloff, 0.0f, 1.0f,
+                                          t.EdgeFalloff <= 0.0f ? "なし" : "%.2f", clamp);
+            tip("地形全体の外周を下げて島にします。値は沈み込みの幅です。");
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNodeEx("侵食"))
+        {
+            ImGui::SeparatorText("水食（水滴）");
+            changed |= ImGui::SliderFloat("水滴の量", &t.HydraulicDensity, 0.0f, 2.0f,
+                                          t.HydraulicDensity <= 0.0f ? "なし" : "%.2f", clamp);
+            tip("頂点 1 つあたりの水滴数です。谷筋や扇状地ができます。値が大きいほど生成に時間がかかります。");
+            ImGui::BeginDisabled(t.HydraulicDensity <= 0.0f);
+            changed |= ImGui::SliderFloat("侵食率", &t.ErosionRate, 0.0f, 1.0f, "%.2f", clamp);
+            changed |= ImGui::SliderFloat("堆積率", &t.DepositionRate, 0.0f, 1.0f, "%.2f", clamp);
+            changed |= ImGui::SliderFloat("運搬容量", &t.SedimentCapacity, 0.5f, 16.0f, "%.1f", clamp);
+            changed |= ImGui::SliderFloat("蒸発率", &t.Evaporation, 0.0f, 0.2f, "%.3f", clamp);
+            changed |= ImGui::SliderFloat("慣性", &t.Inertia, 0.0f, 0.95f, "%.2f", clamp);
+            tip("大きいほど水が直進し、なめらかな谷になります。");
+            ImGui::EndDisabled();
+            ImGui::SeparatorText("熱侵食（崩落）");
+            changed |= ImGui::SliderInt("反復回数", &t.ThermalIterations, 0, 64,
+                                        t.ThermalIterations == 0 ? "なし" : "%d", clamp);
+            tip("安息角より急な斜面を崩し、崖下に崖錐を作ります。");
+            ImGui::BeginDisabled(t.ThermalIterations == 0);
+            changed |= ImGui::SliderFloat("安息角", &t.TalusAngle, 10.0f, 80.0f, "%.0f°", clamp);
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("プレビューは分割数を下げて計算するため、侵食の見え方は保存結果と多少異なります。");
+            ImGui::TreePop();
+        }
+
+        if (terrainColors && ImGui::TreeNodeEx("地形の配色"))
+        {
+            changed |= ImGui::SliderFloat("砂地の上限", &t.SandLine, 0.0f, 1.0f, "%.2f", clamp);
+            changed |= ImGui::SliderFloat("岩場の高さ", &t.RockLine, 0.0f, 1.2f, "%.2f", clamp);
+            changed |= ImGui::SliderFloat("雪線", &t.SnowLine, 0.0f, 1.2f, "%.2f", clamp);
+            tip("1 より大きくすると雪が積もりません。");
+            changed |= ImGui::SliderFloat("岩肌になる傾斜", &t.RockSlope, 0.1f, 1.5f, "%.2f", clamp);
+            tip("小さいほど緩い斜面でも岩肌になります。");
+            ImGui::TreePop();
+        }
+        return changed;
+    }
+
     bool ModelWidgets(ModelParams& m)
     {
         bool changed = false;
@@ -1109,8 +1201,9 @@ namespace ProcStudioEditorDetail
                                         stepsX * stepsZ * 2);
                     ImGui::TextWrapped("同じノイズの続きを生成し、全体を1つのメッシュとして保存します。");
                 }
-                changed |= ImGui::SliderFloat("高さ", &m.Height, 0.0f, 30.0f);
+                changed |= ImGui::SliderFloat("高さ", &m.Height, 0.0f, 100.0f);
                 changed |= ImGui::Checkbox("高度・傾斜で色分け", &m.TerrainColors);
+                changed |= TerrainShapeWidgets(m.Terrain, m.TerrainColors);
                 if (ImGui::TreeNodeEx("地形ノイズ", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     changed |= NoiseWidgets(m.Noise);
@@ -2710,4 +2803,5 @@ void ProceduralStudioWindow::Shutdown()
 {
     ProcStudioEditorDetail::ShutdownWindow();
 }
+
 

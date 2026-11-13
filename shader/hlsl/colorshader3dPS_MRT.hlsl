@@ -15,7 +15,7 @@ GBufferOutput main(in PSInput3D In)
     float3 position = In.Position.xyz / In.Position.w;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
+        float3 tangentNormal = DecodeTangentNormalSample(SampleMaterialBiasCommon(g_NormalTexture, g_SamplerState, In.TexCoord));
         float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
         float3 bitangent =
             SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
@@ -25,7 +25,7 @@ GBufferOutput main(in PSInput3D In)
 
     if (UseTexture)
     {
-        baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
+        baseColor *= SampleMaterialBiasCommon(g_Texture, g_SamplerState, In.TexCoord);
     }
 
     clip(baseColor.a - 0.01f);
@@ -46,3 +46,4 @@ GBufferOutput main(in PSInput3D In)
 
     return output;
 }
+

@@ -180,7 +180,7 @@ class RendererState
     static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 10 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 +
                                                      16 + 3 + g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
                                                      g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2 + g_kMAX_SHADER_LIGHTS +
-                                                     6 + 8 * 2;
+                                                     6 + 8 * 2 + 1; // +1：TextureSamplingParams（Mip LOD バイアス）
     static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
     static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 784 + 511) & ~511;
     static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
@@ -333,4 +333,5 @@ class RendererState
     static UINT m_DynamicVertexOffset;
     static UINT m_TransientCbSlot;
 };
+
 

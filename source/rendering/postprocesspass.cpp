@@ -663,11 +663,39 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
                 CD3DX12_RESOURCE_BARRIER::Transition(output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                                                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS)};
             m_CommandList->ResourceBarrier(_countof(barriers), barriers);
+            // DLSS 後段シャープン（RCAS）：DLSS をスクラッチ（表示解像度・同フォーマット）へ出力し、
+            // RCAS でスクラッチ → EditorScene へ書く。コピーは増えない（RCAS が出力を兼ねる）。
+            const float sharpnessStops = DlssUpscaler::GetSharpnessStops();
+            ID3D12Resource* sharpenScratch =
+                sharpnessStops >= 0.0f ? SpatialUpscaler::GetSharpenScratch(m_Width, m_Height, m_SceneColorFormat)
+                                       : nullptr;
+            if (sharpenScratch)
+            {
+                const auto toUav = CD3DX12_RESOURCE_BARRIER::Transition(
+                    sharpenScratch, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                m_CommandList->ResourceBarrier(1, &toUav);
+            }
             {
                 RenderProfiler::ScopedEvent profile("DLSS Super Resolution", m_CommandList.Get());
                 dlssRendered = DlssUpscaler::Execute(
                     m_CommandList.Get(), m_FrameIndex, upscaleSource, upscaleSourceSrv, depth, velocity,
-                    m_GBufferSrvHandles[static_cast<UINT>(GBufferType::VELOCITY)], output, m_EditorSceneUavHandle);
+                    m_GBufferSrvHandles[static_cast<UINT>(GBufferType::VELOCITY)],
+                    sharpenScratch ? sharpenScratch : output,
+                    sharpenScratch ? SpatialUpscaler::GetSharpenScratchUav() : m_EditorSceneUavHandle);
+            }
+            if (sharpenScratch)
+            {
+                const auto toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                    sharpenScratch, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                m_CommandList->ResourceBarrier(1, &toSrv);
+                if (dlssRendered)
+                {
+                    RenderProfiler::ScopedEvent profile("DLSS Sharpen (RCAS)", m_CommandList.Get());
+                    dlssRendered = SpatialUpscaler::ExecuteRcas(m_CommandList.Get(), m_EditorSceneUavHandle, m_Width,
+                                                                m_Height, sharpnessStops);
+                }
             }
             for (auto& barrier : barriers)
             {
@@ -960,3 +988,4 @@ void PostProcessPass::ApplyAntiAliasing()
         m_CommandList->ResourceBarrier(1, &toEditorFinalSrv);
     }
 }
+

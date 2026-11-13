@@ -454,3 +454,40 @@ bool SpatialUpscaler::Execute(ID3D12GraphicsCommandList* commandList, D3D12_GPU_
     }
     return false;
 }
+
+ID3D12Resource* SpatialUpscaler::GetSharpenScratch(UINT outputWidth, UINT outputHeight, DXGI_FORMAT format)
+{
+    if (!g_FsrScratch || !g_FsrRcasPso || !g_RootSignature || g_OutputWidth != outputWidth ||
+        g_OutputHeight != outputHeight || g_OutputFormat != format)
+    {
+        return nullptr;
+    }
+    return g_FsrScratch.Get();
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE SpatialUpscaler::GetSharpenScratchUav()
+{
+    return GpuHandle(RendererState::g_kFSR_SCRATCH_UAV_INDEX);
+}
+
+bool SpatialUpscaler::ExecuteRcas(ID3D12GraphicsCommandList* commandList, D3D12_GPU_DESCRIPTOR_HANDLE outputUav,
+                                  UINT outputWidth, UINT outputHeight, float sharpnessStops)
+{
+    if (!commandList || !g_FsrScratch || !g_FsrRcasPso || !g_RootSignature || outputUav.ptr == 0)
+    {
+        return false;
+    }
+    ID3D12DescriptorHeap* heaps[] = {g_DescriptorHeap.Get()};
+    commandList->SetDescriptorHeaps(_countof(heaps), heaps);
+    commandList->SetComputeRootSignature(g_RootSignature.Get());
+    FsrConstants constants{};
+    FsrRcasCon(constants.Const0, (std::clamp)(sharpnessStops, 0.0f, 2.0f));
+    constants.DispatchInfo[0] = outputWidth;
+    constants.DispatchInfo[1] = outputHeight;
+    commandList->SetPipelineState(g_FsrRcasPso.Get());
+    commandList->SetComputeRootDescriptorTable(0, GpuHandle(RendererState::g_kFSR_SCRATCH_SRV_INDEX));
+    commandList->SetComputeRootDescriptorTable(1, outputUav);
+    commandList->SetComputeRoot32BitConstants(4, 20, &constants, 0);
+    commandList->Dispatch((outputWidth + 15u) / 16u, (outputHeight + 15u) / 16u, 1);
+    return true;
+}

@@ -5,6 +5,7 @@
 #include "envflags.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
+#include "texturemipbias.h"
 #include "lightingresources.h"
 #include "graphicsdevice.h"
 #include "shaderpaths.h"
@@ -147,6 +148,8 @@ namespace
         XMFLOAT4 LiveToonStyle[6]{}; // livetoonstyle.h（HLSL: LiveToonStyle0..3）
         XMFLOAT4 ReflectionProbeCenters[8]{};
         XMFLOAT4 ReflectionProbeSettings[8]{};
+        // x = テクスチャ Mip LOD バイアス、y = 2^x（texturemipbias.h。HLSL: TextureSamplingParams）
+        XMFLOAT4 TextureSamplingParams = {0.0f, 1.0f, 0.0f, 0.0f};
     };
 
     static_assert(sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
@@ -1419,6 +1422,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
     const RuntimeLightState& runtimeLight = *runtimeLightSelection;
     LightConstants constants{};
     LiveToonStyle::Write(constants.LiveToonStyle);
+    constants.TextureSamplingParams = TextureMipBias::GetShaderParams();
     Raytracing::BeginLightList();
     WriteAtmosphereConstants(constants);
     for (UINT i = 0; i < RendererState::g_kMAX_SHADER_LIGHTS; ++i)
@@ -2200,4 +2204,5 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
     clearLayer = pass.ClearLayer;
     return true;
 }
+
 

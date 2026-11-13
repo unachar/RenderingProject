@@ -172,9 +172,12 @@ void CameraSystem::Update()
         }
         else if (isActive && DlssUpscaler::IsRequested())
         {
+            // NGX の InJitterOffset は「ピクセル単位・+X 右・+Y 下」。投影へは TSR と同じ向きで適用する。
+            // 以前は両軸とも符号が逆で、静止中も画面全体がサブピクセル単位でがくがく揺れていた。
             const XMFLOAT2 jitter = DlssUpscaler::GetJitter();
-            proj.r[jitterRow].m128_f32[0] -= jitter.x * 2.0f / GraphicsDevice::GetSceneWidth();
-            proj.r[jitterRow].m128_f32[1] += jitter.y * 2.0f / GraphicsDevice::GetSceneHeight();
+            const float sign = DlssUpscaler::GetJitterProjectionSign();
+            proj.r[jitterRow].m128_f32[0] += sign * jitter.x * 2.0f / (std::max)(1u, GraphicsDevice::GetSceneWidth());
+            proj.r[jitterRow].m128_f32[1] -= sign * jitter.y * 2.0f / (std::max)(1u, GraphicsDevice::GetSceneHeight());
         }
         else if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
         {
@@ -202,4 +205,5 @@ void CameraSystem::Update()
     }
     previousActiveCamera = activeCamera;
 }
+
 

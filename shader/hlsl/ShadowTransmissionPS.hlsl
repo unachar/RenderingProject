@@ -1,4 +1,6 @@
 #define SHADER_3D
+// 影はシャドウマップ解像度で描くので、表示用の Mip LOD バイアスは掛けない。
+#define RP_NO_MATERIAL_MIP_BIAS
 #include "common.hlsl"
 #include "MaterialSurface.hlsli"
 #include "PhysicalGlass.hlsli"
@@ -50,3 +52,4 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpa
     float3 transmission = saturate(Transparent0.y) * (1.0f - saturate(metallic)) * slab;
     return float4(saturate(lerp(1.0f, transmission, opacity)), 1.0f);
 }
+

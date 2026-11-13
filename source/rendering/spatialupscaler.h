@@ -20,6 +20,15 @@ class SpatialUpscaler
                         D3D12_GPU_DESCRIPTOR_HANDLE outputSrv =
                             D3D12_GPU_DESCRIPTOR_HANDLE{}); // 出力の SRV（NIS の 3 段以上で中間に使う）
 
+    // 時間方向アップスケーラー（DLSS）の後段シャープン用。
+    //   DLSS の出力先として表示解像度のスクラッチ（FSR EASU と共用・シーンと同じフォーマット）を貸し出し、
+    //   RCAS（FSR1 のコントラスト適応シャープン）でスクラッチ → output へ書く。
+    //   スクラッチは NON_PIXEL_SHADER_RESOURCE で待機している。
+    static ID3D12Resource* GetSharpenScratch(UINT outputWidth, UINT outputHeight, DXGI_FORMAT format);
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetSharpenScratchUav();
+    static bool ExecuteRcas(ID3D12GraphicsCommandList* commandList, D3D12_GPU_DESCRIPTOR_HANDLE outputUav,
+                            UINT outputWidth, UINT outputHeight, float sharpnessStops);
+
     // NIS の段数（1 段は最大 2 倍まで）
     static UINT NisPassCount(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight);
 
@@ -30,3 +39,4 @@ class SpatialUpscaler
     static D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(UINT index);
     static D3D12_GPU_DESCRIPTOR_HANDLE GpuHandle(UINT index);
 };
+

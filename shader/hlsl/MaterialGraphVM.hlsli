@@ -1,4 +1,4 @@
-﻿#ifndef MATERIAL_GRAPH_VM_INCLUDED
+#ifndef MATERIAL_GRAPH_VM_INCLUDED
 #define MATERIAL_GRAPH_VM_INCLUDED
 // =====================================================================================================
 // マテリアルグラフの描画時評価（GPU）
@@ -299,7 +299,7 @@ float4 MGVM_Sample(uint heap, float2 uv, SamplerState s)
 #if defined(SHADER_VISIBILITY_RESOLVE) || defined(MG_VM_STANDALONE)
     return LoadMaterialTexture(heap).SampleLevel(s, uv, 0);
 #else
-    return LoadMaterialTexture(heap).Sample(s, uv);
+    return SampleMaterialBiasCommon(LoadMaterialTexture(heap), s, uv);
 #endif
 }
 
@@ -949,4 +949,5 @@ float3 ApplyMaterialGraphNormal(MaterialGraphVmOutput graph, AssetMaterialParame
 #endif // MG_VM_STANDALONE
 
 #endif
+
 

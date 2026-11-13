@@ -148,22 +148,13 @@ bool LightInstanceBuilder::Build(ID3D12GraphicsCommandList* commandList, UINT fr
                                     RendererState::g_kMAX_SHADER_LIGHTS,
                                     RendererState::g_kMAX_LIGHTS_PER_TILE,
                                     0u};
-    commandList->SetComputeRoot32BitConstants(4, 8, clearConstants, 0);
-    const UINT clearCount =
-        max(tileCountX * tileCountY * RendererState::g_kMAX_LIGHTS_PER_TILE, RendererState::g_kMAX_SHADER_LIGHTS);
-    commandList->Dispatch((clearCount + 63u) / 64u, 1, 1);
-    D3D12_RESOURCE_BARRIER uavBarriers[3] = {CD3DX12_RESOURCE_BARRIER::UAV(g_TileIndices[frameIndex].Get()),
-                                             CD3DX12_RESOURCE_BARRIER::UAV(g_VolumetricIndices[frameIndex].Get()),
-                                             CD3DX12_RESOURCE_BARRIER::UAV(g_Counters[frameIndex].Get())};
-    commandList->ResourceBarrier(3, uavBarriers);
+    // タイル単位の構築パス（LightInstanceBuilderCS の BuildMode 1）は全タイル・全スロットと
+    // ボリューメトリック一覧を毎回すべて書き込むので、以前の消去パス（BuildMode 0）と UAV バリアは不要。
     UINT buildConstants[8];
     memcpy(buildConstants, clearConstants, sizeof(buildConstants));
     buildConstants[4] = 1u;
     commandList->SetComputeRoot32BitConstants(4, 8, buildConstants, 0);
-    if (lightCount > 0)
-    {
-        commandList->Dispatch((lightCount + 63u) / 64u, 1, 1);
-    }
+    commandList->Dispatch((tileCountX * tileCountY + 63u) / 64u, 1, 1);
     D3D12_RESOURCE_BARRIER toRead[2] = {
         CD3DX12_RESOURCE_BARRIER::Transition(g_TileIndices[frameIndex].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
@@ -194,3 +185,4 @@ D3D12_GPU_VIRTUAL_ADDRESS LightInstanceBuilder::GetVolumetricIndexAddress(UINT f
     }
     return 0;
 }
+

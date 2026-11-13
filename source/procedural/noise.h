@@ -786,7 +786,11 @@ namespace ProcStudio
         return BasisNoiseConfigured(basis, x, y, z, seed, period, 0.0f, 4.0f, 2.0f, 0.0f);
     }
 
-    inline float FractalNoise(const NoiseParams& params, float x, float y, float z, bool tileable)
+    inline float FractalNoise(const NoiseParams& params, float x, float y, float z, bool tileable);
+
+    // FractalNoise の [0, 1] へのクランプ前の値。0.5 付近が中心で、範囲外の値も返す。
+    // 地形の高さに使うと、クランプで山頂が水平に切り取られるのを防げる。
+    inline float FractalNoiseUnclamped(const NoiseParams& params, float x, float y, float z, bool tileable)
     {
         const int octaves = std::clamp(params.Octaves, 1, 12);
         float frequency = (std::max)(params.Frequency, 0.001f);
@@ -797,7 +801,7 @@ namespace ProcStudio
             const float value =
                 BasisNoiseConfigured(params.BasisType, x * scale, y * scale, z * scale, NoiseDetail::Hash(params.Seed),
                                      period, params.Direction, params.Anisotropy, params.KernelFrequency, params.Phase);
-            return NoiseDetail::Saturate(value * 0.5f + 0.5f);
+            return value * 0.5f + 0.5f;
         }
         const float lacunarity = tileable ? (std::max)(1.0f, std::round(params.Lacunarity)) : params.Lacunarity;
         if (params.Fractal == FractalType::DomainWarp)
@@ -810,7 +814,7 @@ namespace ProcStudio
             second.Seed = params.Seed ^ 0x9e3779b9u;
             const float wy = FractalNoise(second, x + 1.7f, y + 9.2f, z + 4.1f, tileable) * 2 - 1;
             const float s = params.WarpStrength / (std::max)(params.Frequency, 0.001f);
-            return FractalNoise(inner, x + wx * s, y + wy * s, z + (wx - wy) * s * 0.5f, tileable);
+            return FractalNoiseUnclamped(inner, x + wx * s, y + wy * s, z + (wx - wy) * s * 0.5f, tileable);
         }
         float amplitude = 1;
         float sum = 0;
@@ -868,18 +872,25 @@ namespace ProcStudio
         switch (params.Fractal)
         {
             case FractalType::Ridged:
-                return NoiseDetail::Saturate(value / (std::max)(params.RidgeOffset * params.RidgeOffset, 0.25f));
+                return value / (std::max)(params.RidgeOffset * params.RidgeOffset, 0.25f);
             case FractalType::Turbulence:
-                return NoiseDetail::Saturate(value * 1.6f);
+                return value * 1.6f;
             case FractalType::HybridMultifractal:
-                return NoiseDetail::Saturate(value * 0.8f);
+                return value * 0.8f;
             case FractalType::Multifractal:
-                return NoiseDetail::Saturate(0.5f + 0.5f * sum / (1.0f + std::fabs(sum)));
+                return 0.5f + 0.5f * sum / (1.0f + std::fabs(sum));
             case FractalType::HeterogeneousMultifractal:
-                return NoiseDetail::Saturate(sum / (1.0f + std::fabs(sum)));
+                return sum / (1.0f + std::fabs(sum));
             default:
-                return NoiseDetail::Saturate(value * 0.8f + 0.5f);
+                return value * 0.8f + 0.5f;
         }
     }
 
+    // [0, 1] にクランプした値。テクスチャ等の既存の結果は従来と同一。
+    inline float FractalNoise(const NoiseParams& params, float x, float y, float z, bool tileable)
+    {
+        return NoiseDetail::Saturate(FractalNoiseUnclamped(params, x, y, z, tileable));
+    }
+
 }
+

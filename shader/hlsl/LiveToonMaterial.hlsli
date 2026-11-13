@@ -18,9 +18,9 @@
 float4 SampleLiveToonMap(uint index, SamplerState materialSampler, float2 uv)
 {
 #ifdef SHADER_VISIBILITY_RESOLVE
-    return LoadMaterialTexture(index).SampleGrad(materialSampler, uv, VisibilityUvDx, VisibilityUvDy);
+    return SampleMaterialGradCommon(LoadMaterialTexture(index), materialSampler, uv, VisibilityUvDx, VisibilityUvDy);
 #else
-    return LoadMaterialTexture(index).Sample(materialSampler, uv);
+    return SampleMaterialBiasCommon(LoadMaterialTexture(index), materialSampler, uv);
 #endif
 }
 
@@ -71,3 +71,4 @@ void ApplyLiveToonMaterialTextures(uint4 textures, float4 parameters, float2 uv,
     }
 }
 #endif
+

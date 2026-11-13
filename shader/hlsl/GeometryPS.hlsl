@@ -30,7 +30,7 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
     float3 normal = input.Normal;
     if (UseTexture)
     {
-        baseColor *= TextureBaseColor.Sample(Sampler, materialUv);
+        baseColor *= SampleMaterialBiasCommon(TextureBaseColor, Sampler, materialUv);
     }
 
     float assetMetallic = mMetallic;
@@ -61,7 +61,7 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = DecodeTangentNormalSample(TextureNormal.Sample(Sampler, materialUv));
+        float3 tangentNormal = DecodeTangentNormalSample(SampleMaterialBiasCommon(TextureNormal, Sampler, materialUv));
         normal = ApplyNormalMapCommon(normal, input.WorldPos, input.TexCoord,
                                       ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -91,4 +91,5 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 
     return output;
 }
+
 

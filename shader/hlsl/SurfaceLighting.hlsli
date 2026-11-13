@@ -1035,15 +1035,18 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
                                                                                worldPosDy + g_PomShadowOffsetDy,
                                                                                normal, singleDir, shadowFilterRadius);
 
-        float contactVisibility =
-            !decalLight && directionalShadow ? SampleContactShadow(worldPos + g_PomShadowOffset, normal, singleDir) : 1.0f;
+        // スクリーン空間のコンタクトシャドウ（最大 24 回の深度マーチ）は、結果が捨てられる場合は計算しない。
+        // 以前は DXR 影（SceneRayFlags.x）やデノイズ済み RT 可視性（useRayShadow）で上書きされる場合も
+        // 全ピクセルで計算してから捨てていた。
+        bool useContactShadow = !decalLight && directionalShadow && !useRayShadow;
 #ifdef SHADER_RAYTRACING
-        if (SceneRayFlags.x > 0.5f)
-        {
-            contactVisibility = 1.0f;
-        }
+        useContactShadow = useContactShadow && SceneRayFlags.x < 0.5f;
 #endif
-        shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
+        [branch] if (useContactShadow)
+        {
+            const float contactVisibility = SampleContactShadow(worldPos + g_PomShadowOffset, normal, singleDir);
+            shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
+        }
         if (useRayShadow)
         {
             uint rayWidth;
@@ -1613,12 +1616,15 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
         ambient *= lerp(0.025f, 1.0f, SkyParameters.y);
     }
     float3 moonDirection = VirtualMoonDirection();
-    float moonVisibility =
-        CloudTrace.z > 0.5 && CloudTrace.w > 0.5 ? CloudSolarTransmittance(worldPosition, moonDirection) : 1;
-    float3 moonRadiance =
-        VirtualMoonIrradiance() * moonVisibility * CelestialAtmosphereTransmission(worldPosition.y, moonDirection);
+    // 雲の透過率（3D ノイズのレイマーチ）は、月の光が実際にある時だけ計算する。
+    // 以前は昼間（月の放射照度 ≈ 0）でも PBR の全ピクセルで 4 本ずつ雲をマーチしていた。
+    float3 moonRadiance = VirtualMoonIrradiance() * CelestialAtmosphereTransmission(worldPosition.y, moonDirection);
     [branch] if (any(moonRadiance > 1e-6))
     {
+        if (CloudTrace.z > 0.5 && CloudTrace.w > 0.5)
+        {
+            moonRadiance *= CloudSurfaceTransmittance(worldPosition, moonDirection);
+        }
         moonRadiance *= VirtualMoonSurfaceVisibility(worldPosition, N, moonDirection);
         pbrDirectLight +=
             EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance, albedo,
@@ -1672,5 +1678,6 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
 
 

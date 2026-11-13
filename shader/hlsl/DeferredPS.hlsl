@@ -83,13 +83,12 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     {
 #ifdef SHADER_GPU_DRIVEN
 #ifdef SHADER_VISIBILITY_RESOLVE
-        baseColor *= LoadMaterialTexture(SceneTextureIndex(metadata.x)).SampleGrad(
-            g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy);
+        baseColor *= SampleMaterialGradCommon(LoadMaterialTexture(SceneTextureIndex(metadata.x)), g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy);
 #else
-        baseColor *= LoadMaterialTexture(SceneTextureIndex(metadata.x)).Sample(g_SamplerState, materialUv);
+        baseColor *= SampleMaterialBiasCommon(LoadMaterialTexture(SceneTextureIndex(metadata.x)), g_SamplerState, materialUv);
 #endif
 #else
-        baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
+        baseColor *= SampleMaterialBiasCommon(g_Texture, g_SamplerState, materialUv);
 #endif
     }
 
@@ -139,10 +138,10 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
 #ifdef SHADER_VISIBILITY_RESOLVE
         float3 tangentNormal = DecodeTangentNormalSample(
-            LoadMaterialTexture(textureIndex).SampleGrad(g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy));
+            SampleMaterialGradCommon(LoadMaterialTexture(textureIndex), g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy));
 #else
         float3 tangentNormal = DecodeTangentNormalSample(
-            LoadMaterialTexture(textureIndex).Sample(g_SamplerState, materialUv));
+            SampleMaterialBiasCommon(LoadMaterialTexture(textureIndex), g_SamplerState, materialUv));
 #endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -150,7 +149,7 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 #else
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
+        float3 tangentNormal = DecodeTangentNormalSample(SampleMaterialBiasCommon(g_NormalTexture, g_SamplerState, materialUv));
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
 #endif
@@ -255,5 +254,6 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 #endif
+
 
 

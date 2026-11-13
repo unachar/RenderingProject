@@ -295,6 +295,36 @@ float CloudSolarTransmittance(float3 position, float3 towardSun)
     return transmission * 0.25;
 }
 
+// 地表（受光面）用の雲の透過率：太陽 / 月の中心方向へ 1 本だけ。
+// 円盤の 4 サンプル（角半径 0.27 度）は、雲の高さ（数 km）でも数十 m しかずれず、
+// 雲の密度の変化（数百 m 単位）に対して差が見えない。一方コストは 4 倍で、
+// ディファードライティングの全ピクセルで「4 本 × LightSteps 回」の 3D ノイズ評価になっていた。
+// さらに、地表に落ちる雲の影は柔らかいので詳細ノイズ（侵食）は見えない。基本形状だけで評価する。
+float CloudSurfaceTransmittance(float3 position, float3 towardLight)
+{
+    if (towardLight.y <= 0)
+    {
+        return 0;
+    }
+    float2 intervals[4];
+    uint count = CloudIntervals(position, towardLight, CloudTrace.x, intervals);
+    float opticalDepth = 0;
+    [loop] for (uint interval = 0; interval < count; ++interval)
+    {
+        float stepLength = (intervals[interval].y - intervals[interval].x) / max(CloudQuality.y, 1u);
+        [loop] for (uint sample = 0; sample < CloudQuality.y; ++sample)
+        {
+            float distance = intervals[interval].x + (sample + 0.5) * stepLength;
+            opticalDepth += CloudDensityLod(position + towardLight * distance, false) * stepLength;
+            if (opticalDepth * CloudShape.w > 9.21)
+            {
+                return 0;
+            }
+        }
+    }
+    return exp(-opticalDepth * CloudShape.w);
+}
+
 #ifndef CLOUD_MEDIUM_NO_SCENE_LIGHTS
 // 空と同じ Sun エンティティについて、CPU が Index+1 を書き込む。
 int CloudSunIndex()
@@ -314,8 +344,9 @@ float CloudSunVisibility(float3 position)
     {
         return 0; // 不透明な惑星が地平線より下からの太陽光を遮る。
     }
-    return CloudSolarTransmittance(position, towardSun);
+    return CloudSurfaceTransmittance(position, towardSun);
 }
 #endif
 
 #endif
+

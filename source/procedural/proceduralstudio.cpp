@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "proceduralstudio.h"
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <fstream>
 #include <functional>
@@ -565,6 +566,90 @@ namespace ProcStudio
         }
     }
 
+    const char* TerrainPresetName(TerrainPreset preset)
+    {
+        switch (preset)
+        {
+            case TerrainPreset::Default: return "標準（従来）";
+            case TerrainPreset::Mountains: return "山脈";
+            case TerrainPreset::Hills: return "丘陵";
+            case TerrainPreset::Mesa: return "台地（メサ）";
+            case TerrainPreset::Island: return "島";
+            case TerrainPreset::Canyon: return "渓谷";
+            default: return "?";
+        }
+    }
+
+    void ApplyTerrainPreset(TerrainShapeParams& t, TerrainPreset preset)
+    {
+        t = TerrainShapeParams{};
+        switch (preset)
+        {
+            case TerrainPreset::Mountains:
+                t.MacroWarp = 0.6f;
+                t.RidgeBlend = 0.75f;
+                t.MountainMask = 0.6f;
+                t.Exponent = 1.6f;
+                t.MicroDetail = 0.5f;
+                t.HydraulicDensity = 0.6f;
+                t.ThermalIterations = 8;
+                t.TalusAngle = 40.0f;
+                t.SnowLine = 0.75f;
+                break;
+            case TerrainPreset::Hills:
+                t.MacroWarp = 0.4f;
+                t.Exponent = 1.3f;
+                t.HydraulicDensity = 0.3f;
+                t.ThermalIterations = 6;
+                t.TalusAngle = 30.0f;
+                t.RockLine = 0.85f;
+                t.SnowLine = 1.1f;
+                t.RockSlope = 0.85f;
+                break;
+            case TerrainPreset::Mesa:
+                t.MacroWarp = 0.5f;
+                t.Exponent = 1.2f;
+                t.TerraceSteps = 5;
+                t.TerraceStrength = 0.85f;
+                t.ThermalIterations = 3;
+                t.TalusAngle = 55.0f;
+                t.SandLine = 0.6f;
+                t.RockLine = 0.7f;
+                t.SnowLine = 1.1f;
+                t.RockSlope = 0.45f;
+                break;
+            case TerrainPreset::Island:
+                t.MacroWarp = 0.5f;
+                t.RidgeBlend = 0.4f;
+                t.Exponent = 1.4f;
+                t.EdgeFalloff = 0.7f;
+                t.SeaLevel = 0.12f;
+                t.SeaFlatten = 0.6f;
+                t.HydraulicDensity = 0.4f;
+                t.ThermalIterations = 5;
+                t.SandLine = 0.17f;
+                t.SnowLine = 0.9f;
+                break;
+            case TerrainPreset::Canyon:
+                t.MacroWarp = 0.8f;
+                t.RidgeBlend = 0.3f;
+                t.Exponent = 0.7f;
+                t.TerraceSteps = 8;
+                t.TerraceStrength = 0.5f;
+                t.HydraulicDensity = 0.8f;
+                t.ErosionRate = 0.5f;
+                t.ThermalIterations = 4;
+                t.TalusAngle = 60.0f;
+                t.SandLine = 0.45f;
+                t.RockLine = 0.5f;
+                t.SnowLine = 1.1f;
+                t.RockSlope = 0.4f;
+                break;
+            default:
+                break;
+        }
+    }
+
     const char* ModelKindName(ModelKind kind)
     {
         static const char* names[] = {"球 (プレビュー)", "立方体 (プレビュー)", "平面 (プレビュー)",
@@ -632,16 +717,18 @@ namespace ProcStudio
             }
         }
 
-        Float3 TerrainColor(float h, float slope)
+        // 既定の境界値では従来の配色と同じ結果になる。
+        Float3 TerrainColor(const TerrainShapeParams& t, float h, float slope)
         {
             const Float3 sand{0.76f, 0.70f, 0.50f};
             const Float3 grass{0.22f, 0.45f, 0.16f};
             const Float3 rock{0.42f, 0.38f, 0.34f};
             const Float3 snow{0.95f, 0.96f, 0.98f};
-            Float3 c = Mix3(sand, grass, Smooth(0.15f, 0.25f, h));
-            c = Mix3(c, rock, Smooth(0.55f, 0.7f, h));
-            c = Mix3(c, snow, Smooth(0.78f, 0.88f, h));
-            return Mix3(c, rock, Smooth(0.55f, 0.8f, slope) * (1 - Smooth(0.85f, 0.95f, h)));
+            Float3 c = Mix3(sand, grass, Smooth(t.SandLine - 0.05f, t.SandLine + 0.05f, h));
+            c = Mix3(c, rock, Smooth(t.RockLine - 0.075f, t.RockLine + 0.075f, h));
+            c = Mix3(c, snow, Smooth(t.SnowLine - 0.05f, t.SnowLine + 0.05f, h));
+            return Mix3(c, rock, Smooth(t.RockSlope - 0.125f, t.RockSlope + 0.125f, slope) *
+                                     (1 - Smooth(t.SnowLine + 0.02f, t.SnowLine + 0.12f, h)));
         }
 
         void BuildGrid(Mesh& mesh, int resolution, float size, const std::function<float(float, float)>& height,
@@ -692,6 +779,290 @@ namespace ProcStudio
                 return Next() * 2 - 1;
             }
         };
+
+        // ---- リアルな地形 ----------------------------------------------------------------
+
+        // クランプしていない生の高さを返す。おおむね [0, 1] だが、フラクタルの種類や基底ノイズによっては
+        // 大きく範囲外に出る（Hybrid Multifractal・Turbulence・Worley 系では最大で 6 割の点が 1 を超える）。
+        float TerrainShapeRaw(const TerrainShapeParams& t, const NoiseParams& n, float u, float v)
+        {
+            const float baseFrequency = (std::max)(n.Frequency, 0.001f);
+            float wu = u;
+            float wv = v;
+            if (t.MacroWarp > 0)
+            {
+                NoiseParams warp = n;
+                warp.Fractal = FractalType::FBm;
+                warp.Octaves = 3;
+                warp.Frequency = baseFrequency * 0.35f;
+                warp.Seed = n.Seed ^ 0x51ed27u;
+                const float wx = FractalNoise(warp, u + 11.3f, v + 4.7f, 0.73f, false) * 2 - 1;
+                warp.Seed ^= 0x9e3779b9u;
+                const float wz = FractalNoise(warp, u + 2.9f, v + 17.1f, 0.21f, false) * 2 - 1;
+                const float strength = t.MacroWarp / baseFrequency;
+                wu += wx * strength;
+                wv += wz * strength;
+            }
+            float h = FractalNoiseUnclamped(n, wu, wv, 0.37f, false);
+            if (t.RidgeBlend > 0)
+            {
+                NoiseParams ridge = n;
+                ridge.Fractal = FractalType::Ridged;
+                ridge.RidgeOffset = 1.0f;
+                ridge.Seed = n.Seed ^ 0x2545f491u;
+                const float r = FractalNoiseUnclamped(ridge, wu, wv, 0.37f, false);
+                // 大きな起伏を保ったまま、稜線だけを鋭くする。
+                h = Lerp(h, r * (0.35f + 0.65f * h), t.RidgeBlend);
+            }
+            if (t.MountainMask > 0)
+            {
+                NoiseParams mask = n;
+                mask.Fractal = FractalType::FBm;
+                mask.Octaves = 3;
+                mask.Frequency = (std::max)(t.MaskFrequency, 0.01f);
+                mask.Seed = n.Seed ^ 0x68e31da4u;
+                const float m = Smooth(0.35f, 0.65f, FractalNoise(mask, u, v, 0.11f, false));
+                h *= Lerp(1.0f, 0.15f + 0.85f * m, t.MountainMask);
+            }
+            if (t.MicroDetail > 0)
+            {
+                NoiseParams detail = n;
+                detail.Fractal = FractalType::Ridged;
+                detail.RidgeOffset = 1.0f;
+                detail.Octaves = 3;
+                detail.Frequency = baseFrequency * 8;
+                detail.Seed = n.Seed ^ 0xb5297a4du;
+                const float d = FractalNoise(detail, wu, wv, 0.59f, false) - 0.5f;
+                h += d * t.MicroDetail * 0.08f * Smooth(0.25f, 0.75f, h);
+            }
+            return h;
+        }
+
+        // 正規化済みの高さ [0, 1] に、高さカーブ・段丘・外周・海面を適用する。
+        float TerrainShapePost(const TerrainShapeParams& t, float h, float u, float v, int mapsX, int mapsZ)
+        {
+            if (t.Exponent != 1.0f)
+            {
+                h = std::pow(h, (std::max)(t.Exponent, 0.05f));
+            }
+            if (t.TerraceSteps > 0 && t.TerraceStrength > 0)
+            {
+                const float steps = static_cast<float>(t.TerraceSteps);
+                const float level = h * steps;
+                const float floorLevel = std::floor(level);
+                // 平らな段の後に急な崖が来る形。
+                const float terrace = (floorLevel + Smooth(0.55f, 1.0f, level - floorLevel)) / steps;
+                h = Lerp(h, terrace, t.TerraceStrength);
+            }
+            if (t.EdgeFalloff > 0)
+            {
+                const float dx = u / mapsX * 2 - 1;
+                const float dz = v / mapsZ * 2 - 1;
+                const float distance = std::sqrt(dx * dx + dz * dz);
+                h *= Smooth(0.0f, t.EdgeFalloff, 1 - distance);
+            }
+            if (t.SeaLevel > 0 && h < t.SeaLevel)
+            {
+                h = t.SeaLevel - (t.SeaLevel - h) * (1 - Saturate(t.SeaFlatten));
+            }
+            return h;
+        }
+
+        // 熱侵食。安息角を超える高低差を隣接セルと対称にやり取りするため、質量が保存され並列化できる。
+        void ThermalErosion(std::vector<float>& heights, int width, int depth, float cell, int iterations,
+                            float talusAngle)
+        {
+            if (iterations <= 0)
+            {
+                return;
+            }
+            const float talus = std::tan(std::clamp(talusAngle, 1.0f, 89.0f) * kPi / 180.0f) * cell;
+            constexpr float kRate = 0.2f;
+            std::vector<float> next(heights.size());
+            for (int iteration = 0; iteration < iterations; ++iteration)
+            {
+                ParallelFor(depth, [&](int z) {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        const size_t i = static_cast<size_t>(z) * width + x;
+                        const float h = heights[i];
+                        float delta = 0;
+                        const auto exchange = [&](int nx, int nz) {
+                            if (nx < 0 || nz < 0 || nx >= width || nz >= depth)
+                            {
+                                return;
+                            }
+                            const float diff = heights[static_cast<size_t>(nz) * width + nx] - h;
+                            const float excess = std::fabs(diff) - talus;
+                            if (excess > 0)
+                            {
+                                delta += (diff > 0 ? 0.5f : -0.5f) * kRate * excess;
+                            }
+                        };
+                        exchange(x - 1, z);
+                        exchange(x + 1, z);
+                        exchange(x, z - 1);
+                        exchange(x, z + 1);
+                        next[i] = h + delta;
+                    }
+                });
+                heights.swap(next);
+            }
+        }
+
+        // 水滴による水食（侵食と堆積）。高さはセル単位に換算して処理し、解像度による差を抑える。
+        // 決定的な結果にするため、水滴は 1 スレッドで順に流す。
+        void HydraulicErosion(std::vector<float>& heights, int width, int depth, float cell, int resolution,
+                              const TerrainShapeParams& t, uint32_t seed)
+        {
+            if (t.HydraulicDensity <= 0 || width < 3 || depth < 3)
+            {
+                return;
+            }
+            const float toCell = 1.0f / (std::max)(cell, 1e-5f);
+            for (auto& h : heights)
+            {
+                h *= toCell;
+            }
+            const auto at = [&](int x, int z) -> float& {
+                return heights[static_cast<size_t>(z) * width + x];
+            };
+            const size_t droplets =
+                static_cast<size_t>(static_cast<double>(t.HydraulicDensity) * width * depth);
+            const int lifetime = std::clamp(static_cast<int>(30.0f * resolution / 128.0f), 16, 96);
+            const float inertia = Saturate(t.Inertia);
+            const float erosionRate = Saturate(t.ErosionRate);
+            const float depositionRate = Saturate(t.DepositionRate);
+            const float evaporation = Saturate(t.Evaporation);
+            constexpr float kGravity = 4.0f;
+            constexpr float kMinCapacity = 0.01f;
+            Random random{Hash(seed ^ 0xe7037ed1u)};
+            for (size_t droplet = 0; droplet < droplets; ++droplet)
+            {
+                float px = random.Next() * (width - 1.001f);
+                float pz = random.Next() * (depth - 1.001f);
+                float dirX = 0;
+                float dirZ = 0;
+                float speed = 1;
+                float water = 1;
+                float sediment = 0;
+                for (int step = 0; step < lifetime; ++step)
+                {
+                    const int cx = static_cast<int>(px);
+                    const int cz = static_cast<int>(pz);
+                    const float ox = px - cx;
+                    const float oz = pz - cz;
+                    const float h00 = at(cx, cz), h10 = at(cx + 1, cz);
+                    const float h01 = at(cx, cz + 1), h11 = at(cx + 1, cz + 1);
+                    const float gx = (h10 - h00) * (1 - oz) + (h11 - h01) * oz;
+                    const float gz = (h01 - h00) * (1 - ox) + (h11 - h10) * ox;
+                    const float height = Lerp(Lerp(h00, h10, ox), Lerp(h01, h11, ox), oz);
+                    dirX = dirX * inertia - gx * (1 - inertia);
+                    dirZ = dirZ * inertia - gz * (1 - inertia);
+                    const float length = std::sqrt(dirX * dirX + dirZ * dirZ);
+                    if (length < 1e-6f)
+                    {
+                        break;
+                    }
+                    dirX /= length;
+                    dirZ /= length;
+                    px += dirX;
+                    pz += dirZ;
+                    if (px < 0 || pz < 0 || px >= width - 1 || pz >= depth - 1)
+                    {
+                        break;
+                    }
+                    const int nx = static_cast<int>(px);
+                    const int nz = static_cast<int>(pz);
+                    const float nox = px - nx;
+                    const float noz = pz - nz;
+                    const float newHeight = Lerp(Lerp(at(nx, nz), at(nx + 1, nz), nox),
+                                                 Lerp(at(nx, nz + 1), at(nx + 1, nz + 1), nox), noz);
+                    const float deltaHeight = newHeight - height;
+                    const float capacity =
+                        (std::max)(-deltaHeight * speed * water * t.SedimentCapacity, kMinCapacity);
+                    const float w00 = (1 - ox) * (1 - oz), w10 = ox * (1 - oz), w01 = (1 - ox) * oz, w11 = ox * oz;
+                    if (sediment > capacity || deltaHeight > 0)
+                    {
+                        // 上り坂では窪みを埋め、容量超過分は落とす。
+                        const float deposit = deltaHeight > 0 ? (std::min)(deltaHeight, sediment)
+                                                              : (sediment - capacity) * depositionRate;
+                        sediment -= deposit;
+                        at(cx, cz) += deposit * w00;
+                        at(cx + 1, cz) += deposit * w10;
+                        at(cx, cz + 1) += deposit * w01;
+                        at(cx + 1, cz + 1) += deposit * w11;
+                    }
+                    else
+                    {
+                        // 下り坂の高低差以上は削らず、穴が開くのを防ぐ。
+                        const float erode = (std::min)((capacity - sediment) * erosionRate, -deltaHeight);
+                        at(cx, cz) -= erode * w00;
+                        at(cx + 1, cz) -= erode * w10;
+                        at(cx, cz + 1) -= erode * w01;
+                        at(cx + 1, cz + 1) -= erode * w11;
+                        sediment += erode;
+                    }
+                    speed = std::sqrt((std::max)(0.0f, speed * speed - deltaHeight * kGravity));
+                    water *= 1 - evaporation;
+                    if (water < 0.01f)
+                    {
+                        break;
+                    }
+                }
+            }
+            for (auto& h : heights)
+            {
+                h *= cell;
+            }
+        }
+
+        // 地形全体の高さ（ワールド単位）を (stepsX + 1) × (stepsZ + 1) の配列で返す。
+        // 侵食は格子全体を参照するため、プレビューと保存の両方でこの関数を使う。
+        std::vector<float> BuildTerrainHeights(const ModelParams& p, int resolution, int mapsX, int mapsZ)
+        {
+            const int width = resolution * mapsX + 1;
+            const int depth = resolution * mapsZ + 1;
+            NoiseParams noise = p.Noise;
+            noise.Seed ^= p.Seed;
+            std::vector<float> heights(static_cast<size_t>(width) * depth);
+            ParallelFor(depth, [&](int z) {
+                const float v = static_cast<float>(z) / resolution;
+                for (int x = 0; x < width; ++x)
+                {
+                    const float u = static_cast<float>(x) / resolution;
+                    heights[static_cast<size_t>(z) * width + x] = TerrainShapeRaw(p.Terrain, noise, u, v);
+                }
+            });
+            // 高さが山頂で水平に切り取られる原因: 従来はノイズ値を [0, 1] でハードクランプしており、
+            // 1 を超えた峰がすべて同じ高さで平らになっていた。クランプの代わりに、地形全体の実際の
+            // 最小・最大で線形に正規化し直す。形は一切潰れず、範囲内に収まる設定では従来と同じ値になる。
+            float low = 0.0f;
+            float high = 1.0f;
+            for (const float h : heights)
+            {
+                if (std::isfinite(h))
+                {
+                    low = (std::min)(low, h);
+                    high = (std::max)(high, h);
+                }
+            }
+            const float invRange = 1.0f / (std::max)(high - low, 1e-6f);
+            ParallelFor(depth, [&](int z) {
+                const float v = static_cast<float>(z) / resolution;
+                for (int x = 0; x < width; ++x)
+                {
+                    float& h = heights[static_cast<size_t>(z) * width + x];
+                    const float normalized = std::isfinite(h) ? (h - low) * invRange : 0.0f;
+                    h = TerrainShapePost(p.Terrain, normalized, static_cast<float>(x) / resolution, v, mapsX,
+                                         mapsZ) * p.Height;
+                }
+            });
+            const float cell = p.Size / resolution;
+            HydraulicErosion(heights, width, depth, cell, resolution, p.Terrain, noise.Seed);
+            ThermalErosion(heights, width, depth, cell, p.Terrain.ThermalIterations, p.Terrain.TalusAngle);
+            return heights;
+        }
 
         Float3 Rotate(Float3 v, Float3 axis, float angle)
         {
@@ -1156,23 +1527,29 @@ namespace ProcStudio
                     });
                 break;
             case ModelKind::Terrain: {
-                NoiseParams n = p.Noise;
-                n.Seed ^= p.Seed;
+                const int resolution = std::clamp(p.Resolution, 2, 512);
+                const int mapsX = std::clamp(p.TerrainMapsX, 1, kMaxTerrainMaps);
+                const int mapsZ = std::clamp(p.TerrainMapsZ, 1, kMaxTerrainMaps);
+                const auto heights = BuildTerrainHeights(p, resolution, mapsX, mapsZ);
+                const size_t width = static_cast<size_t>(resolution) * mapsX + 1;
                 BuildGrid(
-                    mesh, p.Resolution, p.Size,
+                    mesh, resolution, p.Size,
                     [&](float u, float v) {
-                        return FractalNoise(n, u, v, 0.37f, false) * p.Height;
+                        const size_t x = static_cast<size_t>(std::lround(u * resolution));
+                        const size_t z = static_cast<size_t>(std::lround(v * resolution));
+                        return heights[z * width + x];
                     },
-                    [&](float, float, float h) {
-                        return p.TerrainColors ? TerrainColor(h / (std::max)(p.Height, 1e-3f), 0) : kWhite;
+                    [](float, float, float) {
+                        return kWhite;
                     },
-                    std::clamp(p.TerrainMapsX, 1, kMaxTerrainMaps), std::clamp(p.TerrainMapsZ, 1, kMaxTerrainMaps));
+                    mapsX, mapsZ);
                 if (p.TerrainColors)
                 {
                     for (size_t i = 0; i < mesh.Positions.size(); ++i)
                     {
                         const float slope = 1 - std::fabs(mesh.Normals[i].Y);
-                        mesh.Colors[i] = TerrainColor(mesh.Positions[i].Y / (std::max)(p.Height, 1e-3f), slope * 2.5f);
+                        mesh.Colors[i] = TerrainColor(p.Terrain, mesh.Positions[i].Y / (std::max)(p.Height, 1e-3f),
+                                                      slope * 2.5f);
                     }
                 }
                 break;
@@ -1282,6 +1659,98 @@ namespace ProcStudio
         return mesh;
     }
 
+    namespace
+    {
+        // OBJ のテキスト化を高速に行う。iostream の operator<< は 1 値ごとにロケール処理が走り、
+        // 数百万頂点では保存時間の大半を占めていた。std::to_chars は ostream (fixed, precision 6)
+        // と同じ文字列を出力するため、生成されるファイル内容は従来と同一。
+        struct ObjText
+        {
+            std::string Data;
+
+            void Char(char c) { Data.push_back(c); }
+            void Text(const char* text) { Data.append(text); }
+            void Float(float value)
+            {
+                char buffer[64];
+                const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::fixed, 6);
+                Data.append(buffer, result.ptr);
+            }
+            void UInt(uint64_t value)
+            {
+                char buffer[24];
+                const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+                Data.append(buffer, result.ptr);
+            }
+            void Face(uint64_t a, uint64_t b, uint64_t c)
+            {
+                Data.push_back('f');
+                for (const uint64_t index : {a, b, c})
+                {
+                    Data.push_back(' ');
+                    UInt(index);
+                    Data.push_back('/');
+                    UInt(index);
+                    Data.push_back('/');
+                    UInt(index);
+                }
+                Data.push_back('\n');
+            }
+        };
+
+        // [0, itemCount) を chunk 件ずつ並列にテキスト化し、順番どおりにファイルへ書き出す。
+        // メモリ使用量を抑えるため、一度に保持するのは workers * 2 チャンク分だけにする。
+        bool WriteChunksParallel(std::ofstream& output, size_t itemCount, size_t chunk, size_t bytesPerItem,
+                                 const std::function<void(size_t, size_t, ObjText&)>& format)
+        {
+            if (itemCount == 0)
+            {
+                return static_cast<bool>(output);
+            }
+            const size_t chunkCount = (itemCount + chunk - 1) / chunk;
+            const size_t batch =
+                static_cast<size_t>(std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 32)) * 2;
+            std::vector<ObjText> texts(std::min(batch, chunkCount));
+            for (size_t first = 0; first < chunkCount && output; first += batch)
+            {
+                const size_t count = std::min(batch, chunkCount - first);
+                ParallelFor(static_cast<int>(count), [&](int local) {
+                    const size_t begin = (first + local) * chunk;
+                    const size_t end = std::min(itemCount, begin + chunk);
+                    auto& text = texts[local];
+                    text.Data.clear();
+                    text.Data.reserve((end - begin) * bytesPerItem);
+                    format(begin, end, text);
+                });
+                for (size_t i = 0; i < count && output; ++i)
+                {
+                    output.write(texts[i].Data.data(), static_cast<std::streamsize>(texts[i].Data.size()));
+                }
+            }
+            return static_cast<bool>(output);
+        }
+
+        bool WriteMtl(const std::filesystem::path& mtlPath, const std::string& diffuseTexture)
+        {
+            std::ofstream mtl(mtlPath, std::ios::binary | std::ios::trunc);
+            mtl << "newmtl procedural\nKd 1 1 1\nKa 0 0 0\nKs 0.04 0.04 0.04\nNs 32\n";
+            if (!diffuseTexture.empty())
+            {
+                mtl << "map_Kd " << diffuseTexture << '\n';
+            }
+            mtl.close();
+            return static_cast<bool>(mtl);
+        }
+
+        std::string ObjHeader(const std::filesystem::path& mtlPath)
+        {
+            // u8string を使う。Windows の string() は日本語など非 ASCII のファイル名で例外や文字化けを起こす。
+            const auto mtlName = mtlPath.filename().u8string();
+            return std::string(kProceduralObjMarker) + "\nmtllib " + std::string(mtlName.begin(), mtlName.end()) +
+                   "\nusemtl procedural\n";
+        }
+    }
+
     bool WriteGridObj(const std::filesystem::path& path, const ModelParams& params, bool vertexColors,
                       float uvScale, const std::string& diffuseTexture, std::string& error)
     {
@@ -1303,10 +1772,13 @@ namespace ProcStudio
         water.Noise = noise;
         water.Time = params.Time;
         water.Tileable = false;
+        // 地形は侵食で格子全体を参照するため、先に全体の高さを求める。
+        const std::vector<float> terrainHeights =
+            terrain ? BuildTerrainHeights(params, resolution, mapsX, mapsZ) : std::vector<float>{};
         const auto position = [&](int x, int z) -> Float3 {
             const float u = static_cast<float>(x) / resolution;
             const float v = static_cast<float>(z) / resolution;
-            const float h = terrain ? FractalNoise(noise, u, v, 0.37f, false) * params.Height
+            const float h = terrain ? terrainHeights[static_cast<size_t>(z) * (stepsX + 1) + x]
                                     : (TextureScalar(water, u, v, 0, false) - 0.5f) * 2 * params.WaveAmplitude;
             return {(u - mapsX * 0.5f) * params.Size, h, (v - mapsZ * 0.5f) * params.Size};
         };
@@ -1314,115 +1786,132 @@ namespace ProcStudio
         mtlPath.replace_extension(".mtl");
         auto temporary = path;
         temporary += L".partial";
-        std::vector<char> buffer(1024 * 1024);
-        std::ofstream obj;
-        obj.rdbuf()->pubsetbuf(buffer.data(), buffer.size());
-        obj.open(temporary, std::ios::binary | std::ios::trunc);
+        std::ofstream obj(temporary, std::ios::binary | std::ios::trunc);
         if (!obj)
         {
             error = "OBJ を書き込めません";
             return false;
         }
-        const auto mtlName = mtlPath.filename().u8string();
-        obj << kProceduralObjMarker << "\nmtllib " << std::string(mtlName.begin(), mtlName.end())
-            << "\nusemtl procedural\n";
-        obj.setf(std::ios::fixed);
-        obj.precision(6);
-        std::vector<Float3> previous(stepsX + 1), current(stepsX + 1), next(stepsX + 1);
-        const auto fillRow = [&](std::vector<Float3>& row, int z) {
-            for (int x = 0; x <= stepsX; ++x)
-            {
-                row[x] = position(x, z);
-            }
-        };
-        fillRow(current, 0);
-        fillRow(next, 1);
-        for (int z = 0; z <= stepsZ && obj; ++z)
+        const auto header = ObjHeader(mtlPath);
+        obj.write(header.data(), static_cast<std::streamsize>(header.size()));
+
+        // 行ブロック単位で「高さ計算 → 法線 → テキスト化」をすべて並列化する。
+        // 従来はノイズ評価と書式化が 1 スレッドで直列に走っていた。
+        // ブロック前後 1 行ずつを余分に持ち、法線計算に必要な隣接行を参照する。
+        constexpr int kBlockRows = 64;
+        const size_t rowWidth = static_cast<size_t>(stepsX) + 1;
+        std::vector<Float3> rows(static_cast<size_t>(kBlockRows + 2) * rowWidth);
+        std::vector<ObjText> rowTexts(kBlockRows);
+        for (int blockStart = 0; blockStart <= stepsZ && obj; blockStart += kBlockRows)
         {
-            for (int x = 0; x <= stepsX; ++x)
-            {
-                const auto& p = current[x];
-                Float3 normal{};
-                // Match the in-memory grid's area-weighted normals, including its diagonal.
-                const auto addCell = [&](int cellX, const auto& upper, const auto& lower, bool onUpper) {
-                    const auto first = Cross(Sub(lower[cellX], upper[cellX]),
-                                             Sub(upper[cellX + 1], upper[cellX]));
-                    const auto second = Cross(Sub(lower[cellX], upper[cellX + 1]),
-                                              Sub(lower[cellX + 1], upper[cellX + 1]));
-                    if (onUpper || x == cellX)
+            const int blockEnd = (std::min)(stepsZ + 1, blockStart + kBlockRows); // 出力する行 [start, end)
+            const int firstRow = (std::max)(0, blockStart - 1);
+            const int lastRow = (std::min)(stepsZ, blockEnd); // 参照する行 [firstRow, lastRow]
+            const auto rowData = [&](int z) {
+                return rows.data() + static_cast<size_t>(z - firstRow) * rowWidth;
+            };
+            ParallelFor(lastRow - firstRow + 1, [&](int local) {
+                const int z = firstRow + local;
+                Float3* row = rowData(z);
+                for (int x = 0; x <= stepsX; ++x)
+                {
+                    row[x] = position(x, z);
+                }
+            });
+            ParallelFor(blockEnd - blockStart, [&](int local) {
+                const int z = blockStart + local;
+                const Float3* previous = z > 0 ? rowData(z - 1) : nullptr;
+                const Float3* current = rowData(z);
+                const Float3* next = z < stepsZ ? rowData(z + 1) : nullptr;
+                ObjText& text = rowTexts[local];
+                text.Data.clear();
+                text.Data.reserve(rowWidth * (vertexColors ? 160 : 120));
+                for (int x = 0; x <= stepsX; ++x)
+                {
+                    const auto& p = current[x];
+                    Float3 normal{};
+                    // Match the in-memory grid's area-weighted normals, including its diagonal.
+                    const auto addCell = [&](int cellX, const Float3* upper, const Float3* lower, bool onUpper) {
+                        const auto first = Cross(Sub(lower[cellX], upper[cellX]), Sub(upper[cellX + 1], upper[cellX]));
+                        const auto second =
+                            Cross(Sub(lower[cellX], upper[cellX + 1]), Sub(lower[cellX + 1], upper[cellX + 1]));
+                        if (onUpper || x == cellX)
+                        {
+                            normal = Add(normal, first);
+                        }
+                        if (!onUpper || x != cellX)
+                        {
+                            normal = Add(normal, second);
+                        }
+                    };
+                    if (previous)
                     {
-                        normal = Add(normal, first);
+                        if (x > 0) addCell(x - 1, previous, current, false);
+                        if (x < stepsX) addCell(x, previous, current, false);
                     }
-                    if (!onUpper || x != cellX)
+                    if (next)
                     {
-                        normal = Add(normal, second);
+                        if (x > 0) addCell(x - 1, current, next, true);
+                        if (x < stepsX) addCell(x, current, next, true);
                     }
-                };
-                if (z > 0)
-                {
-                    if (x > 0) addCell(x - 1, previous, current, false);
-                    if (x < stepsX) addCell(x, previous, current, false);
+                    normal = Normalize(normal);
+                    text.Text("v ");
+                    text.Float(p.X);
+                    text.Char(' ');
+                    text.Float(p.Y);
+                    text.Char(' ');
+                    text.Float(p.Z);
+                    if (vertexColors)
+                    {
+                        const float wave = Saturate(p.Y / (std::max)(params.WaveAmplitude, 1e-3f) * 0.5f + 0.5f);
+                        const Float3 color = terrain
+                            ? (params.TerrainColors ? TerrainColor(params.Terrain, p.Y / (std::max)(params.Height, 1e-3f),
+                                                                  (1 - std::fabs(normal.Y)) * 2.5f) : kWhite)
+                            : Mix3(Float3{0.02f, 0.12f, 0.2f}, Float3{0.1f, 0.4f, 0.5f}, wave);
+                        text.Char(' ');
+                        text.Float(color.X);
+                        text.Char(' ');
+                        text.Float(color.Y);
+                        text.Char(' ');
+                        text.Float(color.Z);
+                    }
+                    text.Text("\nvt ");
+                    text.Float(static_cast<float>(x) / resolution * uvScale);
+                    text.Char(' ');
+                    text.Float(1 - static_cast<float>(z) / resolution * uvScale);
+                    text.Text("\nvn ");
+                    text.Float(normal.X);
+                    text.Char(' ');
+                    text.Float(normal.Y);
+                    text.Char(' ');
+                    text.Float(normal.Z);
+                    text.Char('\n');
                 }
-                if (z < stepsZ)
-                {
-                    if (x > 0) addCell(x - 1, current, next, true);
-                    if (x < stepsX) addCell(x, current, next, true);
-                }
-                normal = Normalize(normal);
-                obj << "v " << p.X << ' ' << p.Y << ' ' << p.Z;
-                if (vertexColors)
-                {
-                    const float wave = Saturate(p.Y / (std::max)(params.WaveAmplitude, 1e-3f) * 0.5f + 0.5f);
-                    const Float3 color = terrain
-                        ? (params.TerrainColors ? TerrainColor(p.Y / (std::max)(params.Height, 1e-3f),
-                                                              (1 - std::fabs(normal.Y)) * 2.5f) : kWhite)
-                        : Mix3(Float3{0.02f, 0.12f, 0.2f}, Float3{0.1f, 0.4f, 0.5f}, wave);
-                    obj << ' ' << color.X << ' ' << color.Y << ' ' << color.Z;
-                }
-                obj << "\nvt " << static_cast<float>(x) / resolution * uvScale << ' '
-                    << 1 - static_cast<float>(z) / resolution * uvScale
-                    << "\nvn " << normal.X << ' ' << normal.Y << ' ' << normal.Z << '\n';
-            }
-            previous.swap(current);
-            current.swap(next);
-            if (z + 2 <= stepsZ)
+            });
+            for (int local = 0; local < blockEnd - blockStart && obj; ++local)
             {
-                fillRow(next, z + 2);
+                obj.write(rowTexts[local].Data.data(), static_cast<std::streamsize>(rowTexts[local].Data.size()));
             }
         }
-        const auto face = [&](uint64_t a, uint64_t b, uint64_t c) {
-            obj << 'f';
-            for (const auto index : {a, b, c})
-            {
-                obj << ' ' << index << '/' << index << '/' << index;
-            }
-            obj << '\n';
-        };
         const uint64_t stride = static_cast<uint64_t>(stepsX) + 1;
-        for (int z = 0; z < stepsZ && obj; ++z)
-        {
-            for (int x = 0; x < stepsX; ++x)
-            {
-                const uint64_t a = z * stride + x + 1;
-                const uint64_t b = a + stride;
-                face(a, b, a + 1);
-                face(a + 1, b, b + 1);
-            }
-        }
+        WriteChunksParallel(obj, static_cast<size_t>(stepsZ), 16, static_cast<size_t>(stepsX) * 2 * 64,
+                            [&](size_t begin, size_t end, ObjText& text) {
+                                for (size_t z = begin; z < end; ++z)
+                                {
+                                    for (int x = 0; x < stepsX; ++x)
+                                    {
+                                        const uint64_t a = z * stride + x + 1;
+                                        const uint64_t b = a + stride;
+                                        text.Face(a, b, a + 1);
+                                        text.Face(a + 1, b, b + 1);
+                                    }
+                                }
+                            });
         obj.close();
-        if (obj)
+        if (obj && WriteMtl(mtlPath, diffuseTexture) &&
+            MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
         {
-            std::ofstream mtl(mtlPath, std::ios::binary | std::ios::trunc);
-            mtl << "newmtl procedural\nKd 1 1 1\nKa 0 0 0\nKs 0.04 0.04 0.04\nNs 32\n";
-            if (!diffuseTexture.empty())
-            {
-                mtl << "map_Kd " << diffuseTexture << '\n';
-            }
-            mtl.close();
-            if (mtl && MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
-            {
-                return true;
-            }
+            return true;
         }
         std::error_code cleanupError;
         std::filesystem::remove(temporary, cleanupError);
@@ -1433,10 +1922,7 @@ namespace ProcStudio
     bool WriteObj(const std::filesystem::path& path, const Mesh& mesh, bool vertexColors,
                   const std::string& diffuseTexture, std::string& error)
     {
-        std::vector<char> outputBuffer(1024 * 1024);
-        std::ofstream obj;
-        obj.rdbuf()->pubsetbuf(outputBuffer.data(), outputBuffer.size());
-        obj.open(path, std::ios::binary | std::ios::trunc);
+        std::ofstream obj(path, std::ios::binary | std::ios::trunc);
         if (!obj)
         {
             error = "OBJ を書き込めません";
@@ -1445,53 +1931,71 @@ namespace ProcStudio
         auto mtlPath = path;
         mtlPath.replace_extension(".mtl");
         // 先頭行のマーカーにより、エディターは座標変換せず等倍で配置する。
-        // u8string を使う。Windows の string() は日本語など非 ASCII のファイル名で例外や文字化けを起こす。
-        const auto mtlName = mtlPath.filename().u8string();
-        obj << kProceduralObjMarker << "\nmtllib " << std::string(mtlName.begin(), mtlName.end())
-            << "\nusemtl procedural\n";
-        obj.setf(std::ios::fixed);
-        obj.precision(6);
-        for (size_t i = 0; i < mesh.Positions.size(); ++i)
-        {
-            const auto& p = mesh.Positions[i];
-            obj << "v " << p.X << ' ' << p.Y << ' ' << p.Z;
-            if (vertexColors)
+        const auto header = ObjHeader(mtlPath);
+        obj.write(header.data(), static_cast<std::streamsize>(header.size()));
+        constexpr size_t kChunk = 16384;
+        WriteChunksParallel(obj, mesh.Positions.size(), kChunk, vertexColors ? 64 : 40,
+                            [&](size_t begin, size_t end, ObjText& text) {
+                                for (size_t i = begin; i < end; ++i)
+                                {
+                                    const auto& p = mesh.Positions[i];
+                                    text.Text("v ");
+                                    text.Float(p.X);
+                                    text.Char(' ');
+                                    text.Float(p.Y);
+                                    text.Char(' ');
+                                    text.Float(p.Z);
+                                    if (vertexColors)
+                                    {
+                                        const auto& c = mesh.Colors[i];
+                                        text.Char(' ');
+                                        text.Float(c.X);
+                                        text.Char(' ');
+                                        text.Float(c.Y);
+                                        text.Char(' ');
+                                        text.Float(c.Z);
+                                    }
+                                    text.Char('\n');
+                                }
+                            });
+        WriteChunksParallel(obj, mesh.UVs.size(), kChunk, 24, [&](size_t begin, size_t end, ObjText& text) {
+            for (size_t i = begin; i < end; ++i)
             {
-                const auto& c = mesh.Colors[i];
-                obj << ' ' << c.X << ' ' << c.Y << ' ' << c.Z;
+                text.Text("vt ");
+                text.Float(mesh.UVs[i].X);
+                text.Char(' ');
+                text.Float(1 - mesh.UVs[i].Y);
+                text.Char('\n');
             }
-            obj << '\n';
-        }
-        for (const auto& uv : mesh.UVs)
-        {
-            obj << "vt " << uv.X << ' ' << 1 - uv.Y << '\n';
-        }
-        for (const auto& n : mesh.Normals)
-        {
-            obj << "vn " << n.X << ' ' << n.Y << ' ' << n.Z << '\n';
-        }
-        for (size_t i = 0; i + 2 < mesh.Indices.size(); i += 3)
-        {
-            obj << 'f';
-            for (int k = 0; k < 3; ++k)
+        });
+        WriteChunksParallel(obj, mesh.Normals.size(), kChunk, 32, [&](size_t begin, size_t end, ObjText& text) {
+            for (size_t i = begin; i < end; ++i)
             {
-                const uint32_t index = mesh.Indices[i + k] + 1;
-                obj << ' ' << index << '/' << index << '/' << index;
+                const auto& n = mesh.Normals[i];
+                text.Text("vn ");
+                text.Float(n.X);
+                text.Char(' ');
+                text.Float(n.Y);
+                text.Char(' ');
+                text.Float(n.Z);
+                text.Char('\n');
             }
-            obj << '\n';
-        }
-        std::ofstream mtl(mtlPath, std::ios::binary | std::ios::trunc);
-        if (!mtl)
+        });
+        WriteChunksParallel(obj, mesh.Indices.size() / 3, kChunk, 48, [&](size_t begin, size_t end, ObjText& text) {
+            for (size_t t = begin; t < end; ++t)
+            {
+                const size_t i = t * 3;
+                text.Face(uint64_t(mesh.Indices[i]) + 1, uint64_t(mesh.Indices[i + 1]) + 1,
+                          uint64_t(mesh.Indices[i + 2]) + 1);
+            }
+        });
+        obj.close();
+        if (!WriteMtl(mtlPath, diffuseTexture))
         {
             error = "MTL を書き込めません";
             return false;
         }
-        mtl << "newmtl procedural\nKd 1 1 1\nKa 0 0 0\nKs 0.04 0.04 0.04\nNs 32\n";
-        if (!diffuseTexture.empty())
-        {
-            mtl << "map_Kd " << diffuseTexture << '\n';
-        }
-        if (!obj.good() || !mtl.good())
+        if (!obj)
         {
             error = "ファイル書き込み中にエラーが発生しました";
             return false;
@@ -1509,3 +2013,4 @@ namespace ProcStudio
         return std::getline(input, line) && line.rfind("# Procedural Studio", 0) == 0;
     }
 }
+

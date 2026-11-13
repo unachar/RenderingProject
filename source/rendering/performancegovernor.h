@@ -40,6 +40,11 @@ class PerformanceGovernor final
         float DowngradeDelay = 0.20f; // 予算超過がこの秒数続いたら段階を下げる
         float UpgradeDelay = 2.0f;    // 余裕がこの秒数続いたら段階を戻す
         float ResolutionDelay = 3.0f; // 最下位段でこの秒数超過したら解像度を下げる
+        // 解像度の変更は GPU 待機 + シーンの全レンダーターゲット再作成（= ヒッチ）と、
+        // TAA / NRD / ReSTIR / Lumen など全時間方向履歴の破棄（= 数十フレームぼやける・ノイズが戻る）を伴う。
+        // 時間方向アップスケーラー（DLSS / TSR）使用中は既定で解像度を動かさない。
+        bool KeepResolutionWithTemporalUpscaler = true;
+        float ResolutionRestoreDelay = 10.0f; // 解像度を戻すのは、余裕がこの秒数続いてから（往復防止）
         // false（既定）: ユーザーが ON にした機能（Realtime GI / RT反射 / RT AO / SSAO）は切り替えず、
         // サンプル数・距離・ライト数などのコストだけを下げる。
         // 以前は段階2で Realtime GI → SSGI、段階5で GI OFF に勝手に切り替えていたため、
@@ -121,6 +126,7 @@ class PerformanceGovernor final
         {
             s_OverTime += dt;
             s_UnderTime = 0.0f;
+            s_ResolutionUnderTime = 0.0f;
         }
         else if (s_SmoothedMs < s_BudgetMs * s_Options.UpgradeMargin)
         {
@@ -147,7 +153,13 @@ class PerformanceGovernor final
             s_UnderTime = 0.0f;
             if (s_ResolutionReduced)
             {
-                RestoreResolution();
+                // 解像度だけは長めに様子を見る。すぐ戻すと「下げる→戻す」を繰り返してカクつく。
+                s_ResolutionUnderTime += s_Options.UpgradeDelay;
+                if (s_ResolutionUnderTime >= s_Options.ResolutionRestoreDelay)
+                {
+                    s_ResolutionUnderTime = 0.0f;
+                    RestoreResolution();
+                }
             }
             else if (s_Tier > 0)
             {
@@ -157,7 +169,8 @@ class PerformanceGovernor final
         }
 
         // 最終手段：解像度。
-        if (s_Tier == kTierCount - 1 && s_Options.AllowResolutionScaling && !s_ResolutionReduced)
+        if (s_Tier == kTierCount - 1 && s_Options.AllowResolutionScaling && !s_ResolutionReduced &&
+            !(s_Options.KeepResolutionWithTemporalUpscaler && IsTemporalUpscalerSelected()))
         {
             s_ResolutionOverTime = s_SmoothedMs > s_BudgetMs ? s_ResolutionOverTime + dt : 0.0f;
             if (s_ResolutionOverTime >= s_Options.ResolutionDelay)
@@ -178,6 +191,9 @@ class PerformanceGovernor final
         ImGui::Text("段階: %d (%s)   GPU: %.2f ms / 予算 %.2f ms", s_Tier, GetTierName(s_Tier), s_SmoothedMs,
                     s_BudgetMs);
         ImGui::Checkbox("解像度も下げてよい", &s_Options.AllowResolutionScaling);
+        ImGui::BeginDisabled(!s_Options.AllowResolutionScaling);
+        ImGui::Checkbox("DLSS / TSR 中は解像度を変えない（推奨）", &s_Options.KeepResolutionWithTemporalUpscaler);
+        ImGui::EndDisabled();
         ImGui::SliderFloat("GPU予算の割合", &s_Options.BudgetHeadroom, 0.6f, 1.0f, "%.2f");
         if (ImGui::Checkbox("機能の自動OFFを許可（RT反射 / AO。GI は切り替えません）", &s_Options.AllowFeatureToggles))
         {
@@ -283,6 +299,13 @@ class PerformanceGovernor final
     static inline float s_UnderTime = 0.0f;
     static inline float s_ResolutionOverTime = 0.0f;
     static inline bool s_ResolutionReduced = false;
+    static inline float s_ResolutionUnderTime = 0.0f;
+
+    static bool IsTemporalUpscalerSelected()
+    {
+        const UpscaleMode mode = RendererSettings::GetUpscaleMode();
+        return mode == UpscaleMode::Dlss || mode == UpscaleMode::Tsr;
+    }
     static inline uint64_t s_LastSerial = 0;
 
     static Baseline ReadCurrent()
@@ -444,7 +467,10 @@ class PerformanceGovernor final
 
     static void ReduceResolution()
     {
-        const float target = (std::max)(0.35f, s_Base.ResolutionScale * 0.8f); // NIS も多段で 50% 未満に対応したため
+        // NIS は多段で 50% 未満に対応。DLSS は 1/3 未満で使えなくなる（Bilateral に落ちる）ので 0.5 を下限にする。
+        const float floor = IsTemporalUpscalerSelected() ? 0.5f : 0.35f;
+        const float target = (std::max)(floor, s_Base.ResolutionScale * 0.8f);
+        s_ResolutionUnderTime = 0.0f;
         if (target < RenderConfiguration::GetResolutionScale() - 0.01f)
         {
             RenderConfiguration::SetResolutionScale(target);
@@ -464,3 +490,4 @@ class PerformanceGovernor final
         s_ResolutionReduced = false;
     }
 };
+

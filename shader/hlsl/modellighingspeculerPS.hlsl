@@ -137,7 +137,7 @@ float4 main(in PSInput3D In) : SV_Target
     float4 baseColor = In.Diffuse;
     if (UseTexture != 0)
     {
-        baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
+        baseColor *= SampleMaterialBiasCommon(g_Texture, g_SamplerState, In.TexCoord);
     }
     baseColor.a *= saturate(MaterialAlpha);
 
@@ -153,7 +153,7 @@ float4 main(in PSInput3D In) : SV_Target
     float3 meshNormal = SafeNormalize(In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f), float3(0.0f, 1.0f, 0.0f));
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
+        float3 tangentNormal = DecodeTangentNormalSample(SampleMaterialBiasCommon(g_NormalTexture, g_SamplerState, In.TexCoord));
         meshNormal = ApplyNormalMapCommon(meshNormal, In.WorldPos, In.TexCoord, tangentNormal);
     }
     float3 roundedNormal = SafeNormalize(meshNormal + viewDir, meshNormal);
@@ -209,3 +209,4 @@ float4 main(in PSInput3D In) : SV_Target
     color = lerp(color, sqrt(saturate(color)), 0.12f);
     return float4(saturate(color) * baseColor.a, baseColor.a);
 }
+

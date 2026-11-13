@@ -23,6 +23,8 @@
 #include "projectmanager.h"
 #include "renderconfiguration.h"
 #include "renderersettings.h"
+#include "texturemipbias.h"
+#include "dlssupscaler.h"
 #include "systemmanager.h"
 #include "texturemanager.h"
 #include "world.h"
@@ -1751,6 +1753,13 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("mesh_shader.ConeAxes", mesh_shader.ConeAxes, 0, 1);
     field("mesh_shader.Bias", mesh_shader.Bias, -1000000, 1000000);
     field("mesh_shader.MaxMeshlets", mesh_shader.MaxMeshlets, 1, 10000000);
+    auto& dlssSettings = DlssUpscaler::GetSettings();
+    field("dlss.Sharpness", dlssSettings.Sharpness, 0, 1);
+    field("dlss.RenderPreset", dlssSettings.RenderPreset, 0, 15);
+    auto& mipBias = TextureMipBias::GetSettings();
+    field("textureMipBias.Enabled", mipBias.Enabled, 0, 1);
+    field("textureMipBias.ApplyToTsr", mipBias.ApplyToTsr, 0, 1);
+    field("textureMipBias.Offset", mipBias.Offset, -1, 1);
     auto& visibility = GPUVisibility::GetSettings();
     field("visibility.Frustum", visibility.Frustum, 0, 1);
     field("visibility.Occlusion", visibility.Occlusion, 0, 1);
@@ -2284,4 +2293,5 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
+
 

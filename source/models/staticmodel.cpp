@@ -3,6 +3,9 @@
 #include "../cachefile.h"
 #include "envflags.h"
 #include <unordered_set>
+#include <unordered_map>
+#include <charconv>
+#include <climits>
 #include "gpudriven/gpudrivenrenderer.h"
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 #define _CRT_SECURE_NO_WARNINGS
@@ -499,21 +502,132 @@ bool StaticModelResource::BuildLodIndexBuffers(ID3D12Device* device, const vecto
     return true;
 }
 
+namespace
+{
+    // OBJ 高速パーサー用の補助。iostream / istringstream / sscanf を使わず、
+    // ファイル全体を 1 回読み込んで std::from_chars で直接数値化する。
+    const char* ObjSkipSpaces(const char* p, const char* end)
+    {
+        while (p < end && (*p == ' ' || *p == '\t'))
+        {
+            ++p;
+        }
+        return p;
+    }
+
+    bool ObjParseFloat(const char*& p, const char* end, float& value)
+    {
+        p = ObjSkipSpaces(p, end);
+        if (p < end && *p == '+')
+        {
+            ++p;
+        }
+        const auto result = std::from_chars(p, end, value);
+        if (result.ec != std::errc{})
+        {
+            return false;
+        }
+        p = result.ptr;
+        return true;
+    }
+
+    bool ObjParseInt(const char*& p, const char* end, int& value)
+    {
+        if (p < end && *p == '+')
+        {
+            ++p;
+        }
+        const auto result = std::from_chars(p, end, value);
+        if (result.ec != std::errc{})
+        {
+            return false;
+        }
+        p = result.ptr;
+        return true;
+    }
+
+    bool ObjLineStarts(const char* p, const char* end, const char* keyword, size_t length)
+    {
+        return static_cast<size_t>(end - p) >= length && memcmp(p, keyword, length) == 0;
+    }
+
+    struct ObjCornerKey
+    {
+        unsigned int V, T, N;
+        bool operator==(const ObjCornerKey& other) const { return V == other.V && T == other.T && N == other.N; }
+    };
+
+    struct ObjCornerHash
+    {
+        size_t operator()(const ObjCornerKey& key) const
+        {
+            uint64_t h = key.V * 0x9E3779B97F4A7C15ull;
+            h ^= (key.T + 0x632BE59BD9B4E019ull + (h << 6) + (h >> 2));
+            h ^= (key.N * 0x85EBCA77C2B2AE63ull + (h << 6) + (h >> 2));
+            return static_cast<size_t>(h);
+        }
+    };
+}
+
 bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 {
     LoadLODMetadata(fileName);
+    const filesystem::path objPath = ModelPathFromUtf8(fileName);
+
+    // ファイルを 1 回だけ読み込む（従来は usemtl 走査と本解析で 2 回、getline で読んでいた）。
+    string fileData;
+    {
+        ifstream ifs(objPath, ios::binary | ios::ate);
+        if (!ifs)
+        {
+            char buf[512];
+            sprintf_s(buf, "ERROR: Failed to open OBJ file: %s\n", fileName);
+            Debug::Log("%s", buf);
+            return false;
+        }
+        const auto size = static_cast<size_t>(ifs.tellg());
+        fileData.resize(size);
+        ifs.seekg(0);
+        if (size > 0 && !ifs.read(fileData.data(), static_cast<streamsize>(size)))
+        {
+            Debug::Log("ERROR: Failed to read OBJ file: %s\n", fileName);
+            return false;
+        }
+    }
+    const char* const dataBegin = fileData.data();
+    const char* const dataEnd = dataBegin + fileData.size();
+    const auto nextLine = [dataEnd](const char* p, const char*& lineEnd) {
+        const char* newline = static_cast<const char*>(memchr(p, '\n', static_cast<size_t>(dataEnd - p)));
+        lineEnd = newline ? newline : dataEnd;
+        const char* following = newline ? newline + 1 : dataEnd;
+        if (lineEnd > p && lineEnd[-1] == '\r')
+        {
+            --lineEnd;
+        }
+        return following;
+    };
+
+    // 前走査: マテリアルセクション数と各要素数を数え、配列を一括確保する。
     // 旧 OBJ インポーターは全ポリゴンを単一セクションにまとめる。その単一マテリアルの
     // 動作を保持しつつ、Assimp 経由では設定済みのマテリアルセクションを保持する。
-    const filesystem::path objPath = ModelPathFromUtf8(fileName);
-    ifstream source(objPath);
     unordered_set<string> sectionMaterials;
-    string sourceLine;
-    while (getline(source, sourceLine))
+    size_t positionCount = 0, texCoordCount = 0, normalCount = 0, faceCount = 0;
+    for (const char* p = dataBegin; p < dataEnd;)
     {
-        if (sourceLine.rfind("usemtl ", 0) == 0)
+        const char* lineEnd;
+        const char* following = nextLine(p, lineEnd);
+        if (lineEnd - p >= 2)
         {
-            sectionMaterials.insert(ObjStatementArgument(sourceLine, 7));
+            if (p[0] == 'v' && p[1] == ' ') ++positionCount;
+            else if (p[0] == 'v' && p[1] == 't') ++texCoordCount;
+            else if (p[0] == 'v' && p[1] == 'n') ++normalCount;
+            else if (p[0] == 'f' && p[1] == ' ') ++faceCount;
+            else if (ObjLineStarts(p, lineEnd, "usemtl ", 7))
+            {
+                sectionMaterials.insert(ObjStatementArgument(string(p, lineEnd), 7));
+            }
         }
+        p = following;
     }
     if (sectionMaterials.size() > 1)
     {
@@ -521,32 +635,182 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     }
     m_MaterialPath.clear();
 
-    ifstream ifs(objPath);
-    if (!ifs)
-    {
-        char buf[512];
-        sprintf_s(buf, "ERROR: Failed to open OBJ file: %s\n", fileName);
-        Debug::Log("%s", buf);
-        return false;
-    }
-
     Reserve();
+    m_Positions.reserve(positionCount);
+    m_TexCoords.reserve(texCoordCount);
+    m_Normals.reserve(normalCount);
+    // 頂点は (v, vt, vn) の組で共有する。従来は角ごとに頂点を複製していたため、
+    // 頂点数が約 6 倍になり、TEO 生成・LOD 簡略化・メッシュレット構築・GPU 転送がすべて重くなっていた。
+    m_Vertices.reserve((std::max)(positionCount, normalCount));
+    m_Indices.reserve(faceCount * 3);
 
     unordered_map<string, MtlData> materialMap;
     XMFLOAT4 currentKd = {1.0f, 1.0f, 1.0f, 1.0f};
     // 任意の頂点色拡張 "v x y z r g b"（Blender、MeshLab、Procedural Studio）。
     // 位置と同じインデックスを使い、マテリアルの Kd と乗算する。
     vector<XMFLOAT3> vertexColors;
+    vertexColors.reserve(positionCount);
     bool hasVertexColors = false;
 
-    string line;
-    vector<string> tokens;
-    tokens.reserve(4);
-    while (getline(ifs, line))
+    // v == vt == vn の角（Procedural Studio の出力はすべてこれ）は配列で、それ以外はハッシュで共有する。
+    vector<unsigned int> uniformCorners;
+    unordered_map<ObjCornerKey, unsigned int, ObjCornerHash> mixedCorners;
+    const auto resetCornerCache = [&]() {
+        uniformCorners.assign(uniformCorners.size(), UINT_MAX);
+        mixedCorners.clear();
+    };
+
+    vector<unsigned int> vi, ti, ni;
+    for (const char* lineStart = dataBegin; lineStart < dataEnd;)
     {
-        if (line.rfind("mtllib ", 0) == 0)
+        const char* lineEnd;
+        const char* following = nextLine(lineStart, lineEnd);
+        const char* p = lineStart;
+        if (lineEnd - p < 2)
         {
-            const string mtlName = ObjStatementArgument(line, 7);
+            lineStart = following;
+            continue;
+        }
+        if (p[0] == 'v' && p[1] == ' ')
+        {
+            p += 2;
+            XMFLOAT3 pos{};
+            XMFLOAT3 color{1.0f, 1.0f, 1.0f};
+            (void)(ObjParseFloat(p, lineEnd, pos.x) && ObjParseFloat(p, lineEnd, pos.y) && ObjParseFloat(p, lineEnd, pos.z));
+            XMFLOAT3 parsedColor{};
+            if (ObjParseFloat(p, lineEnd, parsedColor.x) && ObjParseFloat(p, lineEnd, parsedColor.y) &&
+                ObjParseFloat(p, lineEnd, parsedColor.z))
+            {
+                color = parsedColor;
+                hasVertexColors = true;
+            }
+            m_Positions.push_back(pos);
+            vertexColors.push_back(color);
+        }
+        else if (p[0] == 'v' && p[1] == 't' && lineEnd - p >= 3 && (p[2] == ' ' || p[2] == '\t'))
+        {
+            p += 3;
+            XMFLOAT2 tex{};
+            (void)(ObjParseFloat(p, lineEnd, tex.x) && ObjParseFloat(p, lineEnd, tex.y));
+            tex.y = 1.0f - tex.y;
+            m_TexCoords.push_back(tex);
+        }
+        else if (p[0] == 'v' && p[1] == 'n' && lineEnd - p >= 3 && (p[2] == ' ' || p[2] == '\t'))
+        {
+            p += 3;
+            XMFLOAT3 normal{};
+            (void)(ObjParseFloat(p, lineEnd, normal.x) && ObjParseFloat(p, lineEnd, normal.y) &&
+                   ObjParseFloat(p, lineEnd, normal.z));
+            m_Normals.push_back(normal);
+        }
+        else if (p[0] == 'f' && p[1] == ' ')
+        {
+            p += 2;
+            // 任意の頂点数のポリゴンを扇状に三角形化する。負のインデックスは現在の末尾が基準。
+            const auto resolve = [](int value, size_t size) -> unsigned int {
+                if (value < 0)
+                {
+                    const long long index = static_cast<long long>(size) + value + 1;
+                    return index > 0 ? static_cast<unsigned int>(index) : 0u;
+                }
+                return static_cast<unsigned int>(value);
+            };
+            vi.clear();
+            ti.clear();
+            ni.clear();
+            while (true)
+            {
+                p = ObjSkipSpaces(p, lineEnd);
+                if (p >= lineEnd)
+                {
+                    break;
+                }
+                // 書式: v, v/vt, v//vn, v/vt/vn
+                int v = 0, tc = 0, n = 0;
+                const char* tokenStart = p;
+                ObjParseInt(p, lineEnd, v);
+                if (p < lineEnd && *p == '/')
+                {
+                    ++p;
+                    if (p < lineEnd && *p != '/')
+                    {
+                        ObjParseInt(p, lineEnd, tc);
+                    }
+                    if (p < lineEnd && *p == '/')
+                    {
+                        ++p;
+                        ObjParseInt(p, lineEnd, n);
+                    }
+                }
+                // 解析できない文字は飛ばして無限ループを防ぐ。
+                while (p < lineEnd && *p != ' ' && *p != '\t')
+                {
+                    ++p;
+                }
+                if (p == tokenStart)
+                {
+                    ++p;
+                }
+                vi.push_back(resolve(v, m_Positions.size()));
+                ti.push_back(resolve(tc, m_TexCoords.size()));
+                ni.push_back(resolve(n, m_Normals.size()));
+            }
+
+            const auto corner = [&](size_t idx) -> unsigned int {
+                const unsigned int v = vi[idx], t = ti[idx], n = ni[idx];
+                unsigned int* slot = nullptr;
+                if (v == t && v == n)
+                {
+                    if (v >= uniformCorners.size())
+                    {
+                        uniformCorners.resize((std::max)(static_cast<size_t>(v) + 1, m_Positions.size() + 1),
+                                              UINT_MAX);
+                    }
+                    slot = &uniformCorners[v];
+                }
+                else
+                {
+                    slot = &mixedCorners.try_emplace(ObjCornerKey{v, t, n}, UINT_MAX).first->second;
+                }
+                if (*slot != UINT_MAX)
+                {
+                    return *slot;
+                }
+                StaticModelVertex vertex{};
+                if (v > 0 && v <= (unsigned int)m_Positions.size())
+                {
+                    vertex.Position = m_Positions[v - 1];
+                }
+                if (n > 0 && n <= (unsigned int)m_Normals.size())
+                {
+                    vertex.Normal = m_Normals[n - 1];
+                }
+                if (t > 0 && t <= (unsigned int)m_TexCoords.size())
+                {
+                    vertex.TexCoord = m_TexCoords[t - 1];
+                }
+                vertex.Diffuse = currentKd;
+                if (hasVertexColors && v > 0 && v <= (unsigned int)vertexColors.size())
+                {
+                    const XMFLOAT3& color = vertexColors[v - 1];
+                    vertex.Diffuse.x *= color.x;
+                    vertex.Diffuse.y *= color.y;
+                    vertex.Diffuse.z *= color.z;
+                }
+                *slot = static_cast<unsigned int>(m_Vertices.size());
+                m_Vertices.push_back(vertex);
+                return *slot;
+            };
+            for (size_t i = 0; i + 2 < vi.size(); ++i)
+            {
+                m_Indices.push_back(corner(0));
+                m_Indices.push_back(corner(i + 1));
+                m_Indices.push_back(corner(i + 2));
+            }
+        }
+        else if (ObjLineStarts(p, lineEnd, "mtllib ", 7))
+        {
+            const string mtlName = ObjStatementArgument(string(p, lineEnd), 7);
             const auto dir = objPath.parent_path();
             const filesystem::path mtlPath =
                 dir.empty() ? ModelPathFromUtf8(mtlName.c_str()) : dir / ModelPathFromUtf8(mtlName.c_str());
@@ -563,132 +827,21 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
                 }
             }
         }
-        else if (line.rfind("usemtl ", 0) == 0)
+        else if (ObjLineStarts(p, lineEnd, "usemtl ", 7))
         {
-            const string mtlName = ObjStatementArgument(line, 7);
+            const string mtlName = ObjStatementArgument(string(p, lineEnd), 7);
             if (!mtlName.empty())
             {
                 auto it = materialMap.find(mtlName);
                 if (it != materialMap.end())
                 {
                     currentKd = it->second.Kd;
+                    // Kd が変わると頂点色も変わるため、以降の角は共有しない。
+                    resetCornerCache();
                 }
             }
         }
-        else if (line.rfind("v ", 0) == 0)
-        {
-            XMFLOAT3 pos{};
-            XMFLOAT3 color{1.0f, 1.0f, 1.0f};
-            istringstream iss(line.substr(2));
-            iss >> pos.x >> pos.y >> pos.z;
-            if (iss >> color.x >> color.y >> color.z)
-            {
-                hasVertexColors = true;
-            }
-            else
-            {
-                color = {1.0f, 1.0f, 1.0f};
-            }
-            m_Positions.push_back(pos);
-            vertexColors.push_back(color);
-        }
-        else if (line.rfind("vt ", 0) == 0)
-        {
-            XMFLOAT2 tex{};
-            istringstream iss(line.substr(3));
-            iss >> tex.x >> tex.y;
-            tex.y = 1.0f - tex.y;
-            m_TexCoords.push_back(tex);
-        }
-        else if (line.rfind("vn ", 0) == 0)
-        {
-            XMFLOAT3 normal{};
-            istringstream iss(line.substr(3));
-            iss >> normal.x >> normal.y >> normal.z;
-            m_Normals.push_back(normal);
-        }
-        else if (line.rfind("f ", 0) == 0)
-        {
-            istringstream iss(line.substr(2));
-            string tok;
-            tokens.clear();
-            while (iss >> tok)
-            {
-                tokens.push_back(tok);
-            }
-
-            // 任意の頂点数のポリゴンを扇状に三角形化する。負のインデックスは現在の末尾が基準。
-            thread_local vector<unsigned int> vi, ti, ni;
-            vi.assign(tokens.size(), 0);
-            ti.assign(tokens.size(), 0);
-            ni.assign(tokens.size(), 0);
-            const auto resolve = [](int value, size_t size) -> unsigned int {
-                if (value < 0)
-                {
-                    const long long index = static_cast<long long>(size) + value + 1;
-                    return index > 0 ? static_cast<unsigned int>(index) : 0u;
-                }
-                return static_cast<unsigned int>(value);
-            };
-            int count = 0;
-            for (auto& t : tokens)
-            {
-                int v = 0;
-                int tc = 0;
-                int n = 0;
-                if (sscanf_s(t.c_str(), "%d/%d/%d", &v, &tc, &n) == 3)
-                {
-                }
-                else if (sscanf_s(t.c_str(), "%d//%d", &v, &n) == 2)
-                {
-                    tc = 0;
-                }
-                else if (sscanf_s(t.c_str(), "%d/%d", &v, &tc) == 2)
-                {
-                }
-                else if (sscanf_s(t.c_str(), "%d", &v) == 1)
-                {
-                }
-                vi[count] = resolve(v, m_Positions.size());
-                ti[count] = resolve(tc, m_TexCoords.size());
-                ni[count] = resolve(n, m_Normals.size());
-                count++;
-            }
-
-            for (int i = 0; i < count - 2; ++i)
-            {
-                int faceIndices[3] = {0, i + 1, i + 2};
-                for (int j = 0; j < 3; ++j)
-                {
-                    int idx = faceIndices[j];
-                    StaticModelVertex vertex{};
-
-                    if (vi[idx] > 0 && vi[idx] <= (unsigned int)m_Positions.size())
-                    {
-                        vertex.Position = m_Positions[vi[idx] - 1];
-                    }
-                    if (ni[idx] > 0 && ni[idx] <= (unsigned int)m_Normals.size())
-                    {
-                        vertex.Normal = m_Normals[ni[idx] - 1];
-                    }
-                    if (ti[idx] > 0 && ti[idx] <= (unsigned int)m_TexCoords.size())
-                    {
-                        vertex.TexCoord = m_TexCoords[ti[idx] - 1];
-                    }
-
-                    vertex.Diffuse = currentKd;
-                    if (hasVertexColors && vi[idx] > 0 && vi[idx] <= (unsigned int)vertexColors.size())
-                    {
-                        const XMFLOAT3& color = vertexColors[vi[idx] - 1];
-                        vertex.Diffuse.x *= color.x;
-                        vertex.Diffuse.y *= color.y;
-                        vertex.Diffuse.z *= color.z;
-                    }
-                    m_Indices.push_back((unsigned int)m_Vertices.size());
-                    m_Vertices.push_back(vertex);
-                }
-            }
-        }
+        lineStart = following;
     }
 
     if (m_Vertices.empty())
@@ -1844,4 +1997,5 @@ void StaticModelResource::RefreshResourceMap(const char* fileName, bool isConver
         Debug::Log("WARNING: Model map cache could not be saved: %s\n", fileName);
     }
 }
+
 

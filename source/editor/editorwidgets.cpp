@@ -12,6 +12,7 @@
 #include "renderersettings.h"
 #include "dlssupscaler.h"
 #include "temporalupscaler.h"
+#include "texturemipbias.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -126,14 +127,38 @@ namespace EditorWidgets
         float resolutionScale = RenderConfiguration::GetResolutionScale();
         int resolutionPercent = static_cast<int>(roundf(resolutionScale * 100.0f));
         ImGui::BeginDisabled(vendorUpscaler && quality != UpscaleQuality::Custom);
-        const int minimumResolutionPercent = 20; // FSR / NIS（50% 未満は多段）/ Bilateral 共通
-        if (ImGui::SliderInt("内部解像度", &resolutionPercent, minimumResolutionPercent, 100, "%d%%"))
+        // DLSS は 1/3（Ultra Performance）未満を受け付けず Bilateral に落ちてぼやけるので 34% 以上に制限する。
+        const int minimumResolutionPercent = mode == static_cast<int>(UpscaleMode::Dlss) ? 34 : 20;
+        if (resolutionPercent < minimumResolutionPercent)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "DLSS の下限（34%%）未満のため Bilateral になっています");
+        }
+        // ドラッグ中は毎フレーム解像度を変えない。
+        // 解像度の変更は「GPU 待機 + シーンの全レンダーターゲット再作成 + 全時間方向履歴の破棄」なので、
+        // 以前はドラッグ中ずっとこれが毎フレーム起き、カクつき続け、離した後もしばらくぼやけていた。
+        // ドラッグ中は値だけ表示し、離した時に 1 回だけ適用する。
+        static int s_DraggingPercent = -1;
+        if (s_DraggingPercent >= 0)
+        {
+            resolutionPercent = s_DraggingPercent;
+        }
+        ImGui::SliderInt("内部解像度", &resolutionPercent, minimumResolutionPercent, 100, "%d%%");
+        if (ImGui::IsItemActive())
+        {
+            s_DraggingPercent = resolutionPercent;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit() || (s_DraggingPercent >= 0 && !ImGui::IsItemActive()))
         {
             RenderConfiguration::SetResolutionScale(static_cast<float>(resolutionPercent) / 100.0f);
             if (vendorUpscaler)
             {
                 RendererSettings::SetUpscaleQuality(UpscaleQuality::Custom);
             }
+            s_DraggingPercent = -1;
+        }
+        else if (s_DraggingPercent >= 0)
+        {
+            ImGui::TextDisabled("離すと %d%% を適用します", s_DraggingPercent);
         }
         ImGui::EndDisabled();
 
@@ -165,8 +190,60 @@ namespace EditorWidgets
         else if (mode == static_cast<int>(UpscaleMode::Dlss))
         {
             ImGui::TextWrapped("%s", DlssUpscaler::GetStatus());
+            auto& dlss = DlssUpscaler::GetSettings();
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::SliderFloat("##DlssSharpness", &dlss.Sharpness, 0.0f, 1.0f, "シャープネス %.2f");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("DLSS の後段に RCAS（コントラスト適応シャープン）を掛けます。0 で無効。\n"
+                                  "上げすぎると輪郭に白い縁（ハロー）が出ます。右クリックで 0.35 に戻す");
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            {
+                dlss.Sharpness = 0.35f;
+            }
+            {
+                const char* presets[] = {"既定（ドライバー）", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"};
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::Combo("##DlssPreset", &dlss.RenderPreset, presets, IM_ARRAYSIZE(presets));
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("DLSS のモデル（レンダープリセット）。新しいもの（J / K = Transformer）ほど\n"
+                                      "低解像度でもくっきりしますが、DLL が対応していない値は既定として扱われます。\n"
+                                      "変更すると DLSS を作り直します（一瞬止まります）");
+                }
+            }
+            ImGui::Checkbox("ジッター符号を反転（検証用）", &DlssUpscaler::JitterSignFlipped());
+            ImGui::TextDisabled("フィーチャー再作成: %u 回 / 作業 VRAM: %.2f MiB", DlssUpscaler::GetFeatureRecreateCount(),
+                                static_cast<double>(DlssUpscaler::GetResourceBytes()) / 1048576.0);
             ImGui::TextWrapped(
                 "深度・動き・サブピクセルサンプルで時間方向に復元します。利用できない場合は Bilateral に戻ります。");
+        }
+
+        // テクスチャ Mip LOD バイアス（DLSS / TSR のみ。空間アップスケーラーではちらつきになるので掛けない）
+        if (mode == static_cast<int>(UpscaleMode::Dlss) || mode == static_cast<int>(UpscaleMode::Tsr))
+        {
+            auto& mipBias = TextureMipBias::GetSettings();
+            ImGui::SeparatorText("テクスチャ Mip LOD バイアス");
+            ImGui::Checkbox("有効##TextureMipBias", &mipBias.Enabled);
+            if (mode == static_cast<int>(UpscaleMode::Tsr))
+            {
+                ImGui::Checkbox("TSR にも適用##TextureMipBias", &mipBias.ApplyToTsr);
+            }
+            ImGui::BeginDisabled(!mipBias.Enabled);
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::SliderFloat("##TextureMipBiasOffset", &mipBias.Offset, -1.0f, 1.0f, "微調整 %+.2f");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("マイナス：さらにシャープ（モアレ・ちらつきが出やすい）\nプラス：穏やか\n右クリックで 0 に戻す");
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            {
+                mipBias.Offset = 0.0f;
+            }
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("自動 %+.2f → 適用中 %+.2f（log2(内部 / 表示)）", TextureMipBias::ComputeAutomaticBias(),
+                                TextureMipBias::GetCurrentBias());
         }
     }
 
@@ -725,4 +802,5 @@ namespace EditorWidgets
     }
 
 } // 名前空間 EditorWidgets の終わり。
+
 

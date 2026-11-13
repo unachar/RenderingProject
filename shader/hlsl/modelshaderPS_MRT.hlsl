@@ -29,7 +29,7 @@ GBufferDepthOutput main(in PSInput3D In)
     }
     if (UseTexture)
     {
-        baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
+        baseColor *= SampleMaterialBiasCommon(g_Texture, g_SamplerState, materialUv);
     }
 
     float assetMetallic = mMetallic;
@@ -60,7 +60,7 @@ GBufferDepthOutput main(in PSInput3D In)
     float3 normal = In.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
+        float3 tangentNormal = DecodeTangentNormalSample(SampleMaterialBiasCommon(g_NormalTexture, g_SamplerState, materialUv));
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
     else
@@ -95,5 +95,6 @@ GBufferDepthOutput main(in PSInput3D In)
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     return output;
 }
+
 
 

@@ -193,6 +193,52 @@ namespace ProcStudio
 
     inline constexpr int kMaxTerrainMaps = 4;
 
+    // リアルな地形のための形状・侵食・配色パラメーター。既定値では従来の地形と同じ形になる（従来クランプされていた山頂・谷底のみ滑らかに丸める）。
+    struct TerrainShapeParams
+    {
+        // 形状。
+        float MacroWarp = 0.0f;       // 低周波のドメインワープ。尾根や谷を自然に蛇行させる。
+        float RidgeBlend = 0.0f;      // リッジノイズとの合成率。鋭い稜線（山脈）を作る。
+        float MountainMask = 0.0f;    // 山地と平地の分布マスクの強さ。0 で全域が均一。
+        float MaskFrequency = 1.0f;   // 分布マスクの周波数（1区画あたり）。
+        float Exponent = 1.0f;        // 高さの再分布。1 より大きいと谷が広く平らに、峰が鋭くなる。
+        int TerraceSteps = 0;         // 段丘（台地）の段数。0 で無効。
+        float TerraceStrength = 0.6f; // 段丘の強さ。
+        float SeaLevel = 0.0f;        // 海面（正規化した高さ）。0 で無効。
+        float SeaFlatten = 0.7f;      // 海面より下を平らにする量。
+        float EdgeFalloff = 0.0f;     // 外周を下げて島にする幅。0 で無効。
+        float MicroDetail = 0.0f;     // 急斜面に加える細かな岩の凹凸。
+        // 侵食。
+        int ThermalIterations = 0;    // 熱侵食（崩落）の反復回数。
+        float TalusAngle = 38.0f;     // 安息角（度）。これより急な斜面が崩れる。
+        float HydraulicDensity = 0.0f; // 水滴侵食の水滴数（頂点 1 つあたり）。0 で無効。
+        float ErosionRate = 0.3f;
+        float DepositionRate = 0.3f;
+        float Evaporation = 0.02f;
+        float Inertia = 0.05f;
+        float SedimentCapacity = 4.0f;
+        // 配色（正規化した高さ・傾斜の境界）。
+        float SandLine = 0.20f;
+        float RockLine = 0.625f;
+        float SnowLine = 0.83f;
+        float RockSlope = 0.675f;
+    };
+
+    enum class TerrainPreset
+    {
+        Default,
+        Mountains,
+        Hills,
+        Mesa,
+        Island,
+        Canyon,
+        Count
+    };
+
+    const char* TerrainPresetName(TerrainPreset preset);
+    // 形状・侵食・配色をプリセット値に置き換える（ノイズ設定は変更しない）。
+    void ApplyTerrainPreset(TerrainShapeParams& params, TerrainPreset preset);
+
     struct ModelParams
     {
         ModelKind Kind = ModelKind::FractalTree;
@@ -205,6 +251,7 @@ namespace ProcStudio
         bool TerrainColors = true;
         int TerrainMapsX = 1;
         int TerrainMapsZ = 1;
+        TerrainShapeParams Terrain;
         // 木。
         int Depth = 6;
         int Branches = 3;
@@ -244,3 +291,4 @@ namespace ProcStudio
     bool WriteObj(const std::filesystem::path& path, const Mesh& mesh, bool vertexColors,
                   const std::string& diffuseTexture, std::string& error);
 }
+

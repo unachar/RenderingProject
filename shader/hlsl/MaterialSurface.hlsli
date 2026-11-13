@@ -483,9 +483,9 @@ float4 SampleAssetTexture(uint index, float2 uv, SamplerState materialSampler, f
         return fallback;
     }
 #ifdef SHADER_VISIBILITY_RESOLVE
-    return LoadMaterialTexture(index).SampleGrad(materialSampler, uv, VisibilityUvDx, VisibilityUvDy);
+    return SampleMaterialGradCommon(LoadMaterialTexture(index), materialSampler, uv, VisibilityUvDx, VisibilityUvDy);
 #else
-    return LoadMaterialTexture(index).Sample(materialSampler, uv);
+    return SampleMaterialBiasCommon(LoadMaterialTexture(index), materialSampler, uv);
 #endif
 }
 
@@ -553,3 +553,4 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
 // マテリアルグラフの描画時評価（GPU）。ScaleAssetNormal / LoadMaterialTexture の後に置く
 #include "MaterialGraphVM.hlsli"
 #endif
+

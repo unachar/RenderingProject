@@ -21,6 +21,8 @@ cbuffer BuilderConstants : register(b0)
     uint Padding;
 };
 
+groupshared LightInstanceInput g_Instances[160];
+
 [numthreads(64, 1, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint index = dispatchThreadId.x;
     uint tileElementCount = TileCountX * TileCountY * TileStride;
@@ -41,35 +43,73 @@ cbuffer BuilderConstants : register(b0)
         return;
     }
 
-    if (index >= LightCount)
+    // BuildMode 1：タイル単位で構築する（1 スレッド = 1 タイル）。
+    // 以前は 1 スレッド = 1 ライトで、ライトが覆う全タイルを 1 スレッドが直列に埋めていた。
+    // 太陽などの画面全体を覆うライトは FHD（16px タイル）で 8,160 タイルを 1 スレッドが処理するため、
+    // 解像度に比例して 1.6ms 以上かかっていた。タイル単位なら全タイルが並列に動き、
+    // ライトの優先順（配列の順）でスロットが埋まるので結果も毎フレーム決定的になる（アトミック不要）。
+    // ライトの入力（最大 160 個）は groupshared に一度だけ読み込んで全スレッドで共有する。
+    uint groupIndex = dispatchThreadId.x & 63u;
+    uint lightCount = min(LightCount, 160u);
+    for (uint load = groupIndex; load < lightCount; load += 64u)
+    {
+        g_Instances[load] = Instances[load];
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // ボリューメトリック対象のライト一覧：先頭スレッドが優先順に詰める（最大 160 回の軽いループ）。
+    if (index == 0u)
+    {
+        uint written = 0u;
+        for (uint light = 0u; light < lightCount && written < MaximumVolumetricLights; ++light)
+        {
+            if (g_Instances[light].Metadata.w != 0u)
+            {
+                VolumetricLightIndices[written++] = g_Instances[light].Metadata.x;
+            }
+        }
+        for (uint rest = written; rest < MaximumVolumetricLights; ++rest)
+        {
+            VolumetricLightIndices[rest] = 0xffffffffu;
+        }
+        VolumetricCounter.Store(0, written);
+    }
+
+    uint tileCount = TileCountX * TileCountY;
+    if (index >= tileCount)
     {
         return;
     }
-    LightInstanceInput instance = Instances[index];
-    [loop] for (uint tileY = instance.TileBounds.y; tileY <= instance.TileBounds.w; ++tileY)
+    uint2 tile = uint2(index % TileCountX, index / TileCountX);
+    uint slots[8];
+    [unroll] for (uint clear = 0u; clear < 8u; ++clear)
     {
-        [loop] for (uint tileX = instance.TileBounds.x; tileX <= instance.TileBounds.z; ++tileX)
+        slots[clear] = 0xffffffffu;
+    }
+    [loop] for (uint light = 0u; light < lightCount; ++light)
+    {
+        LightInstanceInput instance = g_Instances[light];
+        if (any(tile < instance.TileBounds.xy) || any(tile > instance.TileBounds.zw))
         {
-            uint tileBase = (tileY * TileCountX + tileX) * TileStride;
-            [loop] for (uint slot = instance.Metadata.y; slot < instance.Metadata.z; ++slot)
+            continue;
+        }
+        uint slotEnd = min(instance.Metadata.z, min(TileStride, 8u));
+        [loop] for (uint slot = instance.Metadata.y; slot < slotEnd; ++slot)
+        {
+            if (slots[slot] == 0xffffffffu)
             {
-                uint original;
-                InterlockedCompareExchange(TileLightIndices[tileBase + slot], 0xffffffffu, instance.Metadata.x,
-                                           original);
-                if (original == 0xffffffffu)
-                {
-                    break;
-                }
+                slots[slot] = instance.Metadata.x;
+                break;
             }
         }
     }
-    if (instance.Metadata.w != 0u)
+    uint tileBase = index * TileStride;
+    [unroll] for (uint write = 0u; write < 8u; ++write)
     {
-        uint destination;
-        VolumetricCounter.InterlockedAdd(0, 1u, destination);
-        if (destination < MaximumVolumetricLights)
+        if (write < TileStride)
         {
-            VolumetricLightIndices[destination] = instance.Metadata.x;
+            TileLightIndices[tileBase + write] = slots[write];
         }
     }
 }
+

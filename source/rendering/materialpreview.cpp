@@ -647,7 +647,9 @@ namespace
         lights[flagsOffset] = {1, 1, 0, 0};       // 不透明パスとフォワードパスで物理ライティングを有効にする。
         XMFLOAT4 toonStyle[6];
         LiveToonStyle::Write(toonStyle);
-        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 8 * 2 - 6;
+        // 末尾から：TextureSamplingParams(1) → ReflectionProbe(8 * 2) → LiveToonStyle(6)。
+        // プレビューはアップスケールしないので TextureSamplingParams は memset の 0（バイアス無し）のまま。
+        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 1 - 8 * 2 - 6;
         std::copy(std::begin(toonStyle), std::end(toonStyle), lights + toonStyleOffset);
         commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() +
                                                            GraphicsDevice::GetFrameIndex() * constantBytes);
@@ -1202,3 +1204,4 @@ uint64_t ThumbnailPreviewContext::MemoryBytes() const
     }
     return bytes;
 }
+

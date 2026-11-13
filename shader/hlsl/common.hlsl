@@ -291,7 +291,10 @@ cbuffer LightParams : register(b1)
     float4 LiveToonStyle5; // Local specular, backlight diffuse, environment roughness
     float4 ReflectionProbeCenters[8];
     float4 ReflectionProbeSettings[8];
+    // x = テクスチャ Mip LOD バイアス（DLSS / TSR 時に log2(内部/表示)）、y = 2^x（source/rendering/texturemipbias.h）
+    float4 TextureSamplingParams;
 };
+#define RP_HAS_TEXTURE_SAMPLING_PARAMS 1
 
 StructuredBuffer<uint> LightTileIndices : register(t11);
 StructuredBuffer<uint> VolumetricLightIndices : register(t24);
@@ -1419,5 +1422,40 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 
 #endif
 
+// ---------------------------------------------------------------------------------------------
+// マテリアルテクスチャの Mip LOD バイアス（時間方向アップスケール用）
+//   - 暗黙微分の Sample は SampleBias で、明示勾配の SampleGrad は勾配を 2^bias 倍して同じ効果にする
+//     （SampleGrad は命令側のバイアスを受け付けないため）。
+//   - 影・半透明の深度剥離など、表示解像度と関係ないパスは RP_NO_MATERIAL_MIP_BIAS で無効にする。
+//   - 暗黙微分が無いコンピュート（Visibility 解決以外）では使わないこと。
+// ---------------------------------------------------------------------------------------------
+// GPU 駆動のルートシグネチャは POM_LIGHT_CBV を定義したシェーダーだけ b1 を持つ（MaterialSurface.hlsli と同じ規則）。
+#if defined(RP_HAS_TEXTURE_SAMPLING_PARAMS) && !defined(RP_NO_MATERIAL_MIP_BIAS) &&                                    \
+    (!defined(SHADER_GPU_DRIVEN) || defined(POM_LIGHT_CBV))
+#define RP_MATERIAL_MIP_BIAS_ACTIVE 1
+#endif
 
+float MaterialMipBiasCommon()
+{
+#ifdef RP_MATERIAL_MIP_BIAS_ACTIVE
+    float bias = TextureSamplingParams.x;
+    return isfinite(bias) ? clamp(bias, -3.0f, 1.0f) : 0.0f;
+#else
+    return 0.0f;
+#endif
+}
 
+float4 SampleMaterialBiasCommon(Texture2D source, SamplerState samplerState, float2 uv)
+{
+#ifdef RP_MATERIAL_MIP_BIAS_ACTIVE
+    return source.SampleBias(samplerState, uv, MaterialMipBiasCommon());
+#else
+    return source.Sample(samplerState, uv);
+#endif
+}
+
+float4 SampleMaterialGradCommon(Texture2D source, SamplerState samplerState, float2 uv, float2 uvDx, float2 uvDy)
+{
+    float scale = exp2(MaterialMipBiasCommon());
+    return source.SampleGrad(samplerState, uv, uvDx * scale, uvDy * scale);
+}
