@@ -1,89 +1,33 @@
 #include "pch.h"
 
-#include "game.h"
-#include "renderconfiguration.h"
-#include "world.h"
-#include "Camera.h"
-#include "input.h"
+#include "engine.h"
+#include "camera.h"
+#include "componentmanager.h"
 #include "graphicsdevice.h"
-#include "shaderpipelines.h"
-#include "renderprofiler.h"
-#include <chrono>
-
-#include "systemmanager.h"
-#include "modelmanager.h"
-
-#include "light.h"
-#include "projectmanager.h"
-#include "physicssystem.h"
 #include "imguimanager.h"
-
-#include "entitybase.h"
-#include <unordered_set>
-#include "renderframe.h"
+#include "input.h"
+#include "modelmanager.h"
 #include "performancegovernor.h"
+#include "projectmanager.h"
+#include "renderconfiguration.h"
+#include "renderframe.h"
+#include "renderprofiler.h"
+#include "systemmanager.h"
+#include "world.h"
 #include "../../External/tracy/public/tracy/Tracy.hpp"
 
-vector<unique_ptr<EntityBase>>& Game::GetEntities()
-{
-    static vector<unique_ptr<EntityBase>> entities;
-    return entities;
-}
+#include <chrono>
 
-vector<unique_ptr<EntityBase>>& Game::GetPendingEntities()
-{
-    static vector<unique_ptr<EntityBase>> entities;
-    return entities;
-}
-
-bool Game::RegisterEntity(EntityBase* entity)
-{
-    if (!entity)
-    {
-        return false;
-    }
-
-    for (const auto& registered : GetEntities())
-    {
-        if (registered.get() == entity)
-        {
-            return true;
-        }
-    }
-
-    for (auto& pending : GetPendingEntities())
-    {
-        if (pending.get() == entity)
-        {
-            GetEntities().emplace_back(move(pending));
-            return true;
-        }
-    }
-
-    return false;
-}
-
-void Game::Init()
+void Engine::Init()
 {
     World::Init();
     ProjectManager::Init();
     Input::Init();
     SystemManager::Init();
-}
-
-void Game::Create()
-{
     Camera::Create();
-    Camera::CreateGameCamera();
-
-    for (auto& entity : GetPendingEntities())
-    {
-        entity->Create();
-    }
-    GetPendingEntities().clear();
 }
 
-void Game::Uninit()
+void Engine::Uninit()
 {
     GraphicsDevice::WaitForGpuIdle();
     if (ProjectManager::IsPlaying())
@@ -100,9 +44,9 @@ void Game::Uninit()
     GraphicsDevice::Uninit();
 }
 
-void Game::Run()
+void Engine::Run()
 {
-    ZoneScopedN("Game frame");
+    ZoneScopedN("Engine frame");
     const uint64_t previousSerial = RenderProfiler::GetFrameSerial();
     const auto frameBegin = std::chrono::steady_clock::now();
     RenderConfiguration::ApplyPendingRenderMode();
@@ -120,9 +64,9 @@ void Game::Run()
     FrameMark;
 }
 
-void Game::Update()
+void Engine::Update()
 {
-    ZoneScopedN("Game update");
+    ZoneScopedN("Engine update");
     World::Update();
     Input::Update();
 
@@ -136,9 +80,9 @@ void Game::Update()
     SystemManager::UpdateSystem();
 }
 
-void Game::Draw()
+void Engine::Draw()
 {
-    ZoneScopedN("Game draw submission");
+    ZoneScopedN("Engine draw submission");
     RenderFrame::BeginDraw();
 
     RenderProfiler::DrawImGuiWindow();

@@ -73,7 +73,7 @@ class PerformanceGovernor final
         return names[std::clamp(tier, 0, kTierCount - 1)];
     }
 
-    // Game::Run の先頭で毎フレーム呼ぶ。
+    // Engine::Run の先頭で毎フレーム呼ぶ。
     static void Update()
     {
         if (!s_BaselineCaptured)

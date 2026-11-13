@@ -214,14 +214,13 @@ void ImGuiManager::Update()
     {
         if (!RenderingValidation::IsEnabled())
         {
-            LoadProjectSettings(); // cfg に scene= があれば、ここでそのシーンを開く
+            LoadProjectSettings();
+            if (m_ScenePath.empty() && SceneTrackingAllowed())
+            {
+                CreateNewScene();
+            }
         }
         m_ProjectSettingsLoaded = true;
-        if (!m_SceneTracking)
-        {
-            // 起動時の既定シーン（Untitled）。モデルの非同期読み込みが落ち着くまで基準を更新する
-            BeginSceneBaseline(5.0);
-        }
     }
     // シーンの切り替え・新規作成・終了は、描画前のこの位置でまとめて実行する
     ProcessSceneAction();

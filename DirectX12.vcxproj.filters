@@ -153,29 +153,11 @@
     <ClCompile Include="External\ImGUI\imgui_impl_win32.cpp">
       <Filter>External\ImGUI</Filter>
     </ClCompile>
-    <ClCompile Include="source\entities\alicia.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\moca.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\karen.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\kacchatta_hone.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
     <ClCompile Include="source\scene\atmosphere.cpp">
       <Filter>scene</Filter>
     </ClCompile>
     <ClCompile Include="source\models\animator.cpp">
       <Filter>models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\cube.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\field.cpp">
-      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\editor\imguimanager.cpp">
       <Filter>editor</Filter>
@@ -198,7 +180,7 @@
     <ClCompile Include="source\ecs\ecs.cpp">
       <Filter>ecs</Filter>
     </ClCompile>
-    <ClCompile Include="source\core\game.cpp">
+    <ClCompile Include="source\core\engine.cpp">
       <Filter>core</Filter>
     </ClCompile>
     <ClCompile Include="source\scene\grid.cpp">
@@ -237,12 +219,6 @@
     <ClCompile Include="source\pch.cpp">
       <Filter>core</Filter>
     </ClCompile>
-    <ClCompile Include="source\entities\polygon.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\polygon3d.cpp">
-      <Filter>entities</Filter>
-    </ClCompile>
     <ClCompile Include="source\rendering\rendererstate.cpp">
       <Filter>rendering</Filter>
     </ClCompile>
@@ -275,9 +251,6 @@
     </ClCompile>
     <ClCompile Include="source\rendering\lightinstancebuilder.cpp">
       <Filter>rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\sky.cpp">
-      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\scene\sun.cpp">
       <Filter>scene</Filter>
@@ -347,9 +320,6 @@
     </ClCompile>
     <ClCompile Include="source\core\world.cpp">
       <Filter>core</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\xbot.cpp">
-      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\editor\editorassets.cpp">
       <Filter>editor</Filter>
@@ -434,23 +404,8 @@
     <ClInclude Include="source\models\animationplayback.h">
       <Filter>models</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\entitybase.h">
-      <Filter>entities</Filter>
-    </ClInclude>
     <ClInclude Include="source\models\modelimportutils.h">
       <Filter>models</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\alicia.h">
-      <Filter>entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\moca.h">
-      <Filter>entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\karen.h">
-      <Filter>entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\kacchatta_hone.h">
-      <Filter>entities</Filter>
     </ClInclude>
     <ClInclude Include="source\scene\atmosphere.h">
       <Filter>scene</Filter>
@@ -518,19 +473,13 @@
     <ClInclude Include="source\models\pmxphysicsdata.h">
       <Filter>models</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\cube.h">
-      <Filter>entities</Filter>
-    </ClInclude>
     <ClInclude Include="source\d3dx12.h">
       <Filter>utils</Filter>
     </ClInclude>
     <ClInclude Include="source\ecs\ecs.h">
       <Filter>ecs</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\field.h">
-      <Filter>entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\core\game.h">
+    <ClInclude Include="source\core\engine.h">
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="source\scene\grid.h">
@@ -574,12 +523,6 @@
     </ClInclude>
     <ClInclude Include="source\pch.h">
       <Filter>core</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\polygon.h">
-      <Filter>entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\polygon3d.h">
-      <Filter>entities</Filter>
     </ClInclude>
     <ClInclude Include="source\rendering\rendererstate.h">
       <Filter>rendering</Filter>
@@ -625,9 +568,6 @@
     </ClInclude>
     <ClInclude Include="External\NVIDIAImageScaling\NIS_Scaler.h">
       <Filter>External\NVIDIAImageScaling</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\sky.h">
-      <Filter>entities</Filter>
     </ClInclude>
     <ClInclude Include="source\scene\sun.h">
       <Filter>scene</Filter>
@@ -724,9 +664,6 @@
     </ClInclude>
     <ClInclude Include="External\ImGuizmo\ImGuizmo.h">
       <Filter>External\ImGuizmo</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\xbot.h">
-      <Filter>entities</Filter>
     </ClInclude>
     <ClInclude Include="source\dxccompiler.h">
       <Filter>utils</Filter>

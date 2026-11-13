@@ -2183,7 +2183,7 @@ void ImGuiManager::LoadProjectSettings()
         physics->ResetSimulation();
     }
 
-    // 前回開いていたシーンを開く（cfg の scene=）。見つからなければ既定シーンのまま
+    // cfg の scene= から前回開いていたシーンを復元する
     if (!m_StartupScenePath.empty())
     {
         error_code sceneError;

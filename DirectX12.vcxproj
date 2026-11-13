@@ -230,7 +230,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\editor\animationpreviewstate.h" />
     <ClInclude Include="source\rendering\animationpreviewcontext.h" />
     <ClInclude Include="source\models\animationplayback.h" />
-    <ClInclude Include="source\entities\entitybase.h" />
     <ClInclude Include="source\models\modelimportutils.h" />
     <ClInclude Include="source\models\modelresourcemap.h" />
     <ClInclude Include="source\editor\modelmeshtable.h" />
@@ -791,18 +790,12 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\editor\proceduralstudiowindow.cpp" />
-    <ClCompile Include="source\entities\alicia.cpp" />
-    <ClCompile Include="source\entities\moca.cpp" />
-    <ClCompile Include="source\entities\karen.cpp" />
     <ClCompile Include="source\editor\animationpreviewwindow.cpp" />
-    <ClCompile Include="source\entities\kacchatta_hone.cpp" />
     <ClCompile Include="source\procedural\proceduralstudio.cpp" />
     <ClCompile Include="source\procedural\proceduraltexturegpu.cpp" />
     <ClCompile Include="source\procedural\proceduralnoisecache.cpp" />
     <ClCompile Include="source\scene\atmosphere.cpp" />
     <ClCompile Include="source\models\animator.cpp" />
-    <ClCompile Include="source\entities\cube.cpp" />
-    <ClCompile Include="source\entities\field.cpp" />
     <ClCompile Include="source\editor\imguimanager.cpp" />
     <ClCompile Include="External\imgui-node-editor\crude_json.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -835,7 +828,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\scene\camera.cpp" />
     <ClCompile Include="source\ecs\componentmanager.cpp" />
     <ClCompile Include="source\ecs\ecs.cpp" />
-    <ClCompile Include="source\core\game.cpp" />
+    <ClCompile Include="source\core\engine.cpp" />
     <ClCompile Include="source\scene\grid.cpp" />
     <ClCompile Include="source\core\input.cpp" />
     <ClCompile Include="source\scene\light.cpp" />
@@ -853,8 +846,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="source\entities\polygon.cpp" />
-    <ClCompile Include="source\entities\polygon3d.cpp" />
     <ClCompile Include="source\rendering\rendererstate.cpp" />
     <ClCompile Include="source\rendering\graphicsdevice.cpp" />
     <ClCompile Include="source\rendering\psomanager.cpp" />
@@ -867,7 +858,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\rendering\meshshaderpipeline.cpp" />
     <ClCompile Include="source\rendering\lightinstancebuilder.cpp" />
     <ClCompile Include="source\rendering\colormanagement.cpp" />
-    <ClCompile Include="source\entities\sky.cpp" />
     <ClCompile Include="source\scene\sun.cpp" />
     <ClCompile Include="source\models\staticmodel.cpp" />
     <ClCompile Include="source\models\fbxaclclip.cpp">
@@ -901,13 +891,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\systems\transformsystem.cpp" />
     <ClCompile Include="source\assets\texturemanager.cpp" />
     <ClCompile Include="source\core\world.cpp" />
-    <ClCompile Include="source\entities\xbot.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\entities\alicia.h" />
-    <ClInclude Include="source\entities\moca.h" />
-    <ClInclude Include="source\entities\karen.h" />
-    <ClInclude Include="source\entities\kacchatta_hone.h" />
     <ClInclude Include="source\procedural\proceduralstudio.h" />
     <ClInclude Include="source\procedural\proceduraltexturegpu.h" />
     <ClInclude Include="source\scene\atmosphere.h" />
@@ -929,11 +914,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\physics\physicsbackend.h" />
     <ClInclude Include="source\systems\physicssystem.h" />
     <ClInclude Include="source\models\pmxphysicsdata.h" />
-    <ClInclude Include="source\entities\cube.h" />
     <ClInclude Include="source\d3dx12.h" />
     <ClInclude Include="source\ecs\ecs.h" />
-    <ClInclude Include="source\entities\field.h" />
-    <ClInclude Include="source\core\game.h" />
+    <ClInclude Include="source\core\engine.h" />
     <ClInclude Include="source\scene\grid.h" />
     <ClInclude Include="source\core\input.h" />
     <ClInclude Include="source\scene\light.h" />
@@ -948,8 +931,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\psomanager.h" />
     <ClInclude Include="source\rendering\shaderpaths.h" />
     <ClInclude Include="source\pch.h" />
-    <ClInclude Include="source\entities\polygon.h" />
-    <ClInclude Include="source\entities\polygon3d.h" />
     <ClInclude Include="source\rendering\rendererstate.h" />
     <ClInclude Include="source\rendering\graphicsdevice.h" />
     <ClInclude Include="source\rendering\gpumemorybudget.h" />
@@ -966,7 +947,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="External\FidelityFX-FSR\ffx_fsr1.h" />
     <ClInclude Include="External\NVIDIAImageScaling\NIS_Config.h" />
     <ClInclude Include="External\NVIDIAImageScaling\NIS_Scaler.h" />
-    <ClInclude Include="source\entities\sky.h" />
     <ClInclude Include="source\scene\sun.h" />
     <ClInclude Include="source\models\staticmodel.h" />
     <ClInclude Include="source\systems\animationsystem.h" />
@@ -999,7 +979,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="External\ImGUI\imgui_impl_dx12.h" />
     <ClInclude Include="External\ImGUI\imgui_impl_win32.h" />
     <ClInclude Include="External\ImGuizmo\ImGuizmo.h" />
-    <ClInclude Include="source\entities\xbot.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="source\app.rc" />

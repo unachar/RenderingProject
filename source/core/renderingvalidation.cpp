@@ -733,23 +733,6 @@ namespace
 
     void CreateTestScene()
     {
-        // 別の .cpp ファイルからの登録も含め、実際の起動シーンを検証する。
-        const char* startupNames[] = {"Cube", "polygon3d", "XBot",           "field",
-                                      "Moca", "Karen",     "Kacchatta_Hone", "Alicia"};
-        for (const char* name : startupNames)
-        {
-            unsigned int count = 0;
-            for (EntityID id : World::GetView<NameComponent>())
-            {
-                if (ComponentManager::GetComponent<NameComponent>(id).Name == name)
-                {
-                    ++count;
-                }
-            }
-            const string checkName = string("auto-registered startup entity created once: ") + name;
-            Check(count == 1, checkName.c_str());
-        }
-
         bool startupSky = false;
         for (EntityID id : World::GetView<MeshComponent>())
         {

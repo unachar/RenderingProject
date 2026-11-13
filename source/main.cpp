@@ -3,7 +3,7 @@
 #include "input.h"
 #include "main.h"
 #include "resource.h"
-#include "game.h"
+#include "engine.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
 #include "imguimanager.h"
@@ -241,11 +241,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     }
     // 自動テストは固定品質で比較するため、品質の自動調整を止める。
     PerformanceGovernor::GetOptions().Enabled = !automatedRun;
-    WriteGraphicsLog("Step: Game::Init\n");
-    Game::Init();
-    splash.SetProgress(55);
-    WriteGraphicsLog("Step: Game::Create\n");
-    Game::Create();
+    WriteGraphicsLog("Step: Engine::Init\n");
+    Engine::Init();
     splash.SetProgress(75);
     MSG msg = {0};
     // Validation sequences own their frames. Normal startup and its smoke test
@@ -258,7 +255,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         if (!MaterialPreview::PrepareStartupAssets())
         {
             WriteGraphicsLog("ERROR: startup asset preparation failed\n");
-            Game::Uninit();
+            Engine::Uninit();
             return 1;
         }
         // Initialize the graph preview compute pipeline before the first double click.
@@ -279,18 +276,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
                 DispatchMessage(&msg);
                 if (msg.message == WM_QUIT)
                 {
-                    Game::Uninit();
+                    Engine::Uninit();
                     return 1;
                 }
             }
-            Game::Run();
+            Engine::Run();
             ++preparedFrames;
             if (preparedFrames >= 3 && ImGuiManager::StartupAssetBrowserReady() &&
                 !AssetThumbnailManager::HasPendingVisibleAssets())
             {
                 // A ready thumbnail may have completed after the UI was recorded.
                 // Compose it into the back buffer before exposing the window.
-                Game::Run();
+                Engine::Run();
                 GraphicsDevice::WaitForGpuIdle();
                 WriteGraphicsLog("Step: startup assets ready\n");
                 break;
@@ -298,7 +295,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             if (std::chrono::steady_clock::now() - preparationStart > std::chrono::seconds(120))
             {
                 WriteGraphicsLog("ERROR: startup assets timed out\n");
-                Game::Uninit();
+                Engine::Uninit();
                 return 1;
             }
             MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
@@ -373,7 +370,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         {
             RenderingValidation::BeforeFrame(completedFrames);
         }
-        Game::Run();
+        Engine::Run();
         if (renderingBenchmark)
         {
             RenderBenchmark::AfterFrame();
@@ -401,7 +398,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
     }
     const bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
-    Game::Uninit();
+    Engine::Uninit();
     if (!featuresPassed)
     {
         return 1;
