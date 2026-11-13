@@ -914,7 +914,12 @@ class MegaLights final
     static void BindForward(ID3D12GraphicsCommandList* commands, UINT gridParameter, UINT texturesParameter,
                             D3D12_GPU_DESCRIPTOR_HANDLE textureTable)
     {
-        if (!commands || !s_EngineHeap || !s_ForwardDescriptorsReady[s_Slot])
+        if (!commands)
+        {
+            return;
+        }
+        commands->SetGraphicsRootDescriptorTable(texturesParameter, textureTable);
+        if (!s_EngineHeap || !s_ForwardDescriptorsReady[s_Slot])
         {
             return;
         }
@@ -922,7 +927,6 @@ class MegaLights final
             gridParameter,
             CD3DX12_GPU_DESCRIPTOR_HANDLE(s_EngineHeap->GetGPUDescriptorHandleForHeapStart(),
                                           s_EngineHeapStart + s_Slot * kForwardDescriptorsPerFrame, s_EngineIncrement));
-        commands->SetGraphicsRootDescriptorTable(texturesParameter, textureTable);
     }
 
     // ---- M3段階：ディファードの直前に呼ぶ

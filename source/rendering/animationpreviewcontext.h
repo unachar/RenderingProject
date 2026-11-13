@@ -14,7 +14,7 @@ class AnimationPreviewContext
     ~AnimationPreviewContext();
     bool Initialize(UINT size, UINT descriptorIndex, UINT materialCount);
     bool Render(AnimationModelResource& model, const std::vector<MaterialComponent>& materials,
-                bool wireframe, int weightBone);
+                bool wireframe, const XMFLOAT3& wireframeColor, int weightBone);
     bool ProjectPoint(const XMFLOAT3& point, XMFLOAT2& uv) const;
     void FrameModel(const XMFLOAT3& center, const XMFLOAT3& extents);
     void Orbit(float yaw, float pitch, float zoom);

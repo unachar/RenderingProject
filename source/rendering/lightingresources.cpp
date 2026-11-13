@@ -145,6 +145,8 @@ namespace
         XMFLOAT4 SkyParameters{};
         XMFLOAT4 LightIesProfiles[RendererState::g_kMAX_SHADER_LIGHTS]{};
         XMFLOAT4 LiveToonStyle[6]{}; // livetoonstyle.h（HLSL: LiveToonStyle0..3）
+        XMFLOAT4 ReflectionProbeCenters[8]{};
+        XMFLOAT4 ReflectionProbeSettings[8]{};
     };
 
     static_assert(sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
@@ -263,10 +265,12 @@ namespace
         orderedLights.clear();
         {
             const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+            const EntityID shotCamera = Camera::GetCameraEntity();
             for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
             {
                 const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-                if (!light.IsActive || light.Type == LightType::Capsule || light.RenderMode != LightRenderMode::Physical)
+                if (!light.IsActiveForCamera(shotCamera) || light.Type == LightType::Capsule ||
+                    light.RenderMode != LightRenderMode::Physical)
                 {
                     continue;
                 }
@@ -1630,12 +1634,36 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
     // 毎フレームの確保をなくすため使い回す（ライト更新はメインスレッドのみ）。
     static vector<VisibleLightCandidate> candidates;
     candidates.clear();
+    const EntityID shotCamera = Camera::GetCameraEntity();
+    UINT probeCount = 0;
     for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
     {
         ++g_LightGridStats.AuthoredLights;
         const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-        if (!light.IsActive || light.RenderMode == LightRenderMode::EmissionOnly)
+        if (!light.IsActiveForCamera(shotCamera) || light.RenderMode == LightRenderMode::EmissionOnly)
         {
+            continue;
+        }
+        if (light.RenderMode == LightRenderMode::ReflectionProbe)
+        {
+            if (probeCount < std::size(constants.ReflectionProbeCenters) && !light.ReflectionTexturePath.empty() &&
+                light.Range > 0.0f && light.Intensity > 0.0f)
+            {
+                const int texture = TextureManager::LoadTexture(light.ReflectionTexturePath.c_str());
+                const int index = texture - static_cast<int>(g_kTEXTURE_SRV_START_INDEX);
+                if (texture != TextureManager::GetErrorTextureIndex() && index >= 0 &&
+                    index < static_cast<int>(g_kMAX_SRVS) && TextureManager::GetTextureResource(texture))
+                {
+                    TextureManager::TouchTexture(texture);
+                    const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+                    constants.ReflectionProbeCenters[probeCount] =
+                        {transform.WorldMatrix._41, transform.WorldMatrix._42, transform.WorldMatrix._43, light.Range};
+                    constants.ReflectionProbeSettings[probeCount] =
+                        {static_cast<float>(index), light.Intensity, light.ReflectionBlendDistance,
+                         light.ReflectionDxrRoughness};
+                    ++probeCount;
+                }
+            }
             continue;
         }
         if (light.RenderMode == LightRenderMode::Physical)

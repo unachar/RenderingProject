@@ -6,6 +6,7 @@
 #include "world.h"
 #include "camera.h"
 #include "instancingsystem.h"
+#include "graphicsdevice.h"
 #include <unordered_set>
 
 void AnimationSystem::Update()
@@ -36,9 +37,12 @@ void AnimationSystem::Update()
     bool hasCameraPosition = false;
     XMFLOAT3 cameraPosition{};
     const EntityID cameraEntity = Camera::GetCameraEntity();
+    XMMATRIX cameraView = XMMatrixIdentity();
+    XMMATRIX cameraProjection = XMMatrixIdentity();
     if (ComponentManager::HasComponent<TransformComponent>(cameraEntity))
     {
         cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
+        Camera::GetCameraMatrices(cameraEntity, cameraView, cameraProjection);
         hasCameraPosition = true;
     }
 
@@ -68,7 +72,7 @@ void AnimationSystem::Update()
 
         Animator::Update(animationComponent, World::GetDeltaTime());
 
-        // 遠距離モデルは1フレームおきに更新して CPU スキニング負荷を半減する。
+        // 画面上で小さいモデルはポーズ評価の頻度を落とす。再生時刻は毎フレーム進める。
         if (hasCameraPosition && ComponentManager::HasComponent<TransformComponent>(i))
         {
             if (!InstancingSystem::IsEntityVisible(i))
@@ -90,8 +94,25 @@ void AnimationSystem::Update()
             const float dy = transform.Position.y - cameraPosition.y;
             const float dz = transform.Position.z - cameraPosition.z;
             const float distanceSq = dx * dx + dy * dy + dz * dz;
-            if (distanceSq > lodFarDistance * lodFarDistance &&
-                ((static_cast<uint64_t>(i) + s_AnimLodFrame) & 1ULL) != 0ULL)
+            const auto bounds = model->GetAabbExtents();
+            const auto center = model->GetAabbCenter();
+            const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
+            const XMMATRIX modelView = world * cameraView;
+            const XMVECTOR viewCenter = XMVector3TransformCoord(XMLoadFloat3(&center), modelView);
+            const XMVECTOR clipCenter = XMVector4Transform(viewCenter, cameraProjection);
+            const float viewRadius = fabsf(XMVectorGetY(modelView.r[0])) * bounds.x +
+                                     fabsf(XMVectorGetY(modelView.r[1])) * bounds.y +
+                                     fabsf(XMVectorGetY(modelView.r[2])) * bounds.z;
+            const float clipW = XMVectorGetW(clipCenter);
+            const float screenHeight = clipW > 0.0f
+                ? viewRadius * fabsf(XMVectorGetY(cameraProjection.r[1])) * GraphicsDevice::GetHeight() / clipW
+                : 0.0f;
+            unsigned interval = distanceSq > lodFarDistance * lodFarDistance ? 2u : 1u;
+            if (screenHeight > 0.0f)
+            {
+                interval = screenHeight < 24.0f ? 4u : screenHeight < 64.0f ? 2u : 1u;
+            }
+            if ((static_cast<uint64_t>(i) + s_AnimLodFrame) % interval != 0)
             {
                 continue;
             }

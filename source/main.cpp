@@ -191,7 +191,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     filesystem::create_directories("Data/Logs");
     CachePaths::Initialize();
     WriteGraphicsLog("Step: WinMain begin\n");
-    StartupSplash splash(hInstance, !automatedRun && nCmdShow != SW_HIDE);
+    StartupSplash splash(hInstance, !automatedRun);
 
     const char className[] = "DX12AI_WindowClass";
     WNDCLASSA wc = {0};

@@ -17,7 +17,8 @@ enum class LightRenderMode
 {
     Physical = 0,
     Decal,
-    EmissionOnly
+    EmissionOnly,
+    ReflectionProbe
 };
 
 class Light

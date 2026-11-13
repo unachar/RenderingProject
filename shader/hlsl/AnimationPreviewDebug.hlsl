@@ -25,7 +25,7 @@ float4 PSMain(DebugPixel input) : SV_Target
 {
     if (Padding < 0.5f)
     {
-        return float4(0.25f, 0.85f, 1.0f, 1.0f);
+        return ToonOutlineColor;
     }
 
     float weight = saturate(input.Weight);

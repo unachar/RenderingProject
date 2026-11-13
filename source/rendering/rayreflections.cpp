@@ -13,6 +13,7 @@
 #include "persistentpsocache.h"
 #include "lightingresources.h"
 #include "world.h"
+#include "camera.h"
 #include "renderersettings.h"
 #include "optixdenoiser.h"
 #include "atmospherelut.h"
@@ -1049,11 +1050,13 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     static vector<pair<float, EntityID>> reflectionCandidates;
     reflectionCandidates.clear();
     {
+        const EntityID shotCamera = Camera::GetCameraEntity();
         const XMVECTOR cameraPosition = XMMatrixInverse(nullptr, XMLoadFloat4x4(&nrdFrame.View)).r[3];
         for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
         {
             const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-            if (!light.IsActive || !light.AffectsOpaque || light.RenderMode != LightRenderMode::Physical ||
+            if (!light.IsActiveForCamera(shotCamera) || !light.AffectsOpaque ||
+                light.RenderMode != LightRenderMode::Physical ||
                 light.Intensity <= 0)
             {
                 continue;

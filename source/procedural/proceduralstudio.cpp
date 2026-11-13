@@ -1282,10 +1282,161 @@ namespace ProcStudio
         return mesh;
     }
 
+    bool WriteGridObj(const std::filesystem::path& path, const ModelParams& params, bool vertexColors,
+                      float uvScale, const std::string& diffuseTexture, std::string& error)
+    {
+        const bool terrain = params.Kind == ModelKind::Terrain;
+        if (!terrain && params.Kind != ModelKind::WaterSurface)
+        {
+            error = "地形または水面を指定してください";
+            return false;
+        }
+        const int resolution = std::clamp(params.Resolution, 2, 512);
+        const int mapsX = terrain ? std::clamp(params.TerrainMapsX, 1, kMaxTerrainMaps) : 1;
+        const int mapsZ = terrain ? std::clamp(params.TerrainMapsZ, 1, kMaxTerrainMaps) : 1;
+        const int stepsX = resolution * mapsX;
+        const int stepsZ = resolution * mapsZ;
+        NoiseParams noise = params.Noise;
+        noise.Seed ^= params.Seed;
+        TextureParams water;
+        water.Kind = TextureKind::FractalWater;
+        water.Noise = noise;
+        water.Time = params.Time;
+        water.Tileable = false;
+        const auto position = [&](int x, int z) -> Float3 {
+            const float u = static_cast<float>(x) / resolution;
+            const float v = static_cast<float>(z) / resolution;
+            const float h = terrain ? FractalNoise(noise, u, v, 0.37f, false) * params.Height
+                                    : (TextureScalar(water, u, v, 0, false) - 0.5f) * 2 * params.WaveAmplitude;
+            return {(u - mapsX * 0.5f) * params.Size, h, (v - mapsZ * 0.5f) * params.Size};
+        };
+        auto mtlPath = path;
+        mtlPath.replace_extension(".mtl");
+        auto temporary = path;
+        temporary += L".partial";
+        std::vector<char> buffer(1024 * 1024);
+        std::ofstream obj;
+        obj.rdbuf()->pubsetbuf(buffer.data(), buffer.size());
+        obj.open(temporary, std::ios::binary | std::ios::trunc);
+        if (!obj)
+        {
+            error = "OBJ を書き込めません";
+            return false;
+        }
+        const auto mtlName = mtlPath.filename().u8string();
+        obj << kProceduralObjMarker << "\nmtllib " << std::string(mtlName.begin(), mtlName.end())
+            << "\nusemtl procedural\n";
+        obj.setf(std::ios::fixed);
+        obj.precision(6);
+        std::vector<Float3> previous(stepsX + 1), current(stepsX + 1), next(stepsX + 1);
+        const auto fillRow = [&](std::vector<Float3>& row, int z) {
+            for (int x = 0; x <= stepsX; ++x)
+            {
+                row[x] = position(x, z);
+            }
+        };
+        fillRow(current, 0);
+        fillRow(next, 1);
+        for (int z = 0; z <= stepsZ && obj; ++z)
+        {
+            for (int x = 0; x <= stepsX; ++x)
+            {
+                const auto& p = current[x];
+                Float3 normal{};
+                // Match the in-memory grid's area-weighted normals, including its diagonal.
+                const auto addCell = [&](int cellX, const auto& upper, const auto& lower, bool onUpper) {
+                    const auto first = Cross(Sub(lower[cellX], upper[cellX]),
+                                             Sub(upper[cellX + 1], upper[cellX]));
+                    const auto second = Cross(Sub(lower[cellX], upper[cellX + 1]),
+                                              Sub(lower[cellX + 1], upper[cellX + 1]));
+                    if (onUpper || x == cellX)
+                    {
+                        normal = Add(normal, first);
+                    }
+                    if (!onUpper || x != cellX)
+                    {
+                        normal = Add(normal, second);
+                    }
+                };
+                if (z > 0)
+                {
+                    if (x > 0) addCell(x - 1, previous, current, false);
+                    if (x < stepsX) addCell(x, previous, current, false);
+                }
+                if (z < stepsZ)
+                {
+                    if (x > 0) addCell(x - 1, current, next, true);
+                    if (x < stepsX) addCell(x, current, next, true);
+                }
+                normal = Normalize(normal);
+                obj << "v " << p.X << ' ' << p.Y << ' ' << p.Z;
+                if (vertexColors)
+                {
+                    const float wave = Saturate(p.Y / (std::max)(params.WaveAmplitude, 1e-3f) * 0.5f + 0.5f);
+                    const Float3 color = terrain
+                        ? (params.TerrainColors ? TerrainColor(p.Y / (std::max)(params.Height, 1e-3f),
+                                                              (1 - std::fabs(normal.Y)) * 2.5f) : kWhite)
+                        : Mix3(Float3{0.02f, 0.12f, 0.2f}, Float3{0.1f, 0.4f, 0.5f}, wave);
+                    obj << ' ' << color.X << ' ' << color.Y << ' ' << color.Z;
+                }
+                obj << "\nvt " << static_cast<float>(x) / resolution * uvScale << ' '
+                    << 1 - static_cast<float>(z) / resolution * uvScale
+                    << "\nvn " << normal.X << ' ' << normal.Y << ' ' << normal.Z << '\n';
+            }
+            previous.swap(current);
+            current.swap(next);
+            if (z + 2 <= stepsZ)
+            {
+                fillRow(next, z + 2);
+            }
+        }
+        const auto face = [&](uint64_t a, uint64_t b, uint64_t c) {
+            obj << 'f';
+            for (const auto index : {a, b, c})
+            {
+                obj << ' ' << index << '/' << index << '/' << index;
+            }
+            obj << '\n';
+        };
+        const uint64_t stride = static_cast<uint64_t>(stepsX) + 1;
+        for (int z = 0; z < stepsZ && obj; ++z)
+        {
+            for (int x = 0; x < stepsX; ++x)
+            {
+                const uint64_t a = z * stride + x + 1;
+                const uint64_t b = a + stride;
+                face(a, b, a + 1);
+                face(a + 1, b, b + 1);
+            }
+        }
+        obj.close();
+        if (obj)
+        {
+            std::ofstream mtl(mtlPath, std::ios::binary | std::ios::trunc);
+            mtl << "newmtl procedural\nKd 1 1 1\nKa 0 0 0\nKs 0.04 0.04 0.04\nNs 32\n";
+            if (!diffuseTexture.empty())
+            {
+                mtl << "map_Kd " << diffuseTexture << '\n';
+            }
+            mtl.close();
+            if (mtl && MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+            {
+                return true;
+            }
+        }
+        std::error_code cleanupError;
+        std::filesystem::remove(temporary, cleanupError);
+        error = "地形または水面の OBJ を保存できません";
+        return false;
+    }
+
     bool WriteObj(const std::filesystem::path& path, const Mesh& mesh, bool vertexColors,
                   const std::string& diffuseTexture, std::string& error)
     {
-        std::ofstream obj(path, std::ios::binary | std::ios::trunc);
+        std::vector<char> outputBuffer(1024 * 1024);
+        std::ofstream obj;
+        obj.rdbuf()->pubsetbuf(outputBuffer.data(), outputBuffer.size());
+        obj.open(path, std::ios::binary | std::ios::trunc);
         if (!obj)
         {
             error = "OBJ を書き込めません";

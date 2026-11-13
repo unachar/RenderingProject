@@ -3,6 +3,7 @@
 #include "animationpreviewwindow.h"
 #include "animationpreviewstate.h"
 #include "animationpreviewcontext.h"
+#include "materialpartresolver.h"
 #include "animator.h"
 #include "editordescriptors.h"
 #include "graphicsdevice.h"
@@ -24,6 +25,16 @@ namespace
     constexpr wchar_t clipFilter[] =
         L"アニメーション (*.vmd;*.fbx;*.gltf;*.glb;*.dae;*.bvh)\0*.vmd;*.fbx;*.gltf;*.glb;*.dae;*.bvh\0";
 
+    struct SpringCollider
+    {
+        string Bone;
+        XMFLOAT3 Offset{};
+        XMFLOAT3 Tail{};
+        float Radius = 0.05f;
+        bool Manual = false;
+        bool Generated = false;
+    };
+
     struct PreviewSpring
     {
         string Bone;
@@ -35,6 +46,23 @@ namespace
         XMFLOAT3 PreviousTip{};
         XMFLOAT3 CurrentTip{};
         bool Initialized = false;
+        float HitRadius = 0.0f;
+        vector<size_t> Colliders;
+    };
+
+    struct PreviewSpringRig
+    {
+        vector<PreviewSpring> Springs;
+        vector<SpringCollider> Colliders;
+    };
+
+    struct BulletSpringLink
+    {
+        size_t SpringIndex;
+        PhysicsBodyHandle Anchor;
+        PhysicsBodyHandle Body;
+        XMFLOAT3 SolvedDirection{};
+        bool AnimatedAnchor = true;
     };
 
     struct PreviewState
@@ -47,13 +75,27 @@ namespace
         AnimationPreview::Playback Playback;
         unique_ptr<IPhysicsBackend> Physics;
         PmxBoneRig PhysicsRig;
+        unique_ptr<IPhysicsBackend> BulletSprings;
+        vector<BulletSpringLink> BulletLinks;
+        bool UseBulletSprings = false;
+        float SpringMass = 0.08f;
+        float SpringDamping = 0.55f;
+        float SpringStiffness = 1.5f;
+        float SpringAngleLimit = 32.0f;
+        float SpringGravityScale = 0.35f;
         bool PhysicsEnabled = true;
         bool ResetPhysics = true;
         double PhysicsTime = 0.0;
         string PhysicsError;
         vector<PreviewSpring> Springs;
+        vector<SpringCollider> Colliders;
+        int ColliderBone = 0;
         int SpringBone = 0;
         int SpringTip = 0;
+        int ChainStart = -1;
+        int ChainEnd = -1;
+        bool OrbitDragged = false;
+        vector<AnimationModelResource::DebugBone> Skeleton;
         vector<string> Expressions;
         int Expression = 0;
         float ExpressionWeight = 0.0f;
@@ -73,7 +115,11 @@ namespace
         bool Visible = false;
         bool ShowWireframe = false;
         bool ShowSkeleton = false;
+        bool ShowColliders = false;
         bool ShowWeights = false;
+        XMFLOAT3 WireframeColor = {0.25f, 0.85f, 1.0f};
+        XMFLOAT3 BoneColor = {109.0f / 255.0f, 235.0f / 255.0f, 1.0f};
+        XMFLOAT3 ColliderColor = {190.0f / 255.0f, 1.0f, 65.0f / 255.0f};
         int WeightBone = 0;
         int LastPlaybackFrame = -1;
         bool ImportSelection = false;
@@ -239,7 +285,7 @@ namespace
         }
     }
 
-    vector<PreviewSpring> LoadVrmSprings(const string& path, bool convert)
+    PreviewSpringRig LoadVrmSprings(const string& path, bool convert)
     {
         string extension = filesystem::u8path(path).extension().string();
         transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
@@ -257,7 +303,9 @@ namespace
 
         const Json::Value& document = root;
         const auto& nodes = document["nodes"];
-        const auto& springs = document["extensions"]["VRMC_springBone"]["springs"];
+        const auto& extensionData = document["extensions"]["VRMC_springBone"];
+        const auto& groups = extensionData["colliderGroups"];
+        const auto& springs = extensionData["springs"];
         const auto nodeName = [&nodes](const Json::Value& joint) -> string {
             const auto& index = joint["node"];
             if (!index.isUInt() || index.asUInt() >= nodes.size())
@@ -267,9 +315,47 @@ namespace
             const string name = nodes[index.asUInt()]["name"].asString();
             return name.empty() ? "nodes[" + to_string(index.asUInt()) + "]" : name;
         };
-        vector<PreviewSpring> result;
+        const auto readPosition = [convert](const Json::Value& position) -> XMFLOAT3 {
+            if (!position.isArray() || position.size() != 3 || !position[0].isNumeric() ||
+                !position[1].isNumeric() || !position[2].isNumeric())
+            {
+                return {};
+            }
+            return {position[0].asFloat(), position[1].asFloat(),
+                    position[2].asFloat() * (convert ? -1.0f : 1.0f)};
+        };
+        PreviewSpringRig result;
+        for (const auto& entry : extensionData["colliders"])
+        {
+            SpringCollider collider;
+            collider.Bone = nodeName(entry);
+            const auto& capsule = entry["shape"]["capsule"];
+            const auto& sphere = entry["shape"]["sphere"];
+            const auto& shape = capsule.isObject() ? capsule : sphere;
+            collider.Offset = readPosition(shape["offset"]);
+            collider.Tail = capsule.isObject() ? readPosition(shape["tail"]) : collider.Offset;
+            collider.Radius = shape["radius"].isNumeric() ? max(0.0f, shape["radius"].asFloat()) : 0.0f;
+            result.Colliders.push_back(move(collider)); // Preserve VRM indices even for unsupported shapes.
+        }
         for (const auto& chain : springs)
         {
+            vector<size_t> colliders;
+            for (const auto& group : chain["colliderGroups"])
+            {
+                if (!group.isUInt() || group.asUInt() >= groups.size())
+                {
+                    continue;
+                }
+                for (const auto& collider : groups[group.asUInt()]["colliders"])
+                {
+                    if (collider.isUInt() && collider.asUInt() < result.Colliders.size())
+                    {
+                        colliders.push_back(collider.asUInt());
+                    }
+                }
+            }
+            sort(colliders.begin(), colliders.end());
+            colliders.erase(unique(colliders.begin(), colliders.end()), colliders.end());
             const auto& joints = chain["joints"];
             for (Json::ArrayIndex index = 1; index < joints.size(); ++index)
             {
@@ -281,6 +367,8 @@ namespace
                 {
                     continue;
                 }
+                spring.Colliders = colliders;
+                spring.HitRadius = max(0.0f, joint.get("hitRadius", 0.0f).asFloat());
                 spring.Stiffness = joint.get("stiffness", 1.0f).asFloat();
                 spring.Drag = joint.get("dragForce", 0.4f).asFloat();
                 spring.Gravity = joint.get("gravityPower", 0.0f).asFloat();
@@ -294,12 +382,321 @@ namespace
                     spring.GravityDirection = {gravity[0].asFloat(), gravity[1].asFloat(),
                                                gravity[2].asFloat() * (convert ? -1.0f : 1.0f)};
                 }
-                if (none_of(result.begin(), result.end(), [&](const PreviewSpring& existing) {
+                if (none_of(result.Springs.begin(), result.Springs.end(), [&](const PreviewSpring& existing) {
                         return existing.Bone == spring.Bone;
                     }))
                 {
-                    result.push_back(move(spring));
+                    result.Springs.push_back(move(spring));
                 }
+            }
+        }
+        return result;
+    }
+
+    bool LoadAliciaSpringPreset(const string& path, AnimationModelResource& model)
+    {
+        string name = filesystem::u8path(path).filename().string();
+        transform(name.begin(), name.end(), name.begin(), [](unsigned char letter) {
+            return static_cast<char>(tolower(letter));
+        });
+        if (name != "alicia.fbx" && name != "alicia_solid_mmd.fbx" && name != "alicia_solid_unity.fbx")
+        {
+            return false;
+        }
+
+        const auto skeleton = model.GetDebugSkeleton();
+        const auto isSecondary = [](const string& bone) {
+            return bone.starts_with("hair") || bone.starts_with("skirt_") ||
+                   bone.starts_with("ribbon_") || bone == "flonthair";
+        };
+        unordered_set<string> registered;
+        for (const auto& tip : skeleton)
+        {
+            if (tip.Parent < 0)
+            {
+                continue;
+            }
+            const auto& bone = skeleton[tip.Parent];
+            const auto offset = XMLoadFloat3(&tip.Position) - XMLoadFloat3(&bone.Position);
+            if (isSecondary(bone.Name) && isSecondary(tip.Name) &&
+                XMVectorGetX(XMVector3LengthSq(offset)) > 1e-10f && registered.insert(bone.Name).second)
+            {
+                preview.Springs.push_back({bone.Name, tip.Name});
+            }
+        }
+        return !preview.Springs.empty();
+    }
+
+    void BuildBulletSpringRig()
+    {
+        preview.BulletSprings.reset();
+        preview.BulletLinks.clear();
+        auto backend = CreateBulletPhysicsBackend();
+        if (!backend->Init())
+        {
+            preview.PhysicsError = "揺れもの用のBulletを初期化できません。";
+            return;
+        }
+        preview.PhysicsError.clear();
+        const auto bounds = preview.Model->GetAabbExtents();
+        const float modelScale = max(bounds.y, 0.01f);
+        backend->SetGravity({0.0f, -9.81f * preview.SpringGravityScale * modelScale, 0.0f});
+        // The model's skeleton order is parent-first, including manually assigned links.
+        unordered_map<string, size_t> order;
+        const auto skeleton = preview.Model->GetDebugSkeleton();
+        for (size_t index = 0; index < skeleton.size(); ++index)
+        {
+            order.try_emplace(skeleton[index].Name, index);
+        }
+        const auto rank = [&](const string& name) {
+            const auto found = order.find(name);
+            return found == order.end() ? skeleton.size() : found->second;
+        };
+        stable_sort(preview.Springs.begin(), preview.Springs.end(), [&](const auto& left, const auto& right) {
+            return rank(left.Bone) < rank(right.Bone);
+        });
+        unordered_map<string, PhysicsBodyHandle> chainTips;
+        for (size_t index = 0; index < preview.Springs.size(); ++index)
+        {
+            const auto& spring = preview.Springs[index];
+            XMFLOAT4X4 root{}, tip{};
+            if (!preview.Model->GetBoneGlobalTransform(spring.Bone, root) ||
+                !preview.Model->GetBoneGlobalTransform(spring.Tip, tip))
+            {
+                continue;
+            }
+            XMFLOAT3 offset{tip._41 - root._41, tip._42 - root._42, tip._43 - root._43};
+            const float length = XMVectorGetX(XMVector3Length(XMLoadFloat3(&offset)));
+            if (!(length > 0.0001f))
+            {
+                continue;
+            }
+
+            PhysicsBodyDesc anchor;
+            anchor.BodyType = PhysicsBodyType::Kinematic;
+            anchor.Shape = PhysicsShape::Sphere;
+            anchor.Radius = max(length * 0.15f, 0.001f);
+            anchor.Transform.Position = {root._41, root._42, root._43};
+            XMVECTOR scale, rotation, translation;
+            if (!XMMatrixDecompose(&scale, &rotation, &translation, XMLoadFloat4x4(&root)))
+            {
+                continue;
+            }
+            XMStoreFloat4(&anchor.Transform.Rotation, rotation);
+            anchor.CollisionMask = 0;
+            const auto parent = chainTips.find(spring.Bone);
+            const bool animatedAnchor = parent == chainTips.end();
+            const auto anchorId = animatedAnchor ? backend->CreateBody(anchor) : parent->second;
+
+            PhysicsBodyDesc body = anchor;
+            body.BodyType = PhysicsBodyType::Dynamic;
+            body.Transform.Position = {tip._41, tip._42, tip._43};
+            body.Mass = preview.SpringMass;
+            body.LinearDamping = preview.SpringDamping;
+            body.AngularDamping = preview.SpringDamping;
+            body.AllowSleeping = false;
+            const auto bodyId = backend->CreateBody(body);
+
+            PhysicsJointDesc joint;
+            joint.BodyA = anchorId;
+            joint.BodyB = bodyId;
+            joint.Frame = anchor.Transform;
+            const float limit = XMConvertToRadians(preview.SpringAngleLimit);
+            joint.AngularLimitMin = {-limit, -limit, -limit};
+            joint.AngularLimitMax = {limit, limit, limit};
+            const float stiffness = preview.SpringStiffness * length * length;
+            joint.AngularSpring = {stiffness, stiffness, stiffness};
+            if (backend->CreateJoint(joint) == kInvalidPhysicsJoint)
+            {
+                backend->DestroyBody(bodyId);
+                if (animatedAnchor)
+                {
+                    backend->DestroyBody(anchorId);
+                }
+                continue;
+            }
+            BulletSpringLink link{index, anchorId, bodyId};
+            link.AnimatedAnchor = animatedAnchor;
+            XMStoreFloat3(&link.SolvedDirection, XMLoadFloat3(&offset) / length);
+            preview.BulletLinks.push_back(link);
+            chainTips.try_emplace(spring.Tip, bodyId);
+        }
+        if (preview.BulletLinks.empty())
+        {
+            preview.PhysicsError = "Bulletジョイントを作成できる揺れボーンがありません。";
+            return;
+        }
+        preview.BulletSprings = move(backend);
+    }
+
+    void StepBulletSprings(float step)
+    {
+        if (!preview.BulletSprings)
+        {
+            return;
+        }
+        auto& backend = *preview.BulletSprings;
+        for (const auto& link : preview.BulletLinks)
+        {
+            if (!link.AnimatedAnchor)
+            {
+                continue;
+            }
+            const auto& spring = preview.Springs[link.SpringIndex];
+            XMFLOAT4X4 root{};
+            if (!preview.Model->GetBoneGlobalTransform(spring.Bone, root))
+            {
+                continue;
+            }
+            XMVECTOR scale, rotation, translation;
+            if (XMMatrixDecompose(&scale, &rotation, &translation, XMLoadFloat4x4(&root)))
+            {
+                PhysicsTransform anchor;
+                XMStoreFloat3(&anchor.Position, translation);
+                XMStoreFloat4(&anchor.Rotation, rotation);
+                backend.SetBodyTransform(link.Anchor, anchor, false);
+            }
+        }
+        backend.Step(step);
+        for (auto& link : preview.BulletLinks)
+        {
+            PhysicsTransform anchor, body;
+            if (!backend.GetBodyTransform(link.Anchor, anchor) || !backend.GetBodyTransform(link.Body, body))
+            {
+                continue;
+            }
+            const auto direction = XMLoadFloat3(&body.Position) - XMLoadFloat3(&anchor.Position);
+            const float lengthSq = XMVectorGetX(XMVector3LengthSq(direction));
+            if (std::isfinite(lengthSq) && lengthSq > 1e-10f)
+            {
+                XMStoreFloat3(&link.SolvedDirection, direction / sqrtf(lengthSq));
+            }
+        }
+    }
+
+    struct ModelSpaceCollider
+    {
+        XMFLOAT3 Start{};
+        XMFLOAT3 End{};
+        float Radius = 0.0f;
+    };
+
+    vector<ModelSpaceCollider> SampleSpringColliders()
+    {
+        vector<ModelSpaceCollider> result(preview.Colliders.size());
+        unordered_map<string, XMFLOAT4X4> poses;
+        for (size_t index = 0; index < preview.Colliders.size(); ++index)
+        {
+            const auto& collider = preview.Colliders[index];
+            if (collider.Bone.empty() || !(collider.Radius > 0.0f))
+            {
+                continue;
+            }
+            auto [pose, inserted] = poses.try_emplace(collider.Bone);
+            if (inserted && !preview.Model->GetBoneGlobalTransform(collider.Bone, pose->second))
+            {
+                poses.erase(pose);
+                continue;
+            }
+            const auto transform = XMLoadFloat4x4(&pose->second);
+            auto& target = result[index];
+            XMStoreFloat3(&target.Start, XMVector3TransformCoord(XMLoadFloat3(&collider.Offset), transform));
+            XMStoreFloat3(&target.End, XMVector3TransformCoord(XMLoadFloat3(&collider.Tail), transform));
+            const float scale = max({XMVectorGetX(XMVector3Length(transform.r[0])),
+                                     XMVectorGetX(XMVector3Length(transform.r[1])),
+                                     XMVectorGetX(XMVector3Length(transform.r[2]))});
+            target.Radius = collider.Radius * scale;
+        }
+        return result;
+    }
+
+    XMVECTOR ConstrainSpringDirection(FXMVECTOR origin, FXMVECTOR direction, FXMVECTOR restDirection, float length,
+                                      const PreviewSpring& spring, const vector<ModelSpaceCollider>& colliders)
+    {
+        XMVECTOR result = direction;
+        for (int iteration = 0; iteration < 4; ++iteration)
+        {
+            bool corrected = false;
+            const auto resolve = [&](size_t index) {
+                const auto& collider = colliders[index];
+                if (!(collider.Radius > 0.0f))
+                {
+                    return;
+                }
+                const XMVECTOR segment = result * length;
+                const XMVECTOR start = XMLoadFloat3(&collider.Start);
+                const XMVECTOR axis = XMLoadFloat3(&collider.End) - start;
+                const XMVECTOR offset = origin - start;
+                const float segmentLengthSq = length * length;
+                const float axisLengthSq = XMVectorGetX(XMVector3LengthSq(axis));
+                const float alignment = XMVectorGetX(XMVector3Dot(segment, axis));
+                const float segmentOffset = XMVectorGetX(XMVector3Dot(segment, offset));
+                const float axisOffset = XMVectorGetX(XMVector3Dot(axis, offset));
+                float contact = clamp(-segmentOffset / segmentLengthSq, 0.0f, 1.0f);
+                float along = 0.0f;
+                if (axisLengthSq > 1e-10f)
+                {
+                    const float denominator = segmentLengthSq * axisLengthSq - alignment * alignment;
+                    if (denominator > segmentLengthSq * axisLengthSq * 1e-6f)
+                    {
+                        contact = clamp((alignment * axisOffset - segmentOffset * axisLengthSq) / denominator,
+                                        0.0f, 1.0f);
+                    }
+                    along = clamp((alignment * contact + axisOffset) / axisLengthSq, 0.0f, 1.0f);
+                    contact = clamp((alignment * along - segmentOffset) / segmentLengthSq, 0.0f, 1.0f);
+                }
+                // An anchored root cannot be translated out of a body collider.
+                // Keep tip collision when the closest point is at the root.
+                if (contact < 0.05f)
+                {
+                    contact = 1.0f;
+                    if (axisLengthSq > 1e-10f)
+                    {
+                        along = clamp((alignment + axisOffset) / axisLengthSq, 0.0f, 1.0f);
+                    }
+                }
+                const XMVECTOR closest = start + axis * along;
+                const XMVECTOR separation = origin + segment * contact - closest;
+                const float distance = XMVectorGetX(XMVector3Length(separation));
+                const float radius = collider.Radius + spring.HitRadius;
+                if (distance >= radius - 1e-6f)
+                {
+                    return;
+                }
+                XMVECTOR normal = separation;
+                if (distance < 1e-6f)
+                {
+                    normal = origin - closest;
+                    if (axisLengthSq > 1e-10f)
+                    {
+                        normal -= axis * (XMVectorGetX(XMVector3Dot(normal, axis)) / axisLengthSq);
+                    }
+                    if (XMVectorGetX(XMVector3LengthSq(normal)) < 1e-10f)
+                    {
+                        normal = XMVector3Orthogonal(axisLengthSq > 1e-10f ? axis : restDirection);
+                    }
+                }
+                const XMVECTOR pushed = closest + XMVector3Normalize(normal) * radius - origin;
+                if (XMVectorGetX(XMVector3LengthSq(pushed)) > 1e-10f)
+                {
+                    result = XMVector3Normalize(pushed);
+                    corrected = true;
+                }
+            };
+            for (size_t index : spring.Colliders)
+            {
+                resolve(index);
+            }
+            for (size_t index = 0; index < preview.Colliders.size(); ++index)
+            {
+                if (preview.Colliders[index].Manual)
+                {
+                    resolve(index);
+                }
+            }
+            if (!corrected)
+            {
+                break;
             }
         }
         return result;
@@ -307,9 +704,21 @@ namespace
 
     void ApplySpringPose(float step)
     {
+        const auto colliders = SampleSpringColliders();
         bool changed = false;
-        for (auto& spring : preview.Springs)
+        size_t bulletIndex = 0;
+        for (size_t index = 0; index < preview.Springs.size(); ++index)
         {
+            auto& spring = preview.Springs[index];
+            const BulletSpringLink* link = nullptr;
+            if (preview.UseBulletSprings)
+            {
+                if (bulletIndex >= preview.BulletLinks.size() || preview.BulletLinks[bulletIndex].SpringIndex != index)
+                {
+                    continue;
+                }
+                link = &preview.BulletLinks[bulletIndex++];
+            }
             XMFLOAT4X4 boneMatrix{}, tipMatrix{};
             if (!preview.Model->GetBoneGlobalTransform(spring.Bone, boneMatrix) ||
                 !preview.Model->GetBoneGlobalTransform(spring.Tip, tipMatrix))
@@ -326,12 +735,12 @@ namespace
                 continue;
             }
             const XMVECTOR restDirection = axis / length;
-            if (!spring.Initialized)
+            const bool initialize = !spring.Initialized;
+            if (initialize)
             {
                 XMStoreFloat3(&spring.CurrentTip, animatedTip);
                 spring.PreviousTip = spring.CurrentTip;
                 spring.Initialized = true;
-                continue;
             }
             XMVECTOR direction = XMLoadFloat3(&spring.CurrentTip) - origin;
             if (step > 0.0f)
@@ -341,30 +750,28 @@ namespace
                 direction += (restDirection * spring.Stiffness +
                               XMLoadFloat3(&spring.GravityDirection) * spring.Gravity) * step;
             }
+            if (link)
+            {
+                // The joint chain has already propagated its parent's motion in model space.
+                direction = XMLoadFloat3(&link->SolvedDirection);
+            }
             const float directionLength = XMVectorGetX(XMVector3Length(direction));
             direction = directionLength > 0.00001f ? direction / directionLength : restDirection;
-            if (step > 0.0f)
+            direction = ConstrainSpringDirection(origin, direction, restDirection, length, spring, colliders);
+            if (step > 0.0f || initialize)
             {
                 spring.PreviousTip = spring.CurrentTip;
                 XMStoreFloat3(&spring.CurrentTip, origin + direction * length);
+                if (initialize)
+                {
+                    spring.PreviousTip = spring.CurrentTip;
+                }
             }
 
-            const float cosine = clamp(XMVectorGetX(XMVector3Dot(restDirection, direction)), -1.0f, 1.0f);
-            if (cosine > 0.999999f)
-            {
-                continue;
-            }
-            XMVECTOR rotationAxis = XMVector3Cross(restDirection, direction);
-            if (cosine < -0.999999f)
-            {
-                rotationAxis = XMVector3Orthogonal(restDirection);
-            }
-            const XMMATRIX rotation = XMMatrixRotationAxis(rotationAxis, acosf(cosine));
-            bone.r[3] = XMVectorSet(0, 0, 0, 1);
-            bone *= rotation;
-            bone.r[3] = origin;
-            XMStoreFloat4x4(&boneMatrix, bone);
-            changed |= preview.Model->SetBoneGlobalTransform(spring.Bone, boneMatrix, true);
+            // Limit the rendered swing too: the solver constrains body rotation, while
+            // this pose is driven by the solved tip position and collision projection.
+            const float limit = link ? XMConvertToRadians(preview.SpringAngleLimit) : XM_PI;
+            changed |= preview.Model->AimSpringBone(spring.Bone, restDirection, direction, limit);
         }
         if (changed)
         {
@@ -380,19 +787,38 @@ namespace
         {
             preview.ResetPhysics = false;
             preview.PhysicsTime = time;
+            preview.BulletSprings.reset();
+            preview.BulletLinks.clear();
+            preview.PhysicsError.clear();
             for (auto& spring : preview.Springs)
             {
                 spring.Initialized = false;
             }
         }
+        if (preview.UseBulletSprings && !preview.BulletSprings && preview.PhysicsError.empty())
+        {
+            SamplePose(time);
+            BuildBulletSpringRig();
+        }
         while (time - preview.PhysicsTime >= step)
         {
             preview.PhysicsTime += step;
             SamplePose(static_cast<float>(preview.PhysicsTime));
-            ApplySpringPose(static_cast<float>(step));
+            if (preview.UseBulletSprings)
+            {
+                StepBulletSprings(static_cast<float>(step));
+                ApplySpringPose(0.0f);
+            }
+            else
+            {
+                ApplySpringPose(static_cast<float>(step));
+            }
         }
         SamplePose(time);
-        ApplySpringPose(0.0f);
+        if (!preview.UseBulletSprings || preview.BulletSprings)
+        {
+            ApplySpringPose(0.0f);
+        }
     }
 
     void UpdatePose()
@@ -483,12 +909,23 @@ namespace
         preview.Materials = PreviewMaterials(*model, material);
         preview.ResetPhysics = true;
         preview.Model = move(model);
+        preview.ChainStart = -1;
+        preview.ChainEnd = -1;
+        preview.Skeleton.clear();
         if (preview.ModelPath != path || preview.Convert != convert)
         {
             preview.Springs.clear();
+            preview.Colliders.clear();
+            preview.UseBulletSprings = false;
             try
             {
-                preview.Springs = LoadVrmSprings(path, convert);
+                auto rig = LoadVrmSprings(path, convert);
+                preview.Springs = move(rig.Springs);
+                preview.Colliders = move(rig.Colliders);
+                if (preview.Springs.empty())
+                {
+                    preview.UseBulletSprings = LoadAliciaSpringPreset(path, *preview.Model);
+                }
             }
             catch (const Json::Exception&)
             {
@@ -861,6 +1298,186 @@ namespace
         }
     }
 
+    void GenerateBodyColliders()
+    {
+        const auto& names = preview.Model->GetBoneNames();
+        vector<bool> bodyBones(names.size());
+        const auto& map = preview.Model->GetResourceMap();
+        for (const char* part : {"head", "neck", "chest", "upperChest", "spine", "hips",
+                                 "leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm",
+                                 "leftUpperLeg", "rightUpperLeg", "leftLowerLeg", "rightLowerLeg"})
+        {
+            if (const auto* indices = map.Find(ModelResourceMap::Humanoid, part); indices && indices->size() == 1 &&
+                indices->front() < names.size())
+            {
+                bodyBones[indices->front()] = true;
+            }
+        }
+        // Legacy FBX rigs may lack humanoid aliases.
+        for (size_t index = 0; index < names.size(); ++index)
+        {
+            const auto& name = names[index];
+            bodyBones[index] = bodyBones[index] || name == "head" || name == "neck" || name == "waist" ||
+                name == "upperbody" || name == "upperbody01" || name == "arm_L" || name == "arm_R" ||
+                name == "elbow_L" || name == "elbow_R" || name == "leg_L" || name == "leg_R";
+        }
+
+        struct Influence
+        {
+            size_t Bone = 0;
+            aiMatrix4x4 Offset;
+            bool Valid = false;
+        };
+        unordered_map<int, Influence> influences;
+        vector<vector<aiVector3D>> points(names.size());
+        for (UINT mesh = 0; mesh < preview.Model->GetMeshCount(); ++mesh)
+        {
+            const auto flags = preview.Model->GetMeshData(mesh).SemanticFlags;
+            if ((flags & (MeshSemantic_Hair | MeshSemantic_Accessory | MeshSemantic_Eye | MeshSemantic_EyeHighlight)) != 0)
+            {
+                continue;
+            }
+            for (const auto& vertex : preview.Model->GetSkinInputVertices(mesh))
+            {
+                const int slot = static_cast<int>(max_element(vertex.BoneWeights, vertex.BoneWeights + 4) - vertex.BoneWeights);
+                if (vertex.BoneWeights[slot] < 0.5f)
+                {
+                    continue;
+                }
+                const int index = vertex.BoneIndices[slot];
+                auto [entry, inserted] = influences.try_emplace(index);
+                auto& influence = entry->second;
+                if (inserted)
+                {
+                    influence.Valid = preview.Model->GetSkinInfluenceOffset(index, influence.Bone, influence.Offset) &&
+                                      bodyBones[influence.Bone];
+                }
+                if (influence.Valid)
+                {
+                    const auto point = influence.Offset * aiVector3D(vertex.Position.x, vertex.Position.y, vertex.Position.z);
+                    if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z))
+                    {
+                        points[influence.Bone].push_back(point);
+                    }
+                }
+            }
+        }
+
+        vector<SpringCollider> generated;
+        for (size_t bone = 0; bone < names.size(); ++bone)
+        {
+            auto& vertices = points[bone];
+            if (vertices.size() < 8)
+            {
+                continue;
+            }
+            float low[3]{}, high[3]{}, middle[3]{};
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                vector<float> coordinates;
+                coordinates.reserve(vertices.size());
+                for (const auto& point : vertices)
+                {
+                    coordinates.push_back(axis == 0 ? point.x : axis == 1 ? point.y : point.z);
+                }
+                sort(coordinates.begin(), coordinates.end());
+                const size_t trim = coordinates.size() / 20;
+                low[axis] = coordinates[trim];
+                high[axis] = coordinates[coordinates.size() - 1 - trim];
+                middle[axis] = (low[axis] + high[axis]) * 0.5f;
+            }
+            const float extents[] = {high[0] - low[0], high[1] - low[1], high[2] - low[2]};
+            const int axis = static_cast<int>(max_element(extents, extents + 3) - extents);
+            const float radius = max(extents[(axis + 1) % 3], extents[(axis + 2) % 3]) * 0.5f;
+            if (radius <= 1e-5f)
+            {
+                continue;
+            }
+            SpringCollider collider;
+            collider.Bone = names[bone];
+            collider.Radius = radius;
+            collider.Manual = true;
+            collider.Generated = true;
+            const float halfSegment = max(0.0f, extents[axis] * 0.5f - radius);
+            middle[axis] -= halfSegment;
+            collider.Offset = {middle[0], middle[1], middle[2]};
+            middle[axis] += halfSegment * 2.0f;
+            collider.Tail = {middle[0], middle[1], middle[2]};
+            generated.push_back(move(collider));
+        }
+        if (generated.empty())
+        {
+            preview.Status = "体の衝突形状を生成できません。体ボーンのスキンウェイトを確認してください。";
+            return;
+        }
+        erase_if(preview.Colliders, [](const SpringCollider& collider) { return collider.Generated; });
+        preview.Colliders.insert(preview.Colliders.end(), generated.begin(), generated.end());
+        preview.ShowColliders = true;
+        preview.ResetPhysics = true;
+        preview.Status = "体の衝突形状を " + to_string(generated.size()) + " 個生成しました。";
+    }
+
+    void DrawSpringColliders(const vector<string>& names)
+    {
+        if (!ImGui::TreeNode("揺れものの衝突形状"))
+        {
+            return;
+        }
+        if (ImGui::Button("体から衝突形状を生成"))
+        {
+            GenerateBodyColliders();
+        }
+        preview.ColliderBone = clamp(preview.ColliderBone, 0, static_cast<int>(names.size()) - 1);
+        if (ImGui::BeginCombo("追従ボーン", names[preview.ColliderBone].c_str()))
+        {
+            for (int index = 0; index < static_cast<int>(names.size()); ++index)
+            {
+                ImGui::PushID(index);
+                if (ImGui::Selectable(names[index].c_str(), index == preview.ColliderBone))
+                {
+                    preview.ColliderBone = index;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::Button("カプセルを追加"))
+        {
+            SpringCollider collider;
+            collider.Bone = names[preview.ColliderBone];
+            collider.Tail.y = -0.15f;
+            collider.Manual = true;
+            preview.Colliders.push_back(move(collider));
+            preview.ResetPhysics = true;
+        }
+        ImGui::TextWrapped("手動追加したカプセルは、すべての揺れボーンに適用します。");
+        for (size_t index = 0; index < preview.Colliders.size(); ++index)
+        {
+            auto& collider = preview.Colliders[index];
+            ImGui::PushID(static_cast<int>(index));
+            const string label = collider.Bone + (collider.Generated ? "（自動）" : collider.Manual ? "（手動）" : "（VRM）");
+            if (ImGui::TreeNode("##SpringCollider", "%s", label.c_str()))
+            {
+                bool changed = ImGui::DragFloat("半径", &collider.Radius, 0.005f, 0.0f, 100.0f, "%.3f");
+                changed |= ImGui::DragFloat3("始点（ボーンローカル）", &collider.Offset.x, 0.005f);
+                changed |= ImGui::DragFloat3("終点（ボーンローカル）", &collider.Tail.x, 0.005f);
+                preview.ResetPhysics |= changed;
+                if (collider.Manual && ImGui::Button("削除"))
+                {
+                    // Manual entries are appended after the VRM indices.
+                    preview.Colliders.erase(preview.Colliders.begin() + index);
+                    preview.ResetPhysics = true;
+                    ImGui::TreePop();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+
     void DrawSpringPreview()
     {
         if (!preview.Model || preview.Model->HasPmxPhysics())
@@ -872,6 +1489,17 @@ namespace
         {
             return;
         }
+        preview.ResetPhysics |= ImGui::Checkbox("Bulletで揺れを計算", &preview.UseBulletSprings);
+        if (preview.UseBulletSprings)
+        {
+            preview.ResetPhysics |= ImGui::DragFloat("剛体の質量", &preview.SpringMass, 0.005f, 0.01f, 5.0f);
+            preview.ResetPhysics |= ImGui::SliderFloat("剛体の減衰", &preview.SpringDamping, 0.0f, 0.99f);
+            preview.ResetPhysics |= ImGui::DragFloat("ジョイントのばね", &preview.SpringStiffness, 0.05f, 0.0f, 30.0f);
+            preview.ResetPhysics |= ImGui::SliderFloat("ジョイントの角度制限", &preview.SpringAngleLimit, 1.0f, 85.0f, "%.0f°");
+            preview.ResetPhysics |= ImGui::SliderFloat("重力倍率", &preview.SpringGravityScale, 0.0f, 2.0f);
+            ImGui::Text("Bulletジョイント  %zu", preview.BulletLinks.size());
+        }
+        DrawSpringColliders(names);
         auto selectBone = [&names](const char* label, int& selected) {
             selected = clamp(selected, 0, static_cast<int>(names.size()) - 1);
             if (ImGui::BeginCombo(label, names[selected].c_str()))
@@ -904,9 +1532,12 @@ namespace
             auto& spring = preview.Springs[index];
             ImGui::PushID(static_cast<int>(index));
             ImGui::TextWrapped("%s → %s", spring.Bone.c_str(), spring.Tip.c_str());
+            ImGui::BeginDisabled(preview.UseBulletSprings);
             ImGui::DragFloat("戻る強さ", &spring.Stiffness, 0.05f, 0.0f, 100.0f);
             ImGui::SliderFloat("減衰", &spring.Drag, 0.0f, 1.0f);
             ImGui::DragFloat("重力の強さ", &spring.Gravity, 0.01f, 0.0f, 100.0f);
+            ImGui::EndDisabled();
+            preview.ResetPhysics |= ImGui::DragFloat("先端の衝突半径", &spring.HitRadius, 0.005f, 0.0f, 100.0f, "%.3f");
             if (ImGui::Button("削除"))
             {
                 preview.Springs.erase(preview.Springs.begin() + index);
@@ -923,6 +1554,10 @@ namespace
         ImGui::SeparatorText("デバッグ表示");
         ImGui::Checkbox("ワイヤーフレーム", &preview.ShowWireframe);
         ImGui::Checkbox("ボーンフレーム", &preview.ShowSkeleton);
+        ImGui::Checkbox("衝突形状を表示", &preview.ShowColliders);
+        ImGui::ColorEdit3("ワイヤーフレームの色", &preview.WireframeColor.x, ImGuiColorEditFlags_NoInputs);
+        ImGui::ColorEdit3("ボーンの色", &preview.BoneColor.x, ImGuiColorEditFlags_NoInputs);
+        ImGui::ColorEdit3("衝突形状の色", &preview.ColliderColor.x, ImGuiColorEditFlags_NoInputs);
         const auto& bones = preview.Model->GetBoneNames();
         ImGui::BeginDisabled(bones.empty());
         ImGui::Checkbox("スキンウェイト", &preview.ShowWeights);
@@ -947,9 +1582,169 @@ namespace
         ImGui::EndDisabled();
     }
 
-    void DrawSkeletonOverlay(ImVec2 minimum, ImVec2 maximum)
+    void SelectChainBone(int index)
     {
-        const auto bones = preview.Model->GetDebugSkeleton();
+        if (preview.ChainStart < 0 || preview.ChainEnd >= 0)
+        {
+            preview.ChainStart = index;
+            preview.ChainEnd = -1;
+        }
+        else if (index != preview.ChainStart)
+        {
+            preview.ChainEnd = index;
+        }
+    }
+
+    vector<int> SelectedChain()
+    {
+        if (preview.ChainStart < 0 || preview.ChainEnd < 0)
+        {
+            return {};
+        }
+        const auto fromAncestor = [](int ancestor, int tip) -> vector<int> {
+            vector<int> chain;
+            for (int index = tip; index >= 0; index = preview.Skeleton[index].Parent)
+            {
+                chain.push_back(index);
+                if (index == ancestor)
+                {
+                    reverse(chain.begin(), chain.end());
+                    return chain;
+                }
+            }
+            return {};
+        };
+        auto chain = fromAncestor(preview.ChainStart, preview.ChainEnd);
+        return chain.empty() ? fromAncestor(preview.ChainEnd, preview.ChainStart) : chain;
+    }
+
+    void DrawBoneHierarchy()
+    {
+        ImGui::TextUnformatted("ボーン階層");
+        if (preview.Skeleton.empty())
+        {
+            ImGui::TextDisabled("ボーンがありません。");
+            return;
+        }
+
+        const auto chain = SelectedChain();
+        ImGui::TextWrapped("階層またはボーンフレームで始点と終点を選択します。");
+        if (preview.ChainStart >= 0)
+        {
+            ImGui::TextWrapped("始点  %s", preview.Skeleton[preview.ChainStart].Name.c_str());
+        }
+        if (preview.ChainEnd >= 0)
+        {
+            ImGui::TextWrapped("終点  %s", preview.Skeleton[preview.ChainEnd].Name.c_str());
+        }
+
+        vector<PreviewSpring> additions;
+        bool conflict = false;
+        for (size_t index = 1; index < chain.size(); ++index)
+        {
+            const auto& bone = preview.Skeleton[chain[index - 1]].Name;
+            const auto& tip = preview.Skeleton[chain[index]].Name;
+            const auto existing = find_if(preview.Springs.begin(), preview.Springs.end(),
+                                          [&](const PreviewSpring& spring) { return spring.Bone == bone; });
+            if (existing == preview.Springs.end())
+            {
+                additions.push_back({bone, tip});
+            }
+            else if (existing->Tip != tip)
+            {
+                conflict = true;
+            }
+        }
+        const bool pmx = preview.Model->HasPmxPhysics();
+        ImGui::BeginDisabled(additions.empty() || conflict || pmx);
+        if (ImGui::Button("選択範囲を揺れボーンに追加"))
+        {
+            preview.Springs.insert(preview.Springs.end(), additions.begin(), additions.end());
+            unordered_map<string, size_t> order;
+            for (size_t index = 0; index < preview.Skeleton.size(); ++index)
+            {
+                order.emplace(preview.Skeleton[index].Name, index);
+            }
+            const auto rank = [&](const string& name) {
+                const auto found = order.find(name);
+                return found == order.end() ? preview.Skeleton.size() : found->second;
+            };
+            stable_sort(preview.Springs.begin(), preview.Springs.end(), [&](const auto& left, const auto& right) {
+                return rank(left.Bone) < rank(right.Bone);
+            });
+            preview.PhysicsEnabled = true;
+            preview.ResetPhysics = true;
+        }
+        ImGui::EndDisabled();
+        if (pmx)
+        {
+            ImGui::TextWrapped("このPMXはモデル内の剛体設定を使用します。");
+        }
+        else if (preview.ChainEnd >= 0 && chain.empty())
+        {
+            ImGui::TextWrapped("同じ親子チェーン上の2点を選んでください。");
+        }
+        else if (conflict)
+        {
+            ImGui::TextWrapped("別の先端が設定されたボーンがあります。揺れボーン設定で確認してください。");
+        }
+        else if (!chain.empty() && additions.empty())
+        {
+            ImGui::TextDisabled("選択範囲は追加済みです。");
+        }
+        ImGui::BeginDisabled(preview.ChainStart < 0);
+        if (ImGui::Button("選択解除"))
+        {
+            preview.ChainStart = -1;
+            preview.ChainEnd = -1;
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Separator();
+        vector<vector<int>> children(preview.Skeleton.size() + 1);
+        for (int index = 0; index < static_cast<int>(preview.Skeleton.size()); ++index)
+        {
+            children[preview.Skeleton[index].Parent + 1].push_back(index);
+        }
+        const auto drawNode = [&](const auto& self, int index) -> void {
+            const auto& bone = preview.Skeleton[index];
+            const auto& branches = children[index + 1];
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
+                                       ImGuiTreeNodeFlags_DefaultOpen;
+            if (branches.empty())
+            {
+                flags |= ImGuiTreeNodeFlags_Leaf;
+            }
+            if (index == preview.ChainStart || index == preview.ChainEnd ||
+                find(chain.begin(), chain.end(), index) != chain.end())
+            {
+                flags |= ImGuiTreeNodeFlags_Selected;
+            }
+            ImGui::PushID(index);
+            const bool open = ImGui::TreeNodeEx("##Bone", flags, "%s", bone.Name.c_str());
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            {
+                SelectChainBone(index);
+            }
+            if (open)
+            {
+                for (int child : branches)
+                {
+                    self(self, child);
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        };
+        for (int root : children[0])
+        {
+            drawNode(drawNode, root);
+        }
+    }
+
+    void DrawSkeletonOverlay(ImVec2 minimum, ImVec2 maximum, bool pickBone)
+    {
+        const auto& bones = preview.Skeleton;
         vector<ImVec2> points(bones.size());
         vector<bool> visible(bones.size());
         for (size_t index = 0; index < bones.size(); ++index)
@@ -963,9 +1758,37 @@ namespace
             }
         }
 
+        if (pickBone)
+        {
+            const auto mouse = ImGui::GetIO().MousePos;
+            float nearest = 64.0f;
+            int picked = -1;
+            for (int index = 0; index < static_cast<int>(bones.size()); ++index)
+            {
+                if (!visible[index])
+                {
+                    continue;
+                }
+                const float dx = points[index].x - mouse.x;
+                const float dy = points[index].y - mouse.y;
+                const float distance = dx * dx + dy * dy;
+                if (distance < nearest)
+                {
+                    nearest = distance;
+                    picked = index;
+                }
+            }
+            if (picked >= 0)
+            {
+                SelectChainBone(picked);
+            }
+        }
+        const auto chain = SelectedChain();
         auto* draw = ImGui::GetWindowDrawList();
         draw->PushClipRect(minimum, maximum, true);
         const auto& names = preview.Model->GetBoneNames();
+        const auto& boneColor = preview.BoneColor;
+        const ImU32 baseColor = ImGui::ColorConvertFloat4ToU32(ImVec4(boneColor.x, boneColor.y, boneColor.z, 1.0f));
         for (size_t index = 0; index < bones.size(); ++index)
         {
             if (!visible[index])
@@ -975,13 +1798,83 @@ namespace
             const auto& bone = bones[index];
             const bool selected = preview.ShowWeights && static_cast<size_t>(preview.WeightBone) < names.size() &&
                                   bone.Name == names[preview.WeightBone];
-            const ImU32 color = selected ? IM_COL32(255, 166, 64, 255) : IM_COL32(109, 235, 255, 255);
+            const int boneIndex = static_cast<int>(index);
+            const bool endpoint = boneIndex == preview.ChainStart || boneIndex == preview.ChainEnd;
+            const bool inChain = find(chain.begin(), chain.end(), boneIndex) != chain.end();
+            const ImU32 color = endpoint || inChain ? IM_COL32(100, 255, 144, 255)
+                                  : selected ? IM_COL32(255, 166, 64, 255) : baseColor;
             if (bone.Parent >= 0 && visible[bone.Parent])
             {
                 draw->AddLine(points[bone.Parent], points[index], IM_COL32(15, 22, 34, 255), 3.0f);
                 draw->AddLine(points[bone.Parent], points[index], color, 1.4f);
             }
-            draw->AddCircleFilled(points[index], selected ? 4.0f : 2.5f, color);
+            draw->AddCircleFilled(points[index], endpoint ? 5.0f : selected ? 4.0f : 2.5f, color);
+        }
+        draw->PopClipRect();
+    }
+
+    void DrawColliderOverlay(ImVec2 minimum, ImVec2 maximum)
+    {
+        const auto& colliderColor = preview.ColliderColor;
+        const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(colliderColor.x, colliderColor.y, colliderColor.z, 235.0f / 255.0f));
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(minimum, maximum, true);
+        const auto project = [&](FXMVECTOR point, ImVec2& pixel) {
+            XMFLOAT3 position;
+            XMFLOAT2 uv;
+            XMStoreFloat3(&position, point);
+            if (!preview.Context->ProjectPoint(position, uv))
+            {
+                return false;
+            }
+            pixel = {minimum.x + uv.x * (maximum.x - minimum.x), minimum.y + uv.y * (maximum.y - minimum.y)};
+            return true;
+        };
+        const auto line = [&](FXMVECTOR a, FXMVECTOR b) {
+            ImVec2 start, end;
+            if (project(a, start) && project(b, end))
+            {
+                draw->AddLine(start, end, color, 1.4f);
+            }
+        };
+        for (const auto& collider : SampleSpringColliders())
+        {
+            if (!(collider.Radius > 0.0f))
+            {
+                continue;
+            }
+            const auto start = XMLoadFloat3(&collider.Start);
+            const auto end = XMLoadFloat3(&collider.End);
+            const auto axis = end - start;
+            const auto direction = XMVectorGetX(XMVector3LengthSq(axis)) > 1e-10f
+                                       ? XMVector3Normalize(axis) : XMVectorSet(0, 1, 0, 0);
+            const auto right = XMVector3Normalize(XMVector3Orthogonal(direction));
+            const auto forward = XMVector3Cross(direction, right);
+            constexpr int segments = 20;
+            for (int segment = 0; segment < segments; ++segment)
+            {
+                const float angle = XM_2PI * segment / segments;
+                const float next = XM_2PI * (segment + 1) / segments;
+                const auto radial = right * cosf(angle) + forward * sinf(angle);
+                const auto offset = radial * collider.Radius;
+                const auto nextOffset = (right * cosf(next) + forward * sinf(next)) * collider.Radius;
+                line(start + offset, start + nextOffset);
+                line(end + offset, end + nextOffset);
+                if (segment % 5 == 0)
+                {
+                    line(start + offset, end + offset);
+                    for (int step = 0; step < 5; ++step)
+                    {
+                        const float a = XM_PIDIV2 * step / 5;
+                        const float b = XM_PIDIV2 * (step + 1) / 5;
+                        line(start + (radial * cosf(a) - direction * sinf(a)) * collider.Radius,
+                             start + (radial * cosf(b) - direction * sinf(b)) * collider.Radius);
+                        line(end + (radial * cosf(a) + direction * sinf(a)) * collider.Radius,
+                             end + (radial * cosf(b) + direction * sinf(b)) * collider.Radius);
+                    }
+                }
+            }
         }
         draw->PopClipRect();
     }
@@ -1007,9 +1900,16 @@ namespace
                                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
         ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureData*>(preview.Descriptor->Gpu.ptr),
                                             ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        if (ImGui::IsItemActivated())
+        {
+            preview.OrbitDragged = false;
+        }
+        const bool pickBone = ImGui::IsItemHovered() && ImGui::IsItemDeactivated() &&
+                              ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !preview.OrbitDragged;
         const auto& input = ImGui::GetIO();
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
         {
+            preview.OrbitDragged = true;
             preview.Context->Orbit(input.MouseDelta.x * 0.01f, input.MouseDelta.y * 0.01f, 0.0f);
         }
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
@@ -1030,9 +1930,13 @@ namespace
             }
             preview.Context->Orbit(0.0f, 0.0f, input.MouseWheel);
         }
+        if (preview.ShowColliders)
+        {
+            DrawColliderOverlay(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        }
         if (preview.ShowSkeleton)
         {
-            DrawSkeletonOverlay(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            DrawSkeletonOverlay(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), pickBone);
         }
     }
 }
@@ -1106,7 +2010,7 @@ void AnimationPreviewWindow::Draw(bool* open)
     {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(1150, 780), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1380, 780), ImGuiCond_FirstUseEver);
     if (!EditorWindowRegistry::BeginEditorWindow("アニメーションプレビュー", open))
     {
         ImGui::End();
@@ -1118,14 +2022,30 @@ void AnimationPreviewWindow::Draw(bool* open)
         preview.ImportSelection = false;
         ImportSelectedModel();
     }
-    if (ImGui::BeginTable("##AnimationLayout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
+    if (ImGui::BeginTable("##AnimationLayout", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
     {
         ImGui::TableSetupColumn("設定", ImGuiTableColumnFlags_WidthFixed, 380.0f);
         ImGui::TableSetupColumn("プレビュー", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("ボーン階層", ImGuiTableColumnFlags_WidthFixed, 255.0f);
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::BeginChild("##AnimationSettings", ImVec2(0, 0), ImGuiChildFlags_None);
         DrawModelSettings();
+        if (preview.Model && ImGui::CollapsingHeader("モデル読み込み診断"))
+        {
+            ImGui::Text("メッシュ %u", preview.Model->GetMeshCount());
+            ImGui::Text("ボーン %zu", preview.Model->GetBoneNames().size());
+            ImGui::Text("表情モーフ %zu", preview.Expressions.size());
+            ImGui::Text("揺れもの %zu / 衝突形状 %zu", preview.Springs.size(), preview.Colliders.size());
+            if (ImGui::TreeNode("表情モーフ一覧"))
+            {
+                for (const auto& expression : preview.Expressions)
+                {
+                    ImGui::TextUnformatted(expression.c_str());
+                }
+                ImGui::TreePop();
+            }
+        }
         DrawClipSettings();
         DrawPlayback();
         DrawExpressionPreview();
@@ -1175,7 +2095,15 @@ void AnimationPreviewWindow::Draw(bool* open)
             UpdatePose();
             UpdateExpressionPreview();
         }
+        if (preview.Model)
+        {
+            preview.Skeleton = preview.Model->GetDebugSkeleton();
+        }
         DrawPreviewImage();
+        ImGui::EndChild();
+        ImGui::TableSetColumnIndex(2);
+        ImGui::BeginChild("##AnimationSkeleton", ImVec2(0, 0), ImGuiChildFlags_None);
+        DrawBoneHierarchy();
         ImGui::EndChild();
         ImGui::EndTable();
     }
@@ -1185,7 +2113,7 @@ void AnimationPreviewWindow::Draw(bool* open)
 void AnimationPreviewWindow::Render()
 {
     if (preview.Visible && preview.Model && preview.Context &&
-        !preview.Context->Render(*preview.Model, preview.Materials, preview.ShowWireframe,
+        !preview.Context->Render(*preview.Model, preview.Materials, preview.ShowWireframe, preview.WireframeColor,
                                  preview.ShowWeights && !preview.Model->GetBoneNames().empty() ? preview.WeightBone : -1))
     {
         preview.Error = "プレビューを描画できません: " + preview.Context->Error();

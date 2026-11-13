@@ -15,7 +15,7 @@ public:
     void Close();
 
 private:
-    void Run(HINSTANCE instance);
+    void Run(HINSTANCE instance, HANDLE readyEvent);
 
     HANDLE stopEvent_ = nullptr;
     std::thread thread_;

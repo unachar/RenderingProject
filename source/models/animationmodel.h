@@ -448,6 +448,16 @@ class AnimationModelResource
     void InvalidatePmxRuntimeCache();
     void RebuildPmxRuntimeCache();
     void BuildPmxVertexMeshMap();
+    struct ImportedMorph
+    {
+        string Name;
+        vector<pair<unsigned, aiVector3D>> PositionOffsets;
+    };
+    vector<vector<ImportedMorph>> m_ImportedMorphs;
+    vector<unsigned> m_MorphSourceMeshes;
+    bool m_HasImportedVmdMorphs = false;
+    void LoadImportedMorphs(const filesystem::path& path);
+    void ApplyImportedVmdMorphs(const vector<pair<const VmdAnimation*, float>>& layers);
     void ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame);
     void ApplyVmdMorphLayers();
     void ApplyActiveVmdMorphs();
@@ -497,8 +507,10 @@ class AnimationModelResource
     vector<DebugBone> GetDebugSkeleton();
     const vector<GpuSkinVertex>& GetSkinInputVertices(UINT mesh) const { return m_BaseGpuSkinVertices.at(mesh); }
     bool GetBoneGlobalTransform(const string& boneName, XMFLOAT4X4& transform);
+    bool GetSkinInfluenceOffset(int index, size_t& boneIndex, aiMatrix4x4& offset) const;
     bool GetBoneBindGlobalTransform(const string& boneName, XMFLOAT4X4& transform);
     bool SetBoneGlobalTransform(const string& boneName, const XMFLOAT4X4& transform, bool preserveTranslation);
+    bool AimSpringBone(const string& name, FXMVECTOR from, FXMVECTOR to, float maxAngle);
     void CommitPhysicsPose();
     const vector<string>& GetBoneNames() const { return m_BoneNames; }
     vector<string> GetPreviewExpressionNames() const;

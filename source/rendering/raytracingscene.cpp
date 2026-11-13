@@ -362,6 +362,14 @@ namespace
                     previous[key] = selected;
                 }
             }
+            if constexpr (std::is_same_v<std::decay_t<decltype(mesh)>, StaticMeshData>)
+            {
+                if (!entry.Deforming && entry.IndexView.BufferLocation == mesh.IndexBufferView.BufferLocation &&
+                    entry.VertexView.BufferLocation == mesh.VertexBufferView.BufferLocation)
+                {
+                    entry.ClusterSource = &mesh;
+                }
+            }
             geometry.push_back(move(entry));
         }
     }

@@ -31,6 +31,7 @@ float4 CompositePS(FullscreenOutput input) : SV_Target
     {
         accumulation.rgb = accumulation.aaa;
     }
-    float3 average = accumulation.rgb / max(accumulation.a, 0.00001f);
+    // modelshaderPS の蓄積重みと同じ倍率で下限を調整する。
+    float3 average = accumulation.rgb / max(accumulation.a, 0.00001f / 64.0f);
     return float4(average, 1.0f - revealage);
 }

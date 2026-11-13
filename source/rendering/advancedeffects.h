@@ -1258,6 +1258,7 @@ class AdvancedEffects final
         FogLight lights[kMaxLights]{};
         const auto suns = World::GetView<SunComponent, LightComponent>();
         UINT count = 0;
+        const EntityID shotCamera = Camera::GetCameraEntity();
         for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
         {
             if (count >= kMaxLights)
@@ -1265,7 +1266,7 @@ class AdvancedEffects final
                 break;
             }
             const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-            if (!light.IsActive || light.Type == LightType::Capsule ||
+            if (!light.IsActiveForCamera(shotCamera) || light.Type == LightType::Capsule ||
                 light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0.0f)
             {
                 continue;

@@ -523,6 +523,80 @@ void ImGuiManager::DrawInspectorWindow()
         }
         ImGui::TextDisabled("Entity #%u", m_SelectedEntity);
     }
+    if (m_SelectedEntities.size() == 1 && ComponentManager::HasComponent<AnimationModelComponent>(m_SelectedEntity))
+    {
+        auto& animModel = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(m_SelectedEntity);
+        const auto before = CaptureEntity(m_SelectedEntity);
+        auto& correction = animModel.FaceCorrection;
+        bool faceChanged = ImGui::Checkbox("顔の角度補正", &correction.Enabled);
+        if (correction.Enabled)
+        {
+            auto* model = ModelManager::GetAnimModel(animModel.ModelId);
+            const auto names = model ? model->GetPreviewExpressionNames() : vector<string>{};
+            if (names.empty())
+            {
+                ImGui::TextDisabled("このモデルには対応する補正モーフがありません。");
+            }
+            else
+            {
+                const bool valid = correction.Morph >= 0 && static_cast<size_t>(correction.Morph) < names.size();
+                if (ImGui::BeginCombo("補正モーフ", valid ? names[correction.Morph].c_str() : "選択"))
+                {
+                    for (int index = 0; index < static_cast<int>(names.size()); ++index)
+                    {
+                        ImGui::PushID(index);
+                        if (ImGui::Selectable(names[index].c_str(), correction.Morph == index))
+                        {
+                            correction.Morph = index;
+                            faceChanged = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndCombo();
+                }
+                const char* directions[] = {"左右共通", "右側", "左側", "見上げ"};
+                faceChanged |= ImGui::Combo("補正方向", &correction.Direction, directions, IM_ARRAYSIZE(directions));
+                faceChanged |= ImGui::SliderFloat("補正開始角", &correction.StartAngle, 0.0f, 90.0f, "%.1f°");
+                faceChanged |= ImGui::SliderFloat("補正最大角", &correction.FullAngle, 0.0f, 90.0f, "%.1f°");
+                faceChanged |= ImGui::SliderFloat("補正強さ", &correction.Strength, 0.0f, 1.0f);
+                faceChanged |= ImGui::SliderFloat("補正カーブ", &correction.CurvePower, 0.25f, 4.0f, "%.2f");
+                float weights[46]{};
+                const float start = clamp(correction.StartAngle, 0.0f, 90.0f);
+                const float end = max(clamp(correction.FullAngle, 0.0f, 90.0f), start + 0.01f);
+                for (int i = 0; i < IM_ARRAYSIZE(weights); ++i)
+                {
+                    const float amount = clamp((2.0f * i - start) / (end - start), 0.0f, 1.0f);
+                    weights[i] = powf(amount * amount * (3.0f - 2.0f * amount), correction.CurvePower) *
+                                 correction.Strength;
+                }
+                ImGui::PlotLines("##FaceCorrectionCurve", weights, IM_ARRAYSIZE(weights), 0, "0° → 90°",
+                                 0.0f, 1.0f, ImVec2(0.0f, 54.0f));
+                faceChanged |= ImGui::SliderFloat("モデル正面の角度", &correction.FrontYaw, -180.0f, 180.0f, "%.1f°");
+                if (ImGui::BeginCombo("顔の基準位置", correction.HeadBone.empty() ? "モデルの中心"
+                                                                                : correction.HeadBone.c_str()))
+                {
+                    if (ImGui::Selectable("モデルの中心", correction.HeadBone.empty()))
+                    {
+                        correction.HeadBone.clear();
+                        faceChanged = true;
+                    }
+                    for (const auto& bone : model->GetBoneNames())
+                    {
+                        if (ImGui::Selectable(bone.c_str(), correction.HeadBone == bone))
+                        {
+                            correction.HeadBone = bone;
+                            faceChanged = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+        }
+        if (faceChanged)
+        {
+            BeginUndoCapture(m_SelectedEntity, before);
+        }
+    }
     // #6 検索欄とカテゴリのタブ（このウィンドウの中だけ絞り込む。End の直前で戻す）
     EditorWidgets::DrawInspectorFilterBar();
     EditorWidgets::g_InspectorFiltering = true;
@@ -1849,12 +1923,12 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
         light.CastShadow = false;
         ImGui::TextDisabled("方向を軸とする線光源。影・MegaLightsサンプリングは非対応。");
     }
-    const char* renderModes[] = {"Physical", "Decal (軽量)", "Emission Only"};
+    const char* renderModes[] = {"Physical", "Decal (軽量)", "Emission Only", "局所反射プローブ"};
     int renderMode = static_cast<int>(light.RenderMode);
     if (ImGui::Combo("照明経路", &renderMode, renderModes, IM_ARRAYSIZE(renderModes)))
     {
         light.RenderMode = static_cast<LightRenderMode>(renderMode);
-        if (light.RenderMode != LightRenderMode::Physical)
+        if (light.RenderMode == LightRenderMode::Decal || light.RenderMode == LightRenderMode::EmissionOnly)
         {
             light.CastShadow = false;
             light.AffectsVolumetrics = false;
@@ -1866,6 +1940,69 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
             light.AffectsOpaque = false;
         }
         changed = true;
+    }
+    if (!ComponentManager::HasComponent<SunComponent>(entity))
+    {
+        const auto* shot = ComponentManager::HasComponent<NameComponent>(light.ShotCamera)
+                               ? &ComponentManager::GetComponentUnchecked<NameComponent>(light.ShotCamera)
+                               : nullptr;
+        if (ImGui::BeginCombo("ショットカメラ", shot ? shot->Name.c_str() : "すべてのカメラ"))
+        {
+            if (ImGui::Selectable("すべてのカメラ", light.ShotCamera == g_kINVALID_ENTITY))
+            {
+                light.ShotCamera = g_kINVALID_ENTITY;
+                changed = true;
+            }
+            for (const EntityID camera : World::GetView<CameraComponent, NameComponent>())
+            {
+                ImGui::PushID(static_cast<int>(camera));
+                const auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(camera).Name;
+                if (ImGui::Selectable(name.c_str(), camera == light.ShotCamera))
+                {
+                    light.ShotCamera = camera;
+                    changed = true;
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    if (light.RenderMode == LightRenderMode::ReflectionProbe)
+    {
+        char path[1024]{};
+        strncpy_s(path, light.ReflectionTexturePath.c_str(), _TRUNCATE);
+        if (ImGui::InputText("HDR 環境マップ", path, sizeof(path), ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            light.ReflectionTexturePath = path;
+            changed = true;
+        }
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetPayloadType);
+                payload && payload->DataSize == sizeof(AssetDragPayload))
+            {
+                AssetDragPayload asset{};
+                memcpy(&asset, payload->Data, sizeof(asset));
+                const auto resolved = MaterialManager::Registry().Resolve(asset.Handle);
+                if (asset.Type == AssetType::Texture && !resolved.empty())
+                {
+                    light.ReflectionTexturePath = MakeRelativeAssetPath(resolved);
+                    changed = true;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        changed |= ImGui::DragFloat("反射範囲", &light.Range, 0.1f, 0.1f, 10000.0f, "%.2f m");
+        changed |= ImGui::DragFloat("境界のぼかし幅", &light.ReflectionBlendDistance, 0.05f, 0.01f,
+                                    max(light.Range, 0.01f), "%.2f m");
+        changed |= ImGui::DragFloat("反射強度", &light.Intensity, 0.02f, 0.0f, 16.0f);
+        changed |= ImGui::SliderFloat("DXR と混ぜ始める粗さ", &light.ReflectionDxrRoughness, 0.0f, 1.0f);
+        if (changed)
+        {
+            BeginUndoCapture(entity, before);
+            ApplyLightEntityToRuntime(entity);
+        }
+        return;
     }
     changed |= ImGui::Checkbox("不透明に影響", &light.AffectsOpaque);
     changed |= ImGui::Checkbox("Forwardに影響", &light.AffectsForward);
@@ -2087,6 +2224,69 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             statusText4 = "なし";
         }
         ImGui::Text("メッシュ: %s", statusText4);
+        const bool hasStaticModel = ComponentManager::HasComponent<StaticModelComponent>(entity);
+        const bool hasAnimationModel = ComponentManager::HasComponent<AnimationModelComponent>(entity);
+        if (hasStaticModel != hasAnimationModel)
+        {
+            int modelType = hasAnimationModel ? 1 : 0;
+            const char* modelTypes[] = {"スタティックモデル", "アニメーションモデル"};
+            ImGui::TextUnformatted("モデル種別");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::Combo("##ModelType", &modelType, modelTypes, IM_ARRAYSIZE(modelTypes)))
+            {
+                const auto before = CaptureEntity(entity);
+                const string& path = hasAnimationModel ? before.AnimationModel.ModelPath : before.StaticModel.ModelPath;
+                const bool convert = hasAnimationModel ? before.AnimationModel.IsConvert : before.StaticModel.IsConvert;
+                XMFLOAT3 center{}, extents{};
+                bool switched = false;
+                if (!path.empty() && modelType == 1)
+                {
+                    const int id = ModelManager::LoadAnimModel(path.c_str(), convert);
+                    if (auto* model = ModelManager::GetAnimModel(id))
+                    {
+                        center = model->GetAabbCenter();
+                        extents = model->GetAabbExtents();
+                        AnimationModelComponent animation;
+                        animation.ModelId = id;
+                        animation.ModelPath = path;
+                        animation.IsConvert = convert;
+                        ComponentManager::AddComponent(entity, ComponentTypeTraits<AnimationModelComponent>::value());
+                        ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity) = move(animation);
+                        ComponentManager::RemoveComponent(entity, ComponentTypeTraits<StaticModelComponent>::value());
+                        switched = true;
+                    }
+                }
+                else if (!path.empty())
+                {
+                    const int id = ModelManager::LoadStaticModel(path.c_str(), convert);
+                    if (auto* model = ModelManager::GetStaticModel(id))
+                    {
+                        center = model->GetAabbCenter();
+                        extents = model->GetAabbExtents();
+                        ComponentManager::AddComponent(entity, ComponentTypeTraits<StaticModelComponent>::value());
+                        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity) = {id, path, convert};
+                        ComponentManager::RemoveComponent(entity, ComponentTypeTraits<AnimationModelComponent>::value());
+                        switched = true;
+                    }
+                }
+
+                if (switched)
+                {
+                    if (ComponentManager::HasComponent<AABBComponent>(entity))
+                    {
+                        auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+                        bounds.Center = center;
+                        bounds.Extents = extents;
+                    }
+                    GpuSceneChanges::Notify(entity);
+                    PushUndoSnapshot(before);
+                }
+                else
+                {
+                    AddLog("モデル種別を切り替えられませんでした: %s (%s)", path.c_str(), modelTypes[modelType]);
+                }
+            }
+        }
         if (ComponentManager::HasComponent<StaticModelComponent>(entity))
         {
             auto& staticModel = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
@@ -2102,64 +2302,6 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             auto& animModel = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
             ImGui::Text("アニメーションモデル: あり");
             ImGui::Checkbox("座標変換", &animModel.IsConvert);
-            const auto before = CaptureEntity(entity);
-            auto& correction = animModel.FaceCorrection;
-            bool faceChanged = ImGui::Checkbox("顔の角度補正", &correction.Enabled);
-            if (correction.Enabled)
-            {
-                auto* model = ModelManager::GetAnimModel(animModel.ModelId);
-                const auto names = model ? model->GetPreviewExpressionNames() : vector<string>{};
-                if (names.empty())
-                {
-                    ImGui::TextDisabled("このモデルには対応する補正モーフがありません。");
-                }
-                else
-                {
-                    const bool valid = correction.Morph >= 0 && static_cast<size_t>(correction.Morph) < names.size();
-                    if (ImGui::BeginCombo("補正モーフ", valid ? names[correction.Morph].c_str() : "選択"))
-                    {
-                        for (int index = 0; index < static_cast<int>(names.size()); ++index)
-                        {
-                            ImGui::PushID(index);
-                            if (ImGui::Selectable(names[index].c_str(), correction.Morph == index))
-                            {
-                                correction.Morph = index;
-                                faceChanged = true;
-                            }
-                            ImGui::PopID();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    const char* directions[] = {"左右共通", "右側", "左側", "見上げ"};
-                    faceChanged |= ImGui::Combo("補正方向", &correction.Direction, directions, IM_ARRAYSIZE(directions));
-                    faceChanged |= ImGui::SliderFloat("補正開始角", &correction.StartAngle, 0.0f, 90.0f, "%.1f°");
-                    faceChanged |= ImGui::SliderFloat("補正最大角", &correction.FullAngle, 0.0f, 90.0f, "%.1f°");
-                    faceChanged |= ImGui::SliderFloat("補正強さ", &correction.Strength, 0.0f, 1.0f);
-                    faceChanged |= ImGui::SliderFloat("モデル正面の角度", &correction.FrontYaw, -180.0f, 180.0f, "%.1f°");
-                    if (ImGui::BeginCombo("顔の基準位置", correction.HeadBone.empty() ? "モデルの中心"
-                                                                                    : correction.HeadBone.c_str()))
-                    {
-                        if (ImGui::Selectable("モデルの中心", correction.HeadBone.empty()))
-                        {
-                            correction.HeadBone.clear();
-                            faceChanged = true;
-                        }
-                        for (const auto& bone : model->GetBoneNames())
-                        {
-                            if (ImGui::Selectable(bone.c_str(), correction.HeadBone == bone))
-                            {
-                                correction.HeadBone = bone;
-                                faceChanged = true;
-                            }
-                        }
-                        ImGui::EndCombo();
-                    }
-                }
-            }
-            if (faceChanged)
-            {
-                BeginUndoCapture(entity, before);
-            }
             if (ImGui::Button("アニメーションをプレビュー・設定"))
             {
                 AnimationPreviewWindow::OpenForSelection();

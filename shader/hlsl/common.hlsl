@@ -289,6 +289,8 @@ cbuffer LightParams : register(b1)
     float4 LiveToonStyle3; // x: ランプスペキュラ, y: 天使の輪, z: 環境スペキュラ, w: 落ち影の濃さ
     float4 LiveToonStyle4; // x: 陰影ランプのテクスチャ番号（<0 で無効）, y: 陰影ランプの強さ
     float4 LiveToonStyle5; // Local specular, backlight diffuse, environment roughness
+    float4 ReflectionProbeCenters[8];
+    float4 ReflectionProbeSettings[8];
 };
 
 StructuredBuffer<uint> LightTileIndices : register(t11);

@@ -234,6 +234,8 @@ namespace ProcStudio
 
     const char* ModelKindName(ModelKind kind);
     Mesh GenerateModel(const ModelParams& params);
+    bool WriteGridObj(const std::filesystem::path& path, const ModelParams& params, bool vertexColors,
+                      float uvScale, const std::string& diffuseTexture, std::string& error);
     // WriteObj が書き込むすべての OBJ の先頭行。
     inline constexpr const char* kProceduralObjMarker = "# Procedural Studio OBJ v2";
     // ファイルが Procedural Studio のマーカー（任意のバージョン）で始まる場合は true。

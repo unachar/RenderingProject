@@ -82,7 +82,7 @@ float MLReferenceVisibility(MegaLightData light, float3 worldPos, float3 normal,
 #include "SurfaceLighting.hlsli"
 #include "WeatherSurface.hlsli"
 
-float4 ShadeDeferred(PSInputPostProcess input)
+float4 ShadeDeferred(PSInputPostProcess input, float depth)
 {
 
     const float PI = 3.14159265358979323846f;
@@ -101,15 +101,15 @@ float4 ShadeDeferred(PSInputPostProcess input)
         return baseColor;
     }
 
+    [branch] if (background && SkyParameters.x > 0.5f)
+    {
+        // 空の積分値には大気の消散と散乱がすでに含まれる。
+        return float4(EvaluateSkyAtmosphere(ReconstructPostProcessViewRayCommon(input.TexCoord)), 1.0f);
+    }
     float4 atmosphereMedia = AtmosphereTexture.SampleLevel(TextureSampler, input.TexCoord, 0);
     float fogTransmittance = saturate(atmosphereMedia.a);
     if (background)
     {
-        if (SkyParameters.x > 0.5f)
-        {
-            // 空の積分値には大気の消散と散乱がすでに含まれる。
-            return float4(EvaluateSkyAtmosphere(ReconstructPostProcessViewRayCommon(input.TexCoord)), 1.0f);
-        }
         baseColor.rgb =
             (baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) * fogTransmittance + atmosphereMedia.rgb;
         return baseColor;
@@ -129,7 +129,6 @@ float4 ShadeDeferred(PSInputPostProcess input)
     }
 
     float4 normal = NormalTexture.Load(gbufferPixel);
-    float depth = DepthTexture.Load(gbufferPixel);
     float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
     float3 positionDx = ddx(position);
     float3 positionDy = ddy(position);
@@ -321,9 +320,10 @@ float MLDebugLuminance(float3 color)
 float4 main(PSInputPostProcess input) : SV_Target
 {
     const uint2 pixel = uint2(input.Position.xy);
+    const float depth = DepthTexture.Load(int3(pixel, 0));
     // グリッド構築（MegaLightsGridCS）・M2 のサンプリングと同じ深度・同じ式でセルを決める
-    g_MLCellIndex = MLCellIndexFromDepth(pixel, DepthTexture.Load(int3(pixel, 0)));
-    float4 color = ShadeDeferred(input);
+    g_MLCellIndex = MLCellIndexFromDepth(pixel, depth);
+    float4 color = ShadeDeferred(input, depth);
     [branch] if (!MLGridActive() || any(pixel >= MLScreen.xy))
     {
         return color;

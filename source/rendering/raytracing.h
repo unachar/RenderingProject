@@ -35,6 +35,7 @@ class Raytracing
         float SunAngularRadius = 0.00465f;
         // BLAS: 静的 BLAS をビルド後に圧縮（コンパクション）し、VRAM を削減する。
         bool CompactStaticBlas = true;
+        bool MegaGeometry = false;
         // BLAS: 変形 BLAS は通常リフィット（更新）し、この回数ごとにフルビルドで BVH 品質を回復する。0 で無効。
         int DeformingBlasRebuildInterval = 32;
         // 1 フレームあたりの変形 BLAS フルビルド数の上限（スパイク分散）。
@@ -52,6 +53,7 @@ class Raytracing
         UINT Quantized = 0;
         UINT RefitsThisFrame = 0;
         UINT RebuildsThisFrame = 0;
+        UINT ClusteredBottomLevels = 0;
         UINT64 ResultBytes = 0;
         UINT64 CompactionSavedBytes = 0;
     };
@@ -62,6 +64,7 @@ class Raytracing
     static void Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
                         D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex);
     static bool IsAvailable();
+    static bool IsMegaGeometrySupported();
     // RT 反射を実行するか（レイトレーシング ON かつ 反射 ON）
     static bool ReflectionsRequested();
     // DXR GI（Realtime / Lumen / SHaRC）は「レイトレーシング」の ON/OFF に関係なく動かす。

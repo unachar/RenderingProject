@@ -18,6 +18,7 @@
 #include "megalights.h"
 #include "renderquality.h"
 #include "renderersettings.h"
+#include "virtualgeometry/virtualgeometrystreaming.h"
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -40,6 +41,8 @@ namespace
         bool GiActive = false;
         UINT LightSamples = 0;
         UINT LightSampleScale = 1;
+        VirtualGeometryStreaming::Statistics GeometryStreaming{};
+        UINT ClusteredBlas = 0;
         UINT InputWidth = 0, InputHeight = 0, OutputWidth = 0, OutputHeight = 0;
     };
 
@@ -47,6 +50,9 @@ namespace
     std::unordered_map<uint64_t, Metadata> g_Metadata;
     std::filesystem::path g_Directory;
     std::ofstream g_Frames, g_Passes;
+    std::ofstream g_Streaming;
+    bool g_FixedCamera = false;
+    uint64_t g_PeakLocalUsage = 0;
     ComPtr<IDXGIAdapter3> g_Adapter;
     uint32_t g_Warmup = 120;
     uint32_t g_Measured = 600;
@@ -254,12 +260,16 @@ namespace
         std::filesystem::create_directories(g_Directory);
         g_Frames.open(g_Directory / "frames.csv");
         g_Passes.open(g_Directory / "passes.csv");
+        g_Streaming.open(g_Directory / "streaming.csv");
+        g_Streaming << "Serial,ResidentPages,RequestedPages,LoadingPages,EvictedPages,IoErrors,DiskBytes,PoolBytes,"
+                       "StagingBytes,IoMilliseconds,CopyMilliseconds,ClusteredBlas\n";
+        g_FixedCamera = ReadCount("DX12_RENDER_BENCHMARK_FIXED_CAMERA", 0, 0) != 0;
         g_Frames << std::setprecision(17);
         g_Passes << std::setprecision(17);
         g_Frames
             << "Serial,FrameIndex,FrameMs,CpuFrameMs,CpuRenderMs,GpuMs,GpuValid,SceneSignature,InputWidth,InputHeight,OutputWidth,OutputHeight,ProcessLocalUsageBytes,LocalBudgetBytes,ManagedAllocationBytes,RayCount,HistoryRejectionRate,ReflectionRays,GiRays,RadianceShadowRays,ReSTIRVisibilityRays,ShadowRays,AoRays,RayTelemetryValid,RayActiveProviders,RayMeasuredProviders,DirectLightingMode,LocalLights,RtxdiHistoryValid,RtxdiBufferMB,GiResamplingMode,GiActive,LightSamplesPerPixel,LightSampleScale\n";
         g_Passes << "Serial,Name,CpuInclusiveMs,GpuInclusiveMs,GpuExclusiveMs,Events,ValidGpuEvents,DroppedGpuEvents\n";
-        if (!g_Frames || !g_Passes)
+        if (!g_Frames || !g_Passes || !g_Streaming)
         {
             throw std::runtime_error("Cannot open benchmark output files");
         }
@@ -375,6 +385,12 @@ namespace
                  << snapshot.Rays.MeasuredProviders << ',' << metadata.DirectLighting << ',' << metadata.LocalLights
                  << ',' << metadata.RtxdiHistory << ',' << metadata.RtxdiBufferMB << ',' << metadata.GiResampling
                  << ',' << metadata.GiActive << ',' << metadata.LightSamples << ',' << metadata.LightSampleScale << '\n';
+        const auto& streaming = metadata.GeometryStreaming;
+        g_Streaming << sample.Serial << ',' << streaming.Resident << ',' << streaming.Requested << ','
+                    << streaming.Loading << ',' << streaming.Evicted << ',' << streaming.IoErrors << ','
+                    << streaming.DiskBytes << ',' << streaming.PoolBytes << ',' << streaming.StagingBytes << ','
+                    << streaming.IoMilliseconds << ',' << streaming.CopyMilliseconds << ',' << metadata.ClusteredBlas
+                    << '\n';
         for (const auto& pass : snapshot.Passes)
         {
             g_Passes << sample.Serial << ',';
@@ -440,7 +456,10 @@ void RenderBenchmark::BeforeFrame(uint64_t frame)
         auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity());
         auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity());
         transform.Position = g_CameraOrigin;
-        transform.Position.x += 2.0f * std::sin(static_cast<float>(frame) / 120.0f);
+        if (!g_FixedCamera)
+        {
+            transform.Position.x += 2.0f * std::sin(static_cast<float>(frame) / 120.0f);
+        }
         transform.IsDirty = true;
         camera.Target = g_CameraTarget;
         camera.AllowUserControl = false;
@@ -480,6 +499,8 @@ void RenderBenchmark::AfterFrame()
     metadata.GiActive = Raytracing::IsGiActive();
     metadata.LightSamples = lighting.SamplesPerPixel;
     metadata.LightSampleScale = lighting.SampleScale;
+    metadata.GeometryStreaming = VirtualGeometryStreaming::GetStatistics();
+    metadata.ClusteredBlas = Raytracing::GetBlasStatistics().ClusteredBottomLevels;
     if (RenderProfiler::GetFrameSerial() >= g_FirstSerial + g_Warmup &&
         MegaLights::GetSettings().Enabled &&
         ((requestedLighting == MegaLights::Mode::Rtxdi && !lighting.RtxdiActive) ||
@@ -510,6 +531,7 @@ void RenderBenchmark::AfterFrame()
         if (metadata.MemoryValid)
         {
             metadata.LocalUsage = info.CurrentUsage;
+            g_PeakLocalUsage = (std::max)(g_PeakLocalUsage, metadata.LocalUsage);
             metadata.LocalBudget = info.Budget;
         }
     }
@@ -554,11 +576,21 @@ bool RenderBenchmark::Finish()
     Nullable(output, summary.GpuMeanMs);
     output << ",\"lowOnePercentFps\":";
     Nullable(output, summary.LowOnePercentFps);
+    output << ",\"fixedCamera\":" << (g_FixedCamera ? "true" : "false") << ",\"peakLocalUsageBytes\":";
+    if (g_PeakLocalUsage > 0)
+    {
+        output << g_PeakLocalUsage;
+    }
+    else
+    {
+        output << "null";
+    }
     output << "}\n";
     g_Frames.close();
     g_Passes.close();
+    g_Streaming.close();
     output.close();
-    const bool written = g_Frames.good() && g_Passes.good() && output.good();
+    const bool written = g_Frames.good() && g_Passes.good() && g_Streaming.good() && output.good();
     WriteGraphicsLog("Render benchmark: complete=%u frames=%zu GPU=%zu path=%s\n", complete && written,
                      summary.FrameSamples, summary.GpuSamples, g_Directory.string().c_str());
     return complete && written;

@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "animationmodel.h"
 #include "animationmath.h"
+#include "graphicsdevice.h"
+#include <charconv>
+#include <map>
 
 using namespace AnimationMath;
 
@@ -86,6 +89,11 @@ void AnimationModelResource::BuildPmxVertexMeshMap()
 
 void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame)
 {
+    if (!m_IsPmxModel)
+    {
+        ApplyImportedVmdMorphs({{animation, currentFrame}});
+        return;
+    }
     if (!animation || m_PmxMorphs.empty())
     {
         return;
@@ -111,6 +119,16 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 
 void AnimationModelResource::ApplyVmdMorphLayers()
 {
+    if (!m_IsPmxModel)
+    {
+        vector<pair<const VmdAnimation*, float>> layers;
+        for (size_t index = 0; index < m_CachedVmdLayerAnimations.size(); ++index)
+        {
+            layers.emplace_back(m_CachedVmdLayerAnimations[index], m_VmdLayerFramesScratch[index]);
+        }
+        ApplyImportedVmdMorphs(layers);
+        return;
+    }
     if (m_PmxMorphs.empty())
     {
         return;
@@ -911,4 +929,239 @@ bool AnimationModelResource::SetPreviewExpression(size_t expression, float weigh
         return true;
     }
     return false;
+}
+
+namespace
+{
+    string MorphUtf8(string_view text)
+    {
+        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0))
+        {
+            return string(text);
+        }
+        const int length = MultiByteToWideChar(932, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+        if (length <= 0) return {};
+        wstring wide(length, L'\0');
+        MultiByteToWideChar(932, 0, text.data(), static_cast<int>(text.size()), wide.data(), length);
+        string utf8(WideCharToMultiByte(CP_UTF8, 0, wide.data(), length, nullptr, 0, nullptr, nullptr), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, wide.data(), length, utf8.data(), static_cast<int>(utf8.size()), nullptr, nullptr);
+        return utf8;
+    }
+
+    template<class T>
+    vector<T> ReadFbxShapeArray(string_view block, string_view field)
+    {
+        const auto property = block.find(field);
+        if (property == string_view::npos) return {};
+        const auto start = block.find("a:", property + field.size());
+        if (start == string_view::npos) return {};
+        const auto end = block.find('}', start + 2);
+        if (end == string_view::npos) return {};
+        vector<T> values;
+        const char* cursor = block.data() + start + 2;
+        const char* limit = block.data() + end;
+        while (cursor < limit)
+        {
+            if (*cursor == ',' || isspace(static_cast<unsigned char>(*cursor)))
+            {
+                ++cursor;
+                continue;
+            }
+            T value{};
+            const auto parsed = from_chars(cursor, limit, value);
+            if (parsed.ec != errc{}) return {};
+            values.push_back(value);
+            cursor = parsed.ptr;
+        }
+        return values;
+    }
+
+    string_view MorphTrackAlias(string_view target)
+    {
+        static constexpr pair<string_view, string_view> aliases[] = {
+            {"aa", "あ"}, {"ih", "い"}, {"ou", "う"}, {"ee", "え"}, {"oh", "お"},
+            {"mouth_a", "あ"}, {"mouth_i", "い"}, {"mouth_u", "う"}, {"mouth_e", "え"}, {"mouth_o", "お"},
+            {"mouth_a2", "あ２"}, {"mouth_wa", "ワ"}, {"mouth_wa2", "ワ２"},
+            {"blink", "まばたき"}, {"eye_blink", "まばたき"}, {"eye_smile", "笑い"}, {"eyes_smile", "笑い"},
+            {"blinkLeft", "ウィンク"}, {"eye_winkL", "ウィンク"},
+            {"blinkRight", "ウィンク右"}, {"eye_winkR", "ウィンク右"},
+            {"eye_winkL2", "ウィンク２"}, {"eye_winkR2", "ウィンク２右"},
+            {"eyebrow_trouble", "困る"}, {"eyeblow_trouble", "困る"}, {"eyeblow_smile", "にこり"},
+            {"eyeblow_angry", "怒り"}, {"eyeblow_up", "上"}, {"eyeblow_down", "下"},
+            {"eye_surprised", "びっくり"}, {"face_cheek", "照れ"}, {"sother_shy", "照れ"},
+        };
+        for (const auto& [name, track] : aliases)
+        {
+            if (target == name) return track;
+        }
+        return target;
+    }
+}
+
+void AnimationModelResource::LoadImportedMorphs(const filesystem::path& path)
+{
+    if (m_IsPmxModel) return;
+    m_ImportedMorphs.resize(m_MorphSourceMeshes.size());
+    auto extension = path.extension().string();
+    for (char& ch : extension) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+    Json::Value glb;
+    if (extension == ".vrm" || extension == ".glb") VmdRetarget::ReadGlbJson(path, glb);
+
+    for (size_t slot = 0; slot < m_MorphSourceMeshes.size(); ++slot)
+    {
+        const auto& mesh = *m_AiScene->mMeshes[m_MorphSourceMeshes[slot]];
+        const Json::Value* names = nullptr;
+        for (const auto& source : std::as_const(glb)["meshes"])
+        {
+            if (source["name"].isString() && source["name"].asString() == mesh.mName.C_Str())
+            {
+                names = &source["extras"]["targetNames"];
+                break;
+            }
+        }
+        for (unsigned index = 0; index < mesh.mNumAnimMeshes; ++index)
+        {
+            const auto& shape = *mesh.mAnimMeshes[index];
+            if (!shape.mVertices || shape.mNumVertices != mesh.mNumVertices) continue;
+            ImportedMorph morph;
+            morph.Name = names && names->isArray() && index < names->size() && (*names)[index].isString()
+                             ? (*names)[index].asString() : MorphUtf8(shape.mName.C_Str());
+            if (morph.Name.empty()) continue;
+            for (unsigned vertex = 0; vertex < mesh.mNumVertices; ++vertex)
+            {
+                const auto delta = shape.mVertices[vertex] - mesh.mVertices[vertex];
+                if (delta.SquareLength() > 1e-14f) morph.PositionOffsets.emplace_back(vertex, delta);
+            }
+            if (!morph.PositionOffsets.empty()) m_ImportedMorphs[slot].push_back(move(morph));
+        }
+    }
+
+    // Alicia FBX 7.1 stores shapes inline in the face geometry. Assimp only imports
+    // connected BlendShape deformers, so recover these deltas from its source positions.
+    if (extension != ".fbx" || path.parent_path().filename() != L"Alicia") return;
+    ifstream input(path, ios::binary | ios::ate);
+    if (!input || input.tellg() <= 0 || input.tellg() > 32 * 1024 * 1024) return;
+    string bytes(static_cast<size_t>(input.tellg()), '\0');
+    input.seekg(0);
+    if (!input.read(bytes.data(), bytes.size()) || !bytes.starts_with("; FBX")) return;
+    const string_view file(bytes);
+    for (size_t start = file.find("    Geometry:"); start != string_view::npos;)
+    {
+        const size_t next = file.find("    Geometry:", start + 13);
+        const auto geometry = file.substr(start, next == string_view::npos ? next : next - start);
+        start = next;
+        size_t shapeStart = geometry.find("        Shape: \"");
+        if (shapeStart == string_view::npos || geometry.find("        Shape: \"", shapeStart + 16) == string_view::npos)
+            continue;
+        const auto base = ReadFbxShapeArray<float>(geometry.substr(0, shapeStart), "Vertices:");
+        if (base.empty() || base.size() % 3 != 0) continue;
+        const auto key = [](float x, float y, float z) {
+            return array<int64_t, 3>{llround(x * 10000.0), llround(y * 10000.0), llround(z * 10000.0)};
+        };
+        map<array<int64_t, 3>, vector<unsigned>> controlPoints;
+        for (unsigned vertex = 0; vertex < base.size() / 3; ++vertex)
+        {
+            const auto offset = vertex * 3;
+            controlPoints[key(base[offset], base[offset + 1], base[offset + 2])].push_back(vertex);
+        }
+        while (shapeStart != string_view::npos)
+        {
+            const size_t nextShape = geometry.find("        Shape: \"", shapeStart + 16);
+            const auto shape = geometry.substr(shapeStart, nextShape == string_view::npos ? nextShape : nextShape - shapeStart);
+            shapeStart = nextShape;
+            const auto quote = shape.find('"');
+            const auto close = shape.find('"', quote + 1);
+            if (close == string_view::npos) continue;
+            const string name = MorphUtf8(shape.substr(quote + 1, close - quote - 1));
+            const auto indices = ReadFbxShapeArray<unsigned>(shape, "Indexes:");
+            const auto deltas = ReadFbxShapeArray<float>(shape, "Vertices:");
+            if (name.empty() || indices.empty() || deltas.size() != indices.size() * 3) continue;
+            unordered_map<unsigned, aiVector3D> offsets;
+            for (size_t index = 0; index < indices.size(); ++index)
+            {
+                offsets.emplace(indices[index], aiVector3D(deltas[index * 3], deltas[index * 3 + 1],
+                                                            deltas[index * 3 + 2] * (m_SourceConvert ? -1 : 1)));
+            }
+            for (size_t slot = 0; slot < m_MorphSourceMeshes.size(); ++slot)
+            {
+                const auto& mesh = *m_AiScene->mMeshes[m_MorphSourceMeshes[slot]];
+                if (string_view(mesh.mName.C_Str()) != "face" || mesh.mNumAnimMeshes != 0) continue;
+                ImportedMorph morph;
+                morph.Name = name;
+                for (unsigned vertex = 0; vertex < mesh.mNumVertices; ++vertex)
+                {
+                    const auto& position = mesh.mVertices[vertex];
+                    const auto match = controlPoints.find(key(position.x, position.y,
+                                                             m_SourceConvert ? -position.z : position.z));
+                    if (match == controlPoints.end()) continue;
+                    for (unsigned point : match->second)
+                    {
+                        if (const auto delta = offsets.find(point); delta != offsets.end())
+                        {
+                            morph.PositionOffsets.emplace_back(vertex, delta->second);
+                            break;
+                        }
+                    }
+                }
+                if (!morph.PositionOffsets.empty()) m_ImportedMorphs[slot].push_back(move(morph));
+            }
+        }
+    }
+}
+
+void AnimationModelResource::ApplyImportedVmdMorphs(const vector<pair<const VmdAnimation*, float>>& layers)
+{
+    bool anyActive = false;
+    bool synchronized = false;
+    for (size_t slot = 0; slot < m_ImportedMorphs.size(); ++slot)
+    {
+        const auto& morphs = m_ImportedMorphs[slot];
+        if (morphs.empty()) continue;
+        vector<pair<const ImportedMorph*, float>> active;
+        for (const auto& morph : morphs)
+        {
+            const string alias(MorphTrackAlias(morph.Name));
+            for (auto layer = layers.rbegin(); layer != layers.rend(); ++layer)
+            {
+                if (!layer->first) continue;
+                const auto& tracks = layer->first->MorphTracks;
+                auto track = tracks.find(morph.Name);
+                if (track == tracks.end()) track = tracks.find(alias);
+                if (track == tracks.end()) continue;
+                const float weight = SampleVmdMorphTrack(&track->second, layer->second);
+                if (std::isfinite(weight) && fabsf(weight) > 1e-5f) active.emplace_back(&morph, weight);
+                break;
+            }
+        }
+        if (active.empty() && !m_HasImportedVmdMorphs) continue;
+        auto& buffer = m_Meshes[slot].InputVertexBuffer;
+        if (!buffer) continue;
+        if (!synchronized)
+        {
+            if (!GraphicsDevice::WaitForGpuIdle()) return;
+            synchronized = true;
+        }
+        auto& vertices = m_GpuSkinVertices[slot];
+        vertices = m_BaseGpuSkinVertices[slot];
+        for (const auto& [morph, weight] : active)
+        {
+            for (const auto& [index, offset] : morph->PositionOffsets)
+            {
+                auto& position = vertices[index].Position;
+                position.x += offset.x * weight;
+                position.y += offset.y * weight;
+                position.z += offset.z * weight;
+            }
+        }
+        void* destination = nullptr;
+        const CD3DX12_RANGE readRange(0, 0);
+        if (SUCCEEDED(buffer->Map(0, &readRange, &destination)))
+        {
+            memcpy(destination, vertices.data(), vertices.size() * sizeof(GpuSkinVertex));
+            buffer->Unmap(0, nullptr);
+            ++m_SkinningVersion;
+        }
+        anyActive |= !active.empty();
+    }
+    m_HasImportedVmdMorphs = anyActive;
 }

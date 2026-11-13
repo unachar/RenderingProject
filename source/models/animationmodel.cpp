@@ -431,6 +431,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
         Debug::Log("ERROR: Animated model has no triangles: %s\n", fileName);
         return false;
     }
+    m_MorphSourceMeshes = triangleMeshes;
     m_Meshes.resize(triangleMeshes.size());
     m_DeformVertex.resize(triangleMeshes.size());
     m_GpuSkinVertices.resize(triangleMeshes.size());
@@ -1027,6 +1028,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
     {
         m_ResourceMap.Add(ModelResourceMap::Bones, bone.first, bone.second);
     }
+    LoadImportedMorphs(modelPath);
     ModelMapImport::AddMaterials(m_ResourceMap, m_AiScene);
     ModelMapImport::AddMeshes(m_ResourceMap, m_Meshes);
     ConfigureVmdRetargeting(fileName);
@@ -1449,6 +1451,9 @@ void AnimationModelResource::Uninit()
     }
 
     m_SourceModelPath.clear();
+    m_MorphSourceMeshes.clear();
+    m_ImportedMorphs.clear();
+    m_HasImportedVmdMorphs = false;
     m_AnimationSourcePaths.clear();
     m_LookAtPose.Nodes.clear();
     m_LookAtRig = {};

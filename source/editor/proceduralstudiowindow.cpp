@@ -772,6 +772,9 @@ namespace ProcStudioEditorDetail
         shared_ptr<const Mesh> ModelMesh = make_shared<Mesh>();
         ModelParams GeneratedModel;
         ModelParams PendingModel;
+        float PreviewRasterMilliseconds = 0.0f;
+        float PreviewDetail = 1.0f;
+        shared_ptr<float> PendingRasterMilliseconds;
         bool ShowTerrainGrid = true;
         Mesh PrimitiveMesh;
         ModelKind PrimitiveKind = ModelKind::Count;
@@ -1184,6 +1187,43 @@ namespace ProcStudioEditorDetail
 
     // ------------------------------------------------------------------------------------------------
     // バックグラウンド処理。
+    ModelParams PreviewModelParams(ModelParams params, float detail)
+    {
+        switch (params.Kind)
+        {
+            case ModelKind::Terrain:
+            {
+                const int mapsX = std::clamp(params.TerrainMapsX, 1, ProcStudio::kMaxTerrainMaps);
+                const int mapsZ = std::clamp(params.TerrainMapsZ, 1, ProcStudio::kMaxTerrainMaps);
+                const int resolutionLimit = static_cast<int>(sqrtf(8192.0f / (mapsX * mapsZ)));
+                params.Resolution = (std::min)(params.Resolution, (std::max)(8, int(resolutionLimit * detail)));
+                break;
+            }
+            case ModelKind::WaterSurface:
+                params.Resolution = (std::min)(params.Resolution, (std::max)(8, int(80 * detail)));
+                break;
+            case ModelKind::FractalTree:
+                params.Depth = (std::min)(params.Depth, 5);
+                params.LeafTriangleBudget = (std::min)(params.LeafTriangleBudget, 10000);
+                break;
+            case ModelKind::Rock:
+                params.Subdivisions = (std::min)(params.Subdivisions, 4);
+                break;
+            case ModelKind::MengerSponge:
+                params.Level = (std::min)(params.Level, 2);
+                break;
+            case ModelKind::SierpinskiPyramid:
+                params.Level = (std::min)(params.Level, 6);
+                break;
+            case ModelKind::FractalLeaf:
+                params.Leaf.Depth = (std::min)(params.Leaf.Depth, 2);
+                break;
+            default:
+                break;
+        }
+        return params;
+    }
+
     const Mesh& PreviewMesh(State& s)
     {
         if (s.Mode == Category::Texture)
@@ -1425,7 +1465,7 @@ namespace ProcStudioEditorDetail
         }
         if (NeedsMesh(s) && s.MeshJob.Dirty && !s.MeshJob.Running)
         {
-            const auto params = s.Model;
+            const auto params = PreviewModelParams(s.Model, s.PreviewDetail);
             s.PendingModel = params;
             s.MeshJob.Start([params] {
                 return GenerateModel(params);
@@ -1510,7 +1550,20 @@ namespace ProcStudioEditorDetail
     {
         // Drain finished software jobs even while the GPU flat view is active.
         vector<uint32_t> pixels;
-        if (s.PreviewJob.Poll(pixels) && s.PreviewCategory == s.Mode && s.PreviewView == s.View &&
+        const bool rasterFinished = s.PreviewJob.Poll(pixels);
+        if (rasterFinished && s.PendingRasterMilliseconds)
+        {
+            s.PreviewRasterMilliseconds = *s.PendingRasterMilliseconds;
+            s.PendingRasterMilliseconds.reset();
+            const bool adaptiveGrid = s.Mode == Category::Model &&
+                (s.Model.Kind == ModelKind::Terrain || s.Model.Kind == ModelKind::WaterSurface);
+            if (adaptiveGrid && s.PreviewRasterMilliseconds > 16.7f && s.PreviewDetail > 0.35f)
+            {
+                s.PreviewDetail = (std::max)(0.35f, s.PreviewDetail * 0.8f);
+                s.MeshJob.Dirty = true;
+            }
+        }
+        if (rasterFinished && s.PreviewCategory == s.Mode && s.PreviewView == s.View &&
             s.PreviewFromImage == ImageActive(s))
         {
             s.Pixels = std::move(pixels);
@@ -1599,12 +1652,17 @@ namespace ProcStudioEditorDetail
                 s.PreviewCategory = s.Mode;
                 s.PreviewView = s.View;
                 s.PreviewFromImage = false;
-                s.PreviewJob.Start([input, geometry, texture = std::move(texture), solid = std::move(solid)]() mutable {
+                const auto elapsed = make_shared<float>(0.0f);
+                s.PendingRasterMilliseconds = elapsed;
+                s.PreviewJob.Start([input, geometry, elapsed, texture = std::move(texture),
+                                    solid = std::move(solid)]() mutable {
                     input.Geometry = geometry.get();
                     input.Texture = &texture;
                     input.Solid = &solid;
                     vector<uint32_t> rendered;
+                    const auto start = chrono::steady_clock::now();
                     Rasterize(input, rendered);
+                    *elapsed = chrono::duration<float, std::milli>(chrono::steady_clock::now() - start).count();
                     return rendered;
                 });
             }
@@ -1867,11 +1925,30 @@ namespace ProcStudioEditorDetail
         StartSave(
             s,
             [=] {
-                Mesh mesh = GenerateModel(modelParams);
                 string error, textureName;
+                if (textureMode)
+                {
+                    auto texturePath = path;
+                    texturePath.replace_filename(path.stem().wstring() + L"_albedo.png");
+                    const auto image = GenerateTexture(textureParams, textureSize, textureSize);
+                    const auto encoding = textureParams.Output == TextureOutput::Color ? ProceduralIO::Encoding::Color
+                                                                                       : ProceduralIO::Encoding::Linear;
+                    if (!ProceduralIO::SaveImageFile(texturePath, image, encoding, error))
+                    {
+                        return error;
+                    }
+                    textureName = ProceduralIO::ToUtf8(texturePath.filename());
+                }
+                if (!fbx && !solidMode &&
+                    (modelParams.Kind == ModelKind::Terrain || modelParams.Kind == ModelKind::WaterSurface))
+                {
+                    ProcStudio::WriteGridObj(path, modelParams, !textureMode, textureMode ? uvScale : 1.0f,
+                                             textureName, error);
+                    return error;
+                }
+                Mesh mesh = GenerateModel(modelParams);
                 if (solidMode)
                 {
-                    // プレビューと同じオブジェクト空間の対応付けで、立体テクスチャを頂点色へ焼き込む。
                     Float3 minimum;
                     Float3 maximum;
                     mesh.Bounds(minimum, maximum);
@@ -1890,16 +1967,6 @@ namespace ProcStudioEditorDetail
                     {
                         uv = {uv.X * uvScale, uv.Y * uvScale};
                     }
-                    auto texturePath = path;
-                    texturePath.replace_filename(path.stem().wstring() + L"_albedo.png");
-                    const auto image = GenerateTexture(textureParams, textureSize, textureSize);
-                    const auto encoding = textureParams.Output == TextureOutput::Color ? ProceduralIO::Encoding::Color
-                                                                                       : ProceduralIO::Encoding::Linear;
-                    if (!ProceduralIO::SaveImageFile(texturePath, image, encoding, error))
-                    {
-                        return error;
-                    }
-                    textureName = ProceduralIO::ToUtf8(texturePath.filename());
                 }
                 ProceduralIO::SaveModelFile(path, mesh, !textureMode, textureName, error);
                 return error;
@@ -2222,7 +2289,7 @@ namespace ProcStudioEditorDetail
                 s.PreviewDirty = true;
             }
             const Mesh& mesh = PreviewMesh(s);
-            ImGui::TextDisabled("ドラッグで回転 / ホイールでズーム   頂点 %zu  三角形 %zu", mesh.Positions.size(),
+            ImGui::TextDisabled("ドラッグで回転 / ホイールでズーム   プレビュー頂点 %zu  三角形 %zu", mesh.Positions.size(),
                                 mesh.Indices.size() / 3);
         }
         if (ImageActive(s))

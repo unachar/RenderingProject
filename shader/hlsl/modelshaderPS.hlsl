@@ -102,7 +102,12 @@ float3 SampleGlassBackground(float2 uv, float roughness)
     float2 radius = texel * (saturate(roughness) * saturate(roughness) * 24.0f);
     float2 lo = texel * 0.5f;
     float2 hi = 1.0f - lo;
-    float3 c = SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv, lo, hi), 0).rgb * 0.5f;
+    const float3 center = SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv, lo, hi), 0).rgb;
+    [branch] if (roughness <= 0.0f)
+    {
+        return center;
+    }
+    float3 c = center * 0.5f;
     c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv + float2(radius.x, 0), lo, hi), 0).rgb * 0.125f;
     c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv - float2(radius.x, 0), lo, hi), 0).rgb * 0.125f;
     c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv + float2(0, radius.y), lo, hi), 0).rgb * 0.125f;
@@ -674,9 +679,10 @@ ForwardOutput main(in PSInput3D In)
     ForwardOutput output;
     output.Color = premultiplied;
     float alpha = saturate(premultiplied.a);
-    float viewDistance = length(In.WorldPos - SurfaceCameraOriginCommon(In.WorldPos, CameraPos));
-    // 式 (7)：距離に基づく重み。0.1 .. 500 m で安定する。
-    float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
+    float3 viewOffset = (In.WorldPos - SurfaceCameraOriginCommon(In.WorldPos, CameraPos)) / 200.0f;
+    float distanceSquared = dot(viewOffset, viewOffset);
+    // RGB と alpha の重みを同率で縮小し、HDR の FP16 蓄積に余裕を持たせる。
+    float weight = (alpha / 64.0f) * clamp(0.03f / (0.00001f + distanceSquared * distanceSquared), 0.01f, 3000.0f);
     output.Accumulation = float4(premultiplied.rgb, alpha) * weight;
     output.Revealage = alpha.xxxx;
     output.HardwareDepth = min(g_PomForwardDepth, In.Position.z);

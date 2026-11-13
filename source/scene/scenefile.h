@@ -984,6 +984,7 @@ namespace SceneFile
         a("faceCorrectionFullAngle", c.FaceCorrection.FullAngle);
         a("faceCorrectionStrength", c.FaceCorrection.Strength);
         a("faceCorrectionFrontYaw", c.FaceCorrection.FrontYaw);
+        a("faceCorrectionCurvePower", c.FaceCorrection.CurvePower);
         a("faceCorrectionHeadBone", c.FaceCorrection.HeadBone);
         a("animations", c.Animations);
         a("current", c.CurrentAnimation);
@@ -1026,6 +1027,10 @@ namespace SceneFile
         a("iesProfile", c.IesProfilePath);
         a("iesRotation", c.IesRotationDegrees);
         a("priority", c.Priority);
+        a.Entity("shotCamera", c.ShotCamera);
+        a("reflectionTexture", c.ReflectionTexturePath);
+        a("reflectionBlendDistance", c.ReflectionBlendDistance);
+        a("reflectionDxrRoughness", c.ReflectionDxrRoughness);
     }
 
     inline void Visit(Archive& a, SunComponent& c)

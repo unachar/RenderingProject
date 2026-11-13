@@ -287,8 +287,24 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
     {
         return;
     }
-    float reactive = Parameters.y > .5 ? 1 - saturate(Revealage.Load(int3(pixel, 0))) : 0;
     float motionPixels = length((motion - Jitter.xy + Jitter.zw) * Extent.zw);
+    float reactive = 0;
+    [branch] if (Parameters.y > .5)
+    {
+        reactive = 1 - saturate(Revealage.Load(int3(pixel, 0)));
+        // Protect pixels exposed between jittered samples of moving transparent hair.
+        if (motionPixels > .25 && reactive < .5 && maximumColor.x - minimumColor.x > .02)
+        {
+            const int2 lastPixel = int2(Extent.xy) - 1;
+            const int2 left = clamp(int2(pixel) - int2(1, 0), int2(0, 0), lastPixel);
+            const int2 right = clamp(int2(pixel) + int2(1, 0), int2(0, 0), lastPixel);
+            const int2 up = clamp(int2(pixel) - int2(0, 1), int2(0, 0), lastPixel);
+            const int2 down = clamp(int2(pixel) + int2(0, 1), int2(0, 0), lastPixel);
+            const float adjacentRevealage = min(min(Revealage.Load(int3(left, 0)), Revealage.Load(int3(right, 0))),
+                                                min(Revealage.Load(int3(up, 0)), Revealage.Load(int3(down, 0))));
+            reactive = max(reactive, (1 - saturate(adjacentRevealage)) * .5 * saturate(motionPixels));
+        }
+    }
     float separation = max(1e-6, abs(depth) * .02);
     bool thinDepthRidge =
         depth > 0.0f && ((cardinalDepth.x < depth - separation && cardinalDepth.y < depth - separation) ||

@@ -3,6 +3,8 @@
 #include "pch.h"
 #include "procedural/proceduraltextureparams.h"
 
+struct StaticMeshData;
+
 struct RaytracingGeometry
 {
     // 現在の TLAS インスタンス順序に依存しない、エンティティとサブメッシュの識別情報。
@@ -12,6 +14,7 @@ struct RaytracingGeometry
     D3D12_VERTEX_BUFFER_VIEW VertexView{};
     D3D12_INDEX_BUFFER_VIEW IndexView{};
     UINT IndexCount = 0;
+    const StaticMeshData* ClusterSource = nullptr;
     bool Deforming = false;
     // スキニング出力（キャラクター等）。BLAS 頂点の 16bit 量子化をサイズ不明でも許可する。
     bool Skinned = false;

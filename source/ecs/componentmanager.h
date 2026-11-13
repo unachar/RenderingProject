@@ -138,6 +138,7 @@ struct FaceCorrectionSettings
     float FullAngle = 90.0f;
     float Strength = 1.0f;
     float FrontYaw = 0.0f;
+    float CurvePower = 1.0f;
     string HeadBone;
 };
 
@@ -536,6 +537,15 @@ struct LightComponent
     float IesRotationDegrees = 0.0f;
     float Priority = 0.0f;
     LightRenderMode RenderMode = LightRenderMode::Physical;
+    EntityID ShotCamera = g_kINVALID_ENTITY;
+    string ReflectionTexturePath;
+    float ReflectionBlendDistance = 1.0f;
+    float ReflectionDxrRoughness = 0.55f;
+
+    bool IsActiveForCamera(EntityID camera) const
+    {
+        return IsActive && (ShotCamera == g_kINVALID_ENTITY || ShotCamera == camera);
+    }
 
     LightType Type = LightType::Directional;
 };

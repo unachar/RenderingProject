@@ -315,6 +315,34 @@ vector<AnimationModelResource::DebugBone> AnimationModelResource::GetDebugSkelet
     return bones;
 }
 
+bool AnimationModelResource::GetSkinInfluenceOffset(int index, size_t& boneIndex, aiMatrix4x4& offset) const
+{
+    if (index < 0 || index >= m_kMAX_BONES)
+    {
+        return false;
+    }
+    if (static_cast<size_t>(index) < m_BoneNames.size())
+    {
+        boneIndex = index;
+        offset = m_Bone.at(m_BoneNames[boneIndex]).OffsetMatrix;
+        return true;
+    }
+    const size_t extra = m_kMAX_BONES - 1 - index;
+    if (extra >= m_AdditionalSkinningOffsets.size())
+    {
+        return false;
+    }
+    const auto& entry = m_AdditionalSkinningOffsets[extra];
+    const auto bone = find(m_BoneNames.begin(), m_BoneNames.end(), entry.BoneName);
+    if (bone == m_BoneNames.end())
+    {
+        return false;
+    }
+    boneIndex = distance(m_BoneNames.begin(), bone);
+    offset = entry.Offset;
+    return true;
+}
+
 bool AnimationModelResource::GetBoneBindGlobalTransform(const string& boneName, XMFLOAT4X4& transform)
 {
     if (m_PmxRuntimeNodes.empty())
@@ -414,6 +442,60 @@ bool AnimationModelResource::SetBoneGlobalTransform(const string& boneName, cons
     return true;
 }
 
+bool AnimationModelResource::AimSpringBone(const string& name, FXMVECTOR from, FXMVECTOR to, float maxAngle)
+{
+    const auto found = m_PmxRuntimeNodeIndexMap.find(name);
+    if (found == m_PmxRuntimeNodeIndexMap.end())
+    {
+        return false;
+    }
+    const auto& node = m_PmxRuntimeNodes[found->second];
+    if (!node.BonePtr)
+    {
+        return false;
+    }
+
+    RefreshGlobalPose();
+    XMMATRIX inverseParent = XMMatrixIdentity();
+    if (node.ParentIndex >= 0)
+    {
+        XMVECTOR determinant;
+        inverseParent = XMMatrixInverse(
+            &determinant, XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[node.ParentIndex]));
+        const float det = XMVectorGetX(determinant);
+        if (!std::isfinite(det) || fabsf(det) < 1e-12f)
+        {
+            return false;
+        }
+    }
+    const auto rest = XMVector3Normalize(XMVector3TransformNormal(from, inverseParent));
+    const auto target = XMVector3Normalize(XMVector3TransformNormal(to, inverseParent));
+    const float cosine = XMVectorGetX(XMVector3Dot(rest, target));
+    if (!std::isfinite(cosine) || cosine > 0.999999f)
+    {
+        return false;
+    }
+    auto axis = XMVector3Cross(rest, target);
+    if (XMVectorGetX(XMVector3LengthSq(axis)) < 1e-10f)
+    {
+        axis = XMVector3Orthogonal(rest);
+    }
+    const float angle = min(acosf(clamp(cosine, -1.0f, 1.0f)), maxAngle);
+    XMFLOAT4X4 rotation;
+    XMStoreFloat4x4(&rotation, XMMatrixRotationAxis(axis, angle));
+    const aiMatrix4x4 delta(rotation._11, rotation._21, rotation._31, 0,
+                            rotation._12, rotation._22, rotation._32, 0,
+                            rotation._13, rotation._23, rotation._33, 0,
+                            0, 0, 0, 1);
+    auto& local = node.BonePtr->AnimationMatrix;
+    const aiVector3D translation(local.a4, local.b4, local.c4);
+    local = delta * local;
+    local.a4 = translation.x;
+    local.b4 = translation.y;
+    local.c4 = translation.z;
+    return true;
+}
+
 void AnimationModelResource::CommitPhysicsPose()
 {
     if (!m_AiScene || !m_AiScene->mRootNode)
@@ -431,6 +513,7 @@ void AnimationModelResource::ResetBoneMatricesToBindPose()
         return;
     }
     InvalidateAnimationPoseCache();
+    if (m_HasImportedVmdMorphs) ApplyImportedVmdMorphs({});
     UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     WriteBoneMatricesToBuffer();
 }
@@ -750,6 +833,11 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
         UpdateVmdBoneMatrices(vmdAnimation1, frame1, vmdAnimation2, frame2, safeBlendRate);
         cachePose();
         return;
+    }
+
+    if (m_HasImportedVmdMorphs)
+    {
+        ApplyImportedVmdMorphs({});
     }
 
     aiAnimation* animation1 = GetAnimation(animationName1);

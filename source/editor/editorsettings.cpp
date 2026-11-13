@@ -325,6 +325,15 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::Checkbox("GI・影・反射の低偏差サンプリング", &rays.StableSampling);
         if (ImGui::TreeNode("加速構造 (BLAS)"))
         {
+            ImGui::Checkbox("RTX Mega Geometry を使用", &rays.MegaGeometry);
+            if (!Raytracing::IsMegaGeometrySupported())
+            {
+                ImGui::TextDisabled("この環境では通常の DXR を使用します。");
+            }
+            else if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("静的メッシュのレイトレーシング影・AO に使用します。反射・GI・ガラスを使うシーンは通常の DXR で描画します。");
+            }
             ImGui::Checkbox("静的 BLAS をコンパクション", &rays.CompactStaticBlas);
             ImGui::SliderInt("変形 BLAS の再構築間隔 (リフィット回数)", &rays.DeformingBlasRebuildInterval, 0, 240);
             ImGui::SliderInt("1 フレームの再構築上限", &rays.DeformingBlasRebuildsPerFrame, 1, 16);
@@ -343,6 +352,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
                         static_cast<double>(blas.ResultBytes) / (1024.0 * 1024.0),
                         static_cast<double>(blas.CompactionSavedBytes) / (1024.0 * 1024.0));
             ImGui::Text("このフレーム: リフィット %u / フルビルド %u", blas.RefitsThisFrame, blas.RebuildsThisFrame);
+            ImGui::Text("RTX Mega Geometry BLAS: %u", blas.ClusteredBottomLevels);
             ImGui::TextWrapped("統計は直近にレイトレーシングを実行したフレームスロットの値です。");
             ImGui::TreePop();
         }
@@ -1414,6 +1424,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     matched |= EditorConfig::Value(output, key, value, "texture.BackgroundCompression",
                                    textureCompression.BackgroundForSynchronousLoads, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "ray.CompactStaticBlas", temporalRays.CompactStaticBlas, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.MegaGeometry", temporalRays.MegaGeometry, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildInterval",
                                    temporalRays.DeformingBlasRebuildInterval, 0, 240);
     matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildsPerFrame",

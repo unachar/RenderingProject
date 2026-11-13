@@ -1463,6 +1463,52 @@ float VirtualMoonSurfaceVisibility(float3 worldPosition, float3 normal, float3 d
     return 0;
 }
 
+float3 BlendLocalReflection(float3 fallback, float3 position, float3 direction, float roughness, bool hasDxr)
+{
+    float bestWeight = 0.0f;
+    int bestProbe = -1;
+    [loop] for (int i = 0; i < 8; ++i)
+    {
+        const float4 center = ReflectionProbeCenters[i];
+        if (center.w <= 0.0f)
+        {
+            break;
+        }
+        const float4 settings = ReflectionProbeSettings[i];
+        const float boundary = center.w - distance(position, center.xyz);
+        float weight = smoothstep(0.0f, max(settings.z, 0.001f), boundary);
+        if (hasDxr)
+        {
+            weight *= smoothstep(settings.w, settings.w + 0.15f, roughness);
+        }
+        if (weight > bestWeight)
+        {
+            bestWeight = weight;
+            bestProbe = i;
+        }
+    }
+    [branch] if (bestProbe < 0)
+    {
+        return fallback;
+    }
+    const float4 center = ReflectionProbeCenters[bestProbe];
+    const float4 settings = ReflectionProbeSettings[bestProbe];
+    const float3 offset = position - center.xyz;
+    const float projection = dot(offset, direction);
+    const float exitDistance = -projection + sqrt(max(projection * projection + center.w * center.w -
+                                                       dot(offset, offset), 0.0f));
+    const float3 corrected = normalize(offset + direction * exitDistance);
+    const float pi = 3.14159265359f;
+    const float2 uv = float2(frac(atan2(corrected.z, corrected.x) / (2.0f * pi) + 0.5f),
+                             acos(clamp(corrected.y, -1.0f, 1.0f)) / pi);
+    const uint textureIndex = NonUniformResourceIndex((uint)settings.x);
+    uint width, height, mipCount;
+    MegaLightTextures[textureIndex].GetDimensions(0, width, height, mipCount);
+    const float3 radiance = MegaLightTextures[textureIndex].SampleLevel(
+        TextureSampler, uv, roughness * max((float)mipCount - 1.0f, 0.0f)).rgb;
+    return lerp(fallback, radiance * settings.y, bestWeight);
+}
+
 float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 worldPosition, float2 screenUv,
                                   float shadowSoftness, float3 pbrDirectLight)
 {
@@ -1490,12 +1536,15 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     float maxMip = 8.0f;
 
     float3 envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+    bool hasDxrReflection = false;
 #ifdef SHADER_RAYTRACING
+    hasDxrReflection = RaytracingFlags.w > 0.5f;
     if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
     {
         envSpecular = RaytracingFlags.w > 0.5f ? RaytracedReflections.SampleLevel(TextureSampler, screenUv, 0).rgb : 0;
     }
 #endif
+    envSpecular = BlendLocalReflection(envSpecular, worldPosition, R, roughness, hasDxrReflection);
 
     float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, normalUV, maxMip).rgb;
 

@@ -6,6 +6,8 @@
 #include "graphicslog.h"
 #include "persistentpsocache.h"
 #include "camera.h"
+#include "staticmodel.h"
+#include "../../External/NVAPI/rtxmg/nvapi.h"
 #include "world.h"
 #include "nrddenoiser.h"
 #include "scenedepth.h"
@@ -38,7 +40,7 @@ namespace
     constexpr UINT kConstantStride = 256;
     constexpr UINT kMaximumInstances = RendererState::g_kGLASS_MAX_MESHES;
 
-    using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT>;
+    using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT, bool>;
 
     struct BottomLevel
     {
@@ -46,6 +48,7 @@ namespace
         ComPtr<ID3D12Resource> Scratch;
         ComPtr<ID3D12Resource> Vertices;
         ComPtr<ID3D12Resource> Indices;
+        ComPtr<ID3D12Resource> Clusters;
         UINT64 LastSeen = 0;
         UINT64 LastBuilt = 0;
         // コンパクション前の結果サイズ（統計用）。
@@ -59,6 +62,64 @@ namespace
         // R16G16B16A16_SNORM + Transform3x4 で構築したか。リフィットは同じ形式でのみ可能。
         bool Quantized = false;
     };
+
+    // NVAPI interface IDs from NVIDIA's nvapi_interface.h (SDK revision 51e5aae4).
+    struct ClusterApi
+    {
+        HMODULE Module = nullptr;
+        decltype(&NvAPI_Unload) Unload = nullptr;
+        decltype(&NvAPI_D3D12_GetRaytracingMultiIndirectClusterOperationRequirementsInfo) Requirements = nullptr;
+        decltype(&NvAPI_D3D12_RaytracingExecuteMultiIndirectClusterOperation) Execute = nullptr;
+
+        void Shutdown()
+        {
+            if (Unload)
+            {
+                Unload();
+            }
+            if (Module)
+            {
+                FreeLibrary(Module);
+            }
+            *this = {};
+        }
+
+        bool Initialize(ID3D12Device* device)
+        {
+            Module = LoadLibraryExW(L"nvapi64.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            using QueryInterface = void* (__cdecl*)(unsigned int);
+            const auto query = Module
+                ? reinterpret_cast<QueryInterface>(GetProcAddress(Module, "nvapi_QueryInterface")) : nullptr;
+            if (!query)
+            {
+                Shutdown();
+                return false;
+            }
+            const auto initialize = reinterpret_cast<decltype(&NvAPI_Initialize)>(query(0x0150e828));
+            const auto unload = reinterpret_cast<decltype(Unload)>(query(0xd22bdd7e));
+            if (!initialize || !unload || initialize() != NVAPI_OK)
+            {
+                Shutdown();
+                return false;
+            }
+            Unload = unload;
+            const auto caps = reinterpret_cast<decltype(&NvAPI_D3D12_GetRaytracingCaps)>(query(0x85a6c2a0));
+            Requirements = reinterpret_cast<decltype(Requirements)>(query(0x5c9163f4));
+            Execute = reinterpret_cast<decltype(Execute)>(query(0x67c798af));
+            NvU32 supported = 0;
+            if (!caps || !Requirements || !Execute ||
+                caps(device, NVAPI_D3D12_RAYTRACING_CAPS_TYPE_CLUSTER_OPERATIONS, &supported, sizeof(supported)) !=
+                    NVAPI_OK ||
+                !(supported & NVAPI_D3D12_RAYTRACING_CLUSTER_OPERATIONS_CAP_STANDARD))
+            {
+                Shutdown();
+                return false;
+            }
+            return true;
+        }
+    };
+
+    ClusterApi g_ClusterApi;
 
     // 量子化頂点は頂点ソース単位で共有する（PMX の材質別サブメッシュが同じ頂点バッファを参照するため）。
     using VertexSourceKey = tuple<UINT64, UINT, UINT>;
@@ -169,6 +230,7 @@ namespace
     uint64_t g_GuideSerial = 0;
     bool g_NrdHistoryValid = false;
     bool g_ShadowHistoryValid = false;
+XMFLOAT4 g_PreviousShadowDistances{};
     bool g_AmbientHistoryValid = false;
     EntityID g_NrdCamera = g_kINVALID_ENTITY;
     ComPtr<ID3D12Resource> g_Constants;
@@ -698,6 +760,151 @@ namespace
         return ready;
     }
 
+    bool BuildClusteredBottomLevel(ID3D12GraphicsCommandList4* commands, const StaticMeshData& mesh,
+                                   BottomLevel& level, FrameResources& frame)
+    {
+        using TriangleArgs = NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_MULTI_INDIRECT_TRIANGLE_CLUSTER_ARGS;
+        using BlasArgs = NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_MULTI_INDIRECT_CLUSTER_ARGS;
+        using Inputs = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_INPUTS;
+        using Sizes = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_REQUIREMENTS_INFO;
+        constexpr UINT trianglesPerCluster = 64;
+        constexpr UINT verticesPerCluster = trianglesPerCluster * 3;
+        const auto& indices = mesh.CpuIndices;
+        if (indices.empty() || indices.size() % 3 || indices.size() > 3'000'000)
+        {
+            return false;
+        }
+        const UINT count = static_cast<UINT>((indices.size() + verticesPerCluster - 1) / verticesPerCluster);
+        Inputs triangles{};
+        triangles.maxArgCount = count;
+        triangles.type = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_TYPE_BUILD_CLAS_FROM_TRIANGLES;
+        triangles.flags = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_FLAG_FAST_TRACE;
+        triangles.trianglesDesc = {DXGI_FORMAT_R32G32B32_FLOAT, 0, 1, trianglesPerCluster, verticesPerCluster,
+                                   static_cast<UINT>(indices.size() / 3), static_cast<UINT>(indices.size()), 0};
+        Inputs blas{};
+        blas.maxArgCount = 1;
+        blas.type = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_TYPE_BUILD_BLAS_FROM_CLAS;
+        blas.mode = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_MODE_EXPLICIT_DESTINATIONS;
+        blas.flags = triangles.flags;
+        blas.clasDesc = {count, count};
+        Sizes clusterSizes{}, blasSizes{};
+        const auto requirements = [&](const Inputs& inputs, Sizes& sizes) {
+            NVAPI_GET_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_REQUIREMENTS_INFO_PARAMS params{
+                NVAPI_GET_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_REQUIREMENTS_INFO_PARAMS_VER, &inputs, &sizes};
+            return g_ClusterApi.Requirements(g_Device.Get(), &params) == NVAPI_OK && sizes.resultDataMaxSizeInBytes > 0;
+        };
+        if (!requirements(triangles, clusterSizes) || !requirements(blas, blasSizes))
+        {
+            return false;
+        }
+        const UINT64 blasArgsOffset = sizeof(TriangleArgs) * count;
+        const UINT64 positionOffset = blasArgsOffset + sizeof(BlasArgs);
+        const UINT64 indexOffset = positionOffset + sizeof(XMFLOAT3) * indices.size();
+        const UINT64 blasAddressOffset = (indexOffset + verticesPerCluster * sizeof(uint16_t) + 7) & ~UINT64{7};
+        ComPtr<ID3D12Resource> upload, addresses, blasAddress, blasSize, clusters, result, scratch;
+        const auto allocate = [](auto& buffer, UINT64 bytes, D3D12_RESOURCE_STATES state, const wchar_t* name) {
+            return EnsureBuffer(buffer, bytes, D3D12_HEAP_TYPE_DEFAULT, state, name);
+        };
+        if (!EnsureBuffer(upload, blasAddressOffset + sizeof(UINT64), D3D12_HEAP_TYPE_UPLOAD,
+                          D3D12_RESOURCE_STATE_GENERIC_READ, L"Mega Geometry Build Inputs") ||
+            !allocate(addresses, count * sizeof(UINT64), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"CLAS Addresses") ||
+            !allocate(blasAddress, sizeof(UINT64), D3D12_RESOURCE_STATE_COPY_DEST, L"Cluster BLAS Address") ||
+            !allocate(blasSize, sizeof(UINT), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"Cluster BLAS Size") ||
+            !allocate(clusters, clusterSizes.resultDataMaxSizeInBytes,
+                      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Mega Geometry CLAS") ||
+            !allocate(result, blasSizes.resultDataMaxSizeInBytes,
+                      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Mega Geometry BLAS") ||
+            !allocate(scratch, (max)({clusterSizes.scratchDataSizeInBytes, blasSizes.scratchDataSizeInBytes, NvU64{256}}),
+                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"Mega Geometry Scratch"))
+        {
+            return false;
+        }
+        void* mapped = nullptr;
+        const CD3DX12_RANGE noRead(0, 0);
+        if (FAILED(upload->Map(0, &noRead, &mapped)))
+        {
+            return false;
+        }
+        auto* bytes = static_cast<BYTE*>(mapped);
+        auto* positions = reinterpret_cast<XMFLOAT3*>(bytes + positionOffset);
+        for (size_t i = 0; i < indices.size(); ++i)
+        {
+            if (indices[i] >= mesh.CpuVertices.size())
+            {
+                upload->Unmap(0, &noRead);
+                return false;
+            }
+            positions[i] = mesh.CpuVertices[indices[i]].Position;
+        }
+        auto* localIndices = reinterpret_cast<uint16_t*>(bytes + indexOffset);
+        for (UINT i = 0; i < verticesPerCluster; ++i)
+        {
+            localIndices[i] = static_cast<uint16_t>(i);
+        }
+        const auto inputAddress = upload->GetGPUVirtualAddress();
+        for (UINT i = 0; i < count; ++i)
+        {
+            const UINT start = i * verticesPerCluster;
+            TriangleArgs args{};
+            args.clusterId = i;
+            args.vertexCount = (min)(verticesPerCluster, static_cast<UINT>(indices.size()) - start);
+            args.triangleCount = args.vertexCount / 3;
+            args.indexFormat = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_INDEX_FORMAT_16BIT;
+            args.baseGeometryIndexAndFlags =
+                NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_GEOMETRY_FLAG_OPAQUE;
+            args.indexBuffer = inputAddress + indexOffset;
+            args.vertexBuffer = inputAddress + positionOffset + start * sizeof(XMFLOAT3);
+            memcpy(bytes + sizeof(TriangleArgs) * i, &args, sizeof(args));
+        }
+        const BlasArgs blasArgs{count, 0, addresses->GetGPUVirtualAddress()};
+        memcpy(bytes + blasArgsOffset, &blasArgs, sizeof(blasArgs));
+        const UINT64 resultAddress = result->GetGPUVirtualAddress();
+        memcpy(bytes + blasAddressOffset, &resultAddress, sizeof(resultAddress));
+        upload->Unmap(0, nullptr);
+
+        const auto execute = [&](const Inputs& inputs, UINT64 destination, UINT64 arguments, UINT64 stride,
+                                 UINT64 outputAddresses) {
+            NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_DESC desc{};
+            desc.inputs = inputs;
+            desc.batchResultData = destination;
+            desc.batchScratchData = scratch->GetGPUVirtualAddress();
+            desc.indirectArgArray = {arguments, stride};
+            desc.destinationAddressArray = {outputAddresses, outputAddresses ? sizeof(UINT64) : 0};
+            if (inputs.mode == NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_MODE_EXPLICIT_DESTINATIONS)
+            {
+                desc.resultSizeArray = {blasSize->GetGPUVirtualAddress(), sizeof(UINT)};
+            }
+            NVAPI_RAYTRACING_EXECUTE_MULTI_INDIRECT_CLUSTER_OPERATION_PARAMS params{
+                NVAPI_RAYTRACING_EXECUTE_MULTI_INDIRECT_CLUSTER_OPERATION_PARAMS_VER, &desc};
+            return g_ClusterApi.Execute(commands, &params) == NVAPI_OK;
+        };
+        frame.Retired.insert(frame.Retired.end(), {upload, addresses, blasAddress, blasSize, scratch, clusters, result});
+        RenderProfiler::ScopedEvent profile("RTX Mega Geometry CLAS / BLAS", commands);
+        commands->CopyBufferRegion(blasAddress.Get(), 0, upload.Get(), blasAddressOffset, sizeof(UINT64));
+        if (!execute(triangles, clusters->GetGPUVirtualAddress(), inputAddress, sizeof(TriangleArgs),
+                     addresses->GetGPUVirtualAddress()))
+        {
+            return false;
+        }
+        const D3D12_RESOURCE_BARRIER barriers[] = {
+            CD3DX12_RESOURCE_BARRIER::UAV(clusters.Get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(scratch.Get()),
+            CD3DX12_RESOURCE_BARRIER::Transition(blasAddress.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            CD3DX12_RESOURCE_BARRIER::Transition(addresses.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
+        commands->ResourceBarrier(_countof(barriers), barriers);
+        if (!execute(blas, result->GetGPUVirtualAddress(), inputAddress + blasArgsOffset, sizeof(BlasArgs),
+                     blasAddress->GetGPUVirtualAddress()))
+        {
+            return false;
+        }
+        level.Clusters = clusters;
+        level.Result = result;
+        level.LastBuilt = g_Serial;
+        return true;
+    }
+
     bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry,
                           BottomLevel& level, GeometryReadBatch& geometryReads, FrameResources& frame,
                           const GeometryKey& key, ID3D12Resource* packed, UINT& rebuildBudget)
@@ -705,6 +912,14 @@ namespace
         level.LastSeen = g_Serial;
         if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
         {
+            return true;
+        }
+        if (std::get<6>(key) && BuildClusteredBottomLevel(commandList, *geometry.ClusterSource, level, frame))
+        {
+            geometryReads.CompleteBuild(level.Result.Get());
+            level.Vertices = geometry.Vertices;
+            level.Indices = geometry.Indices;
+            ++g_BlasStats.RebuildsThisFrame;
             return true;
         }
         const bool firstBuild = !level.Result;
@@ -972,6 +1187,17 @@ namespace
     {
         RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
         const auto geometry = GatherRaytracingGeometry();
+        const bool useClusters = g_Settings.MegaGeometry && g_ClusterApi.Execute && !Raytracing::RadianceRequested() &&
+                                 none_of(geometry.begin(), geometry.end(), [](const auto& entry) {
+                                     return entry.Transmission > 0.001f;
+                                 });
+        const auto geometryKey = [useClusters](const RaytracingGeometry& entry) {
+            const bool clustered = useClusters && entry.ClusterSource && entry.IndexCount >= 3072 &&
+                                   entry.ClusterSource->CpuIndices.size() == entry.IndexCount;
+            return GeometryKey(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
+                               entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
+                               static_cast<UINT>(entry.IndexView.Format), clustered);
+        };
         frame.GlassReady = false;
         frame.SceneGeometry.clear();
         vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
@@ -993,9 +1219,7 @@ namespace
                 continue;
             }
             ++accepted;
-            const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-                                  entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
-                                  static_cast<UINT>(entry.IndexView.Format));
+            const GeometryKey key = geometryKey(entry);
             const auto bottom = frame.Geometry.find(key);
             if (bottom == frame.Geometry.end() || !bottom->second.Result || entry.Deforming)
             {
@@ -1023,9 +1247,7 @@ namespace
             {
                 continue;
             }
-            const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-                                  entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
-                                  static_cast<UINT>(entry.IndexView.Format));
+            const GeometryKey key = geometryKey(entry);
             BottomLevel& bottom = frame.Geometry[key];
             ID3D12Resource* packed = nullptr;
             if (wantsQuantized[index])
@@ -1128,6 +1350,10 @@ namespace
                 {
                     frame.Retired.push_back(bottom.Indices);
                 }
+                if (bottom.Clusters)
+                {
+                    frame.Retired.push_back(bottom.Clusters);
+                }
                 iterator = frame.Geometry.erase(iterator);
             }
             else
@@ -1145,6 +1371,11 @@ namespace
             }
             const UINT64 bytes = bottom.Result->GetDesc().Width;
             g_BlasStats.ResultBytes += bytes;
+            if (bottom.Clusters)
+            {
+                ++g_BlasStats.ClusteredBottomLevels;
+                g_BlasStats.ResultBytes += bottom.Clusters->GetDesc().Width;
+            }
             if (bottom.Quantized)
             {
                 ++g_BlasStats.Quantized;
@@ -1394,12 +1625,21 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     {
         WriteGraphicsLog("OptiX unavailable: %s\n", OptixDenoiser::GetStatus());
     }
+    char clusterMode[8]{};
+    if (GetEnvironmentVariableA("DX12_RTX_MEGA_GEOMETRY", clusterMode, sizeof(clusterMode)) > 0)
+    {
+        g_Settings.MegaGeometry = atoi(clusterMode) != 0;
+    }
+    WriteGraphicsLog("RTX Mega Geometry: %s\n",
+                     g_ClusterApi.Initialize(device) ? "NVAPI clusters ready for static shadow/AO"
+                                                     : "unsupported; using conventional DXR");
     WriteGraphicsLog("DXR: Tier 1.1 inline raytracing ready\n");
     return true;
 }
 
 void Raytracing::Shutdown()
 {
+    g_ClusterApi.Shutdown();
     g_TelemetryPipeline.Reset();
     g_TelemetryPipelineTried = false;
     RayReflections::Shutdown();
@@ -1561,21 +1801,6 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                            clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f)};
     constants.Features = {static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()),
                           static_cast<UINT>(NrdDenoiser::IsCompiled() && g_Settings.Denoise), 0};
-    // NRD 有効時は SIGMA が最初の確率的な太陽レイだけを、REBLUR が最初の AO ヒット距離だけを使う。
-    // その後 ComposeShadow / ComposeAmbient が平均可視性を上書きする。
-    // 追加サンプルは無駄になるため、両履歴が有効な場合は1本だけ追跡する。
-    // 初回フレームやフォールバックでは、引き続き複数サンプルの平均を使う。
-    const bool shadowDenoised = !UsesRaytracedShadows() || g_SunDirection.w <= 0.5f || shadowHistoryValid;
-    const bool ambientDenoised = !UsesRaytracedAmbientOcclusion() || ambientHistoryValid;
-    if (constants.Features.z != 0 && shadowDenoised && ambientDenoised)
-    {
-        constants.ExtentSamples.z = 1;
-    }
-    if (constants.Features.x == 0 && constants.Features.y == 0)
-    {
-        // 反射にはガイドが必要だが、遮蔽されないサンプルを繰り返しても情報は増えない。
-        constants.ExtentSamples.z = 1;
-    }
     XMStoreFloat4x4(&constants.WorldToView, XMMatrixTranspose(view));
     NrdFrame nrdFrame;
     XMStoreFloat4x4(&nrdFrame.View, view);
@@ -1615,6 +1840,22 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         nrdFrame.PreviousProjection = nrdFrame.Projection;
         nrdFrame.PreviousJitter = nrdFrame.Jitter;
     }
+    NrdFrame sunFrame = nrdFrame;
+    const auto& oldDirection = g_PreviousNrdFrame.LightDirection;
+    const float directionSimilarity = oldDirection.x * nrdFrame.LightDirection.x +
+                                      oldDirection.y * nrdFrame.LightDirection.y +
+                                      oldDirection.z * nrdFrame.LightDirection.z;
+    // 太陽半径の半分を超える移動では、前フレームの半影を引き継がない。
+    const float shadowHistoryAngle = (max)(constants.Distances.w * 0.5f, XMConvertToRadians(0.5f));
+    sunFrame.ResetHistory |= !shadowHistoryValid || directionSimilarity < cosf(shadowHistoryAngle) ||
+                             g_PreviousShadowDistances.x != constants.Distances.x ||
+                             g_PreviousShadowDistances.z != constants.Distances.z ||
+                             g_PreviousShadowDistances.w != constants.Distances.w;
+    NrdFrame ambientFrame = nrdFrame;
+    ambientFrame.ResetHistory |= !ambientHistoryValid || g_PreviousNrdFrame.AmbientRadius != nrdFrame.AmbientRadius;
+    // 履歴が有効な信号は NRD が使う最初のレイだけ追跡する。
+    constants.Stability.y = constants.Features.z != 0 && !sunFrame.ResetHistory ? 1.0f : 0.0f;
+    constants.Stability.z = constants.Features.z != 0 && !ambientFrame.ResetHistory ? 1.0f : 0.0f;
     constants.Jitter = {nrdFrame.Jitter.x, nrdFrame.Jitter.y, nrdFrame.PreviousJitter.x, nrdFrame.PreviousJitter.y};
     memcpy(&constants.Features.w, &nrdFrame.Range, sizeof(float));
     void* mapped = nullptr;
@@ -1691,16 +1932,6 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         Transition(commandList, material, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         const bool denoise = g_Settings.Denoise && UsesRaytracedShadows() && g_SunDirection.w > 0.5f;
-        NrdFrame sunFrame = nrdFrame;
-        sunFrame.ResetHistory |= !shadowHistoryValid;
-        const auto& oldDirection = g_PreviousNrdFrame.LightDirection;
-        const float directionSimilarity = oldDirection.x * nrdFrame.LightDirection.x +
-                                          oldDirection.y * nrdFrame.LightDirection.y +
-                                          oldDirection.z * nrdFrame.LightDirection.z;
-        if (directionSimilarity < 0.99f)
-        {
-            sunFrame.ResetHistory = true;
-        }
         if (denoise &&
             g_NrdSun->Execute(
                 commandList,
@@ -1709,6 +1940,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         {
             g_NrdDispatchCount = g_NrdSun->GetDispatchCount();
             g_ShadowHistoryValid = true;
+            g_PreviousShadowDistances = constants.Distances;
             D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
             srv.Format = DXGI_FORMAT_R8_UNORM;
             srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1737,8 +1969,6 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                 WriteGraphicsLog("NRD: SIGMA GPU dispatches=%u\n", g_NrdDispatchCount);
             }
         }
-        NrdFrame ambientFrame = nrdFrame;
-        ambientFrame.ResetHistory |= !ambientHistoryValid;
         if (g_Settings.Denoise && UsesRaytracedAmbientOcclusion() &&
             g_NrdAmbient->Execute(
                 commandList,
@@ -1808,6 +2038,11 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 bool Raytracing::IsAvailable()
 {
     return g_Pipeline != nullptr;
+}
+
+bool Raytracing::IsMegaGeometrySupported()
+{
+    return g_ClusterApi.Execute != nullptr;
 }
 
 bool Raytracing::ReflectionsRequested()

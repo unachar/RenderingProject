@@ -601,7 +601,8 @@ namespace
 
     bool RenderPreview(PreviewState& preview, const MaterialComponent& material, UINT firstVertex = 0,
                        UINT vertexCount = 0, UINT partIndex = 0, UINT partCount = 1, const MeshData* mesh = nullptr,
-                       const D3D12_VERTEX_BUFFER_VIEW* weights = nullptr, bool wireframe = false, bool showWeights = false)
+                       const D3D12_VERTEX_BUFFER_VIEW* weights = nullptr, bool wireframe = false, bool showWeights = false,
+                       const XMFLOAT3& wireframeColor = {})
     {
         auto* pipeline = weights ? preview.DebugPipeline(wireframe) : preview.Pipeline(material);
         if (!pipeline)
@@ -646,7 +647,7 @@ namespace
         lights[flagsOffset] = {1, 1, 0, 0};       // 不透明パスとフォワードパスで物理ライティングを有効にする。
         XMFLOAT4 toonStyle[6];
         LiveToonStyle::Write(toonStyle);
-        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 6;
+        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 8 * 2 - 6;
         std::copy(std::begin(toonStyle), std::end(toonStyle), lights + toonStyleOffset);
         commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() +
                                                            GraphicsDevice::GetFrameIndex() * constantBytes);
@@ -674,6 +675,11 @@ namespace
         commands->SetGraphicsRootConstantBufferView(27, zeroAddress);
         auto constants = PreviewCameraConstants(preview);
         constants.MaterialPadding = showWeights ? 1.0f : 0.0f;
+        if (wireframe)
+        {
+            // The preview debug shader uses the outline color slot for its wireframe tint.
+            constants.ToonOutlineColor = {wireframeColor.x, wireframeColor.y, wireframeColor.z, 1.0f};
+        }
         constants.UseTexture = material.UseTexture;
         constants.UseNormalMap = material.NormalMapID >= 0;
         constants.MaterialMode = 1;
@@ -916,7 +922,7 @@ bool AnimationPreviewContext::ProjectPoint(const XMFLOAT3& point, XMFLOAT2& uv) 
 }
 
 bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector<MaterialComponent>& materials,
-                                     bool wireframe, int weightBone)
+                                     bool wireframe, const XMFLOAT3& wireframeColor, int weightBone)
 {
     auto& state = m_Impl->State;
     if (!state.Target || materials.size() != model.GetMeshCount() || materials.size() > m_Impl->MaterialCount)
@@ -1023,7 +1029,8 @@ bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector
                                                  D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
         commands->ResourceBarrier(1, &transition);
         const bool rendered = RenderPreview(state, material, 0, 0, part, static_cast<UINT>(meshes.size()), &mesh,
-                                            debug ? &weightViews[part] : nullptr, wireframe, weightBone >= 0);
+                                            debug ? &weightViews[part] : nullptr, wireframe, weightBone >= 0,
+                                            wireframeColor);
         transition = CD3DX12_RESOURCE_BARRIER::Transition(mesh.VertexBuffer.Get(),
                                                           D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

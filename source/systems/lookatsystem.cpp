@@ -48,7 +48,9 @@ namespace
         const float start = clamp(settings.StartAngle, 0.0f, 90.0f);
         const float end = max(clamp(settings.FullAngle, 0.0f, 90.0f), start + 0.01f);
         const float amount = clamp((angle - start) / (end - start), 0.0f, 1.0f);
-        return amount * amount * (3.0f - 2.0f * amount) * clamp(settings.Strength, 0.0f, 1.0f);
+        const float smoothAmount = amount * amount * (3.0f - 2.0f * amount);
+        return powf(smoothAmount, clamp(settings.CurvePower, 0.25f, 4.0f)) *
+               clamp(settings.Strength, 0.0f, 1.0f);
     }
 
     void UpdateFaceCorrections()

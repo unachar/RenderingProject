@@ -1,22 +1,24 @@
 #ifndef CELESTIAL_LIGHTING
 #define CELESTIAL_LIGHTING
 
-// 仮想の満月は太陽と逆の軌道をたどる。全パスで共有する。
+// 月はワールドの +Z 方向、仰角 35 度に固定する。全パスで共有する。
 float3 VirtualMoonDirection()
 {
-    const float lengthSquared = dot(SkySunDirection.xyz, SkySunDirection.xyz);
-    if (lengthSquared < 0.00000001f)
-    {
-        // 独立したマテリアルプレビューには天体の光源方向がない。
-        return float3(0.0f, -1.0f, 0.0f);
-    }
-    return -SkySunDirection.xyz * rsqrt(lengthSquared);
+    return float3(0.0f, 0.5735764f, 0.8191520f);
 }
 
 float3 VirtualMoonIrradiance()
 {
-    float visibility = smoothstep(0.0, 0.08, VirtualMoonDirection().y);
-    return float3(0.55, 0.65, 0.80) * visibility * SkyParameters.x;
+    const float3 sun = SkySunDirection.xyz;
+    const float lengthSquared = dot(sun, sun);
+    if (lengthSquared < 0.00000001f || SkyParameters.x <= 0.0f)
+    {
+        return 0.0f;
+    }
+    const float sunElevationSine = sun.y * rsqrt(lengthSquared);
+    // 薄明で徐々に見え始め、太陽高度が -12 度で夜の明るさに達する。
+    const float nightVisibility = 1.0f - smoothstep(-0.2079117f, -0.0174524f, sunElevationSine);
+    return float3(0.55f, 0.65f, 0.80f) * nightVisibility;
 }
 
 // 球状の大気。浅い角度のレイでは受光点付近を密にサンプリングする。

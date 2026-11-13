@@ -127,7 +127,7 @@ LRESULT CALLBACK SplashWindowProc(HWND window, UINT message, WPARAM wParam, LPAR
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-void ShowSplash(HINSTANCE instance, HANDLE stopEvent, const std::atomic<int>& percent)
+void ShowSplash(HINSTANCE instance, HANDLE stopEvent, HANDLE readyEvent, const std::atomic<int>& percent)
 {
     WNDCLASSW windowClass{};
     windowClass.hInstance = instance;
@@ -148,8 +148,9 @@ void ShowSplash(HINSTANCE instance, HANDLE stopEvent, const std::atomic<int>& pe
                                   WS_POPUP, x, y, Width, Height, nullptr, nullptr, instance, &view);
     if (window)
     {
-        SetWindowPos(window, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         UpdateWindow(window);
+        SetEvent(readyEvent);
         // Pump messages independently while the renderer initializes on the main thread.
         for (;;)
         {
@@ -189,14 +190,24 @@ StartupSplash::StartupSplash(HINSTANCE instance, bool enabled)
     stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (stopEvent_)
     {
+        HANDLE readyEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!readyEvent)
+        {
+            Close();
+            return;
+        }
         try
         {
-            thread_ = std::thread(&StartupSplash::Run, this, instance);
+            thread_ = std::thread(&StartupSplash::Run, this, instance, readyEvent);
+            HANDLE startupHandles[] = {readyEvent, thread_.native_handle()};
+            // Continue after the first paint or if the splash thread exits without a window.
+            WaitForMultipleObjects(2, startupHandles, FALSE, INFINITE);
         }
         catch (const std::system_error&)
         {
             Close();
         }
+        CloseHandle(readyEvent);
     }
 }
 
@@ -230,13 +241,13 @@ void StartupSplash::Close()
     }
 }
 
-void StartupSplash::Run(HINSTANCE instance)
+void StartupSplash::Run(HINSTANCE instance, HANDLE readyEvent)
 {
     Gdiplus::GdiplusStartupInput input;
     ULONG_PTR token = 0;
     if (Gdiplus::GdiplusStartup(&token, &input, nullptr) == Gdiplus::Ok)
     {
-        ShowSplash(instance, stopEvent_, percent_);
+        ShowSplash(instance, stopEvent_, readyEvent, percent_);
         Gdiplus::GdiplusShutdown(token);
     }
 }
