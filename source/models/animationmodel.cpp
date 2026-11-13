@@ -279,7 +279,24 @@ static void NormalizeBoneInfluences(GpuSkinVertex& gpuVertex, DeformVertex& defo
     }
 }
 
-static aiMatrix4x4 GetBoneOffsetMatrixOrFallback(const aiScene* scene, const aiBone* bone)
+static void FindMeshNodes(const aiNode* node, vector<const aiNode*>& meshNodes)
+{
+    for (unsigned int i = 0; i < node->mNumMeshes; ++i)
+    {
+        const unsigned int meshIndex = node->mMeshes[i];
+        if (meshIndex < meshNodes.size() && !meshNodes[meshIndex])
+        {
+            meshNodes[meshIndex] = node;
+        }
+    }
+    for (unsigned int i = 0; i < node->mNumChildren; ++i)
+    {
+        FindMeshNodes(node->mChildren[i], meshNodes);
+    }
+}
+
+static aiMatrix4x4 GetBoneOffsetMatrixOrFallback(const aiScene* scene, const aiBone* bone,
+                                                  const aiMatrix4x4* meshBindGlobal)
 {
     const aiMatrix4x4 identity = MakeAiIdentityMatrix();
     if (!bone)
@@ -287,7 +304,8 @@ static aiMatrix4x4 GetBoneOffsetMatrixOrFallback(const aiScene* scene, const aiB
         return identity;
     }
 
-    if (IsUsableSkinningMatrix(bone->mOffsetMatrix))
+    const bool hasImportedOffset = IsUsableSkinningMatrix(bone->mOffsetMatrix);
+    if (hasImportedOffset && !meshBindGlobal)
     {
         return bone->mOffsetMatrix;
     }
@@ -295,15 +313,32 @@ static aiMatrix4x4 GetBoneOffsetMatrixOrFallback(const aiScene* scene, const aiB
     aiMatrix4x4 bindGlobalMatrix = identity;
     if (scene && FindNodeGlobalMatrix(scene->mRootNode, bone->mName.C_Str(), identity, bindGlobalMatrix))
     {
+        if (hasImportedOffset)
+        {
+            const float meshDeterminant = meshBindGlobal->Determinant();
+            const float skinnedDeterminant = (bindGlobalMatrix * bone->mOffsetMatrix).Determinant();
+            if (!isfinite(meshDeterminant) || !isfinite(skinnedDeterminant) ||
+                meshDeterminant == 0.0f || skinnedDeterminant == 0.0f ||
+                (meshDeterminant < 0.0f) == (skinnedDeterminant < 0.0f))
+            {
+                return bone->mOffsetMatrix;
+            }
+        }
+
+        // A reflected FBX joint needs an inverse bind that maps back to the mesh's bind transform.
         aiMatrix4x4 fallbackOffset = bindGlobalMatrix;
         fallbackOffset.Inverse();
+        if (meshBindGlobal)
+        {
+            fallbackOffset *= *meshBindGlobal;
+        }
         if (IsUsableSkinningMatrix(fallbackOffset))
         {
             return fallbackOffset;
         }
     }
 
-    return identity;
+    return hasImportedOffset ? bone->mOffsetMatrix : identity;
 }
 
 void AnimationModelResource::CreateBone(aiNode* node)
@@ -370,7 +405,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
         {
             flags |= aiProcess_ConvertToLeftHanded;
         }
-        m_AiScene = ImportModelScene(fileName, flags);
+        m_AiScene = ImportModelScene(fileName, flags, true);
         m_OwnsGeneratedAiScene = false;
         if (!m_AiScene)
         {
@@ -378,12 +413,30 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             return false;
         }
     }
-    m_Meshes.resize(m_AiScene->mNumMeshes);
-    m_DeformVertex.resize(m_AiScene->mNumMeshes);
-    m_GpuSkinVertices.resize(m_AiScene->mNumMeshes);
-    m_BaseGpuSkinVertices.resize(m_AiScene->mNumMeshes);
-    m_TeoGpuSkinVertices.resize(m_AiScene->mNumMeshes);
-    m_TeoGpuSkinVerticesByMode.resize(m_AiScene->mNumMeshes);
+    vector<unsigned int> triangleMeshes;
+    for (unsigned int i = 0; i < m_AiScene->mNumMeshes; ++i)
+    {
+        const aiMesh* mesh = m_AiScene->mMeshes[i];
+        for (unsigned int f = 0; f < mesh->mNumFaces; ++f)
+        {
+            if (mesh->mFaces[f].mNumIndices == 3)
+            {
+                triangleMeshes.push_back(i);
+                break;
+            }
+        }
+    }
+    if (triangleMeshes.empty())
+    {
+        Debug::Log("ERROR: Animated model has no triangles: %s\n", fileName);
+        return false;
+    }
+    m_Meshes.resize(triangleMeshes.size());
+    m_DeformVertex.resize(triangleMeshes.size());
+    m_GpuSkinVertices.resize(triangleMeshes.size());
+    m_BaseGpuSkinVertices.resize(triangleMeshes.size());
+    m_TeoGpuSkinVertices.resize(triangleMeshes.size());
+    m_TeoGpuSkinVerticesByMode.resize(triangleMeshes.size());
 
     CreateBone(m_AiScene->mRootNode);
     m_PmxAppendConstraints.clear();
@@ -404,13 +457,25 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
     }
 
     const string dirPath = ModelPathToUtf8(modelPath.parent_path());
-    XMFLOAT3 minPos = {FLT_MAX, FLT_MAX, FLT_MAX};
-    XMFLOAT3 maxPos = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
     bool hasVertices = false;
-
-    for (unsigned int m = 0; m < m_AiScene->mNumMeshes; m++)
+    unordered_map<uint32_t, aiMatrix4x4> firstSkinningOffsets;
+    vector<const aiNode*> fbxMeshNodes;
+    if (extension == ".fbx")
     {
-        aiMesh* mesh = m_AiScene->mMeshes[m];
+        fbxMeshNodes.resize(m_AiScene->mNumMeshes);
+        FindMeshNodes(m_AiScene->mRootNode, fbxMeshNodes);
+    }
+
+    for (unsigned int m = 0; m < triangleMeshes.size(); ++m)
+    {
+        const unsigned int sourceMeshIndex = triangleMeshes[m];
+        aiMesh* mesh = m_AiScene->mMeshes[sourceMeshIndex];
+        const aiNode* meshNode = fbxMeshNodes.empty() ? nullptr : fbxMeshNodes[sourceMeshIndex];
+        aiMatrix4x4 meshBindGlobal = MakeAiIdentityMatrix();
+        for (const aiNode* node = meshNode; node; node = node->mParent)
+        {
+            meshBindGlobal = node->mTransformation * meshBindGlobal;
+        }
         m_Meshes[m].TextureIndex = ResolveMeshTextureIndex(mesh, fileName, dirPath);
         m_Meshes[m].MaterialIndex = static_cast<int>(mesh->mMaterialIndex);
         m_Meshes[m].MeshName = mesh->mName.C_Str();
@@ -454,12 +519,6 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
                 gv.Normal = XMFLOAT3(0.0f, 1.0f, 0.0f);
             }
 
-            minPos.x = min(minPos.x, gv.Position.x);
-            minPos.y = min(minPos.y, gv.Position.y);
-            minPos.z = min(minPos.z, gv.Position.z);
-            maxPos.x = max(maxPos.x, gv.Position.x);
-            maxPos.y = max(maxPos.y, gv.Position.y);
-            maxPos.z = max(maxPos.z, gv.Position.z);
             hasVertices = true;
 
             const auto texCoords = mesh->mTextureCoords[0];
@@ -479,7 +538,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             }
             if (isPmxModel)
             {
-                ApplyPmxVertexDeformData(pmxModel, pmxMeshVertexIndices, m, v, gv);
+                ApplyPmxVertexDeformData(pmxModel, pmxMeshVertexIndices, sourceMeshIndex, v, gv);
             }
         }
 
@@ -522,6 +581,11 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             if (boneIt == m_Bone.end())
             {
                 uint32_t idx = (uint32_t)m_BoneNames.size();
+                if (idx >= m_kMAX_BONES - m_AdditionalSkinningOffsets.size())
+                {
+                    Debug::Log("ERROR: Animated model exceeds the skinning matrix limit: %s\n", fileName);
+                    return false;
+                }
                 m_BoneNames.push_back(boneName);
                 m_BoneIndexMap[boneName] = idx;
 
@@ -534,8 +598,6 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
                 boneIt = m_Bone.emplace(boneName, fallbackBone).first;
             }
 
-            boneIt->second.OffsetMatrix = GetBoneOffsetMatrixOrFallback(m_AiScene, bone);
-
             auto it = m_BoneIndexMap.find(boneName);
             uint32_t boneIdx;
             if ((it != m_BoneIndexMap.end()))
@@ -545,6 +607,31 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             else
             {
                 boneIdx = 0;
+            }
+            const uint32_t skeletonIndex = boneIdx;
+            const aiMatrix4x4 offset =
+                GetBoneOffsetMatrixOrFallback(m_AiScene, bone, meshNode ? &meshBindGlobal : nullptr);
+            auto [first, inserted] = firstSkinningOffsets.try_emplace(skeletonIndex, offset);
+            if (inserted)
+            {
+                boneIt->second.OffsetMatrix = offset;
+            }
+            else if (!first->second.Equal(offset))
+            {
+                const auto extra = std::find_if(m_AdditionalSkinningOffsets.begin(), m_AdditionalSkinningOffsets.end(),
+                    [&](const SkinningOffset& entry) { return entry.BoneName == boneName && entry.Offset.Equal(offset); });
+                const size_t extraIndex = std::distance(m_AdditionalSkinningOffsets.begin(), extra);
+                if (m_BoneNames.size() + extraIndex >= m_kMAX_BONES)
+                {
+                    Debug::Log("ERROR: Animated model exceeds the skinning matrix limit: %s\n", fileName);
+                    return false;
+                }
+                // Allocate from the end so imported skeleton indices stay stable.
+                boneIdx = m_kMAX_BONES - 1 - static_cast<uint32_t>(extraIndex);
+                if (extra == m_AdditionalSkinningOffsets.end())
+                {
+                    m_AdditionalSkinningOffsets.push_back({boneName, offset});
+                }
             }
 
             for (unsigned int w = 0; w < bone->mNumWeights; w++)
@@ -684,13 +771,23 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
         }
 
         {
-            vector<unsigned int> indices(mesh->mNumFaces * 3);
+            vector<unsigned int> indices;
+            indices.reserve(static_cast<size_t>(mesh->mNumFaces) * 3);
             for (unsigned int f = 0; f < mesh->mNumFaces; f++)
             {
-                const aiFace* face = &mesh->mFaces[f];
-                indices[f * 3 + 0] = face->mIndices[0];
-                indices[f * 3 + 1] = face->mIndices[1];
-                indices[f * 3 + 2] = face->mIndices[2];
+                const aiFace& face = mesh->mFaces[f];
+                if (face.mNumIndices != 3)
+                {
+                    continue;
+                }
+                if (face.mIndices[0] >= mesh->mNumVertices || face.mIndices[1] >= mesh->mNumVertices ||
+                    face.mIndices[2] >= mesh->mNumVertices)
+                {
+                    Debug::Log("ERROR: Animated mesh %u has an invalid vertex index in face %u: %s\n",
+                               sourceMeshIndex, f, fileName);
+                    return false;
+                }
+                indices.insert(indices.end(), face.mIndices, face.mIndices + 3);
             }
             if (!indices.empty() && !m_GpuSkinVertices[m].empty())
             {
@@ -942,8 +1039,44 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
     InvalidateVmdRuntimeCache();
     InvalidatePmxRuntimeCache();
 
+    UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     if (hasVertices)
     {
+        XMFLOAT3 minPos = {FLT_MAX, FLT_MAX, FLT_MAX};
+        XMFLOAT3 maxPos = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+        for (const auto& vertices : m_GpuSkinVertices)
+        {
+            for (const auto& vertex : vertices)
+            {
+                const aiVector3D position(vertex.Position.x, vertex.Position.y, vertex.Position.z);
+                aiVector3D posed{};
+                float totalWeight = 0.0f;
+                for (int i = 0; i < m_kMAX_BONE_INFLUENCES; ++i)
+                {
+                    const float weight = vertex.BoneWeights[i];
+                    if (weight <= 0.0f)
+                    {
+                        continue;
+                    }
+                    const uint32_t index = vertex.BoneIndices[i];
+                    aiMatrix4x4 matrix = MakeAiIdentityMatrix();
+                    if (index < m_BoneNames.size())
+                    {
+                        matrix = m_Bone.at(m_BoneNames[index]).Matrix;
+                    }
+                    else if (index < m_kMAX_BONES && m_kMAX_BONES - 1 - index < m_AdditionalSkinningOffsets.size())
+                    {
+                        const auto& entry = m_AdditionalSkinningOffsets[m_kMAX_BONES - 1 - index];
+                        matrix = m_Bone.at(entry.BoneName).WorldMatrix * entry.Offset;
+                    }
+                    posed += (IsUsableSkinningMatrix(matrix) ? matrix * position : position) * weight;
+                    totalWeight += weight;
+                }
+                posed = totalWeight > 0.0f ? posed / totalWeight : position;
+                minPos = {min(minPos.x, posed.x), min(minPos.y, posed.y), min(minPos.z, posed.z)};
+                maxPos = {max(maxPos.x, posed.x), max(maxPos.y, posed.y), max(maxPos.z, posed.z)};
+            }
+        }
         m_AabbCenter.x = (minPos.x + maxPos.x) * 0.5f;
         m_AabbCenter.y = (minPos.y + maxPos.y) * 0.5f;
         m_AabbCenter.z = (minPos.z + maxPos.z) * 0.5f;
@@ -958,7 +1091,6 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
         return false;
     }
 
-    UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     WriteBoneMatricesToBuffer();
 
     return true;
@@ -983,7 +1115,7 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
         return true;
     }
 
-    const aiScene* anim = ImportModelScene(fileName, aiProcess_ConvertToLeftHanded);
+    const aiScene* anim = ImportModelScene(fileName, m_SourceConvert ? aiProcess_ConvertToLeftHanded : 0, true);
     if (!anim)
     {
         Debug::Log("ERROR: Failed to load animation: %s (%s)\n", fileName, aiGetErrorString());
@@ -1027,6 +1159,20 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
     if (!LoadVmdAnimationFile(fileName, animation))
     {
         return false;
+    }
+
+    // VMD bone keys use MMD's left-handed coordinates. Match the imported model.
+    if (!m_IsPmxModel && !m_SourceConvert)
+    {
+        for (auto& track : animation.BoneTracks)
+        {
+            for (auto& key : track.second)
+            {
+                key.Position.z = -key.Position.z;
+                key.Rotation.x = -key.Rotation.x;
+                key.Rotation.y = -key.Rotation.y;
+            }
+        }
     }
 
     if (animation.BoneTracks.empty() && animation.MorphTracks.empty() && animation.IkTracks.empty())
@@ -1309,6 +1455,7 @@ void AnimationModelResource::Uninit()
     m_LookAtRigReady = m_HasLookAtPose = m_HasLookAtForward = false;
     m_ResourceMap.Clear();
     m_VmdRetargetTransforms.clear();
+    m_VmdKneeFollowers = {};
     m_IsPmxModel = false;
     m_VmdTranslationScale = 1.0f;
     m_Meshes.clear();
@@ -1318,6 +1465,7 @@ void AnimationModelResource::Uninit()
     m_Bone.clear();
     m_BoneNames.clear();
     m_BoneIndexMap.clear();
+    m_AdditionalSkinningOffsets.clear();
     m_NodeAnimChannelCache.clear();
     m_AclClips.clear();
     m_AclPoseScratch1.clear();

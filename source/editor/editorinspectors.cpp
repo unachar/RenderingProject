@@ -2282,6 +2282,8 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             }
         }
 
+        DrawGlobalPostProcessSettings();
+
         if (ComponentManager::HasComponent<MoveComponent>(entity))
         {
             auto& move = ComponentManager::GetComponentUnchecked<MoveComponent>(entity);

@@ -493,18 +493,34 @@ namespace
             preview.Context->FrameModel(preview.Model->GetAabbCenter(), preview.Model->GetAabbExtents());
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("ドラッグ: 回転 / ホイール: ズーム");
+        ImGui::TextDisabled("左ドラッグ: 回転 / 中ドラッグ: 移動 / 中クリック: 中央へ / ホイール: ズーム");
         const auto available = ImGui::GetContentRegionAvail();
         const float side = max(1.0f, min(available.x, available.y));
-        ImGui::ImageButton("##AnimationOrbit", reinterpret_cast<ImTextureData*>(preview.Descriptor->Gpu.ptr),
-                           ImVec2(side, side), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0));
+        ImGui::InvisibleButton("##AnimationOrbit", ImVec2(side, side),
+                               ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+        ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureData*>(preview.Descriptor->Gpu.ptr),
+                                            ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         const auto& input = ImGui::GetIO();
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
         {
             preview.Context->Orbit(input.MouseDelta.x * 0.01f, input.MouseDelta.y * 0.01f, 0.0f);
         }
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
+        {
+            preview.Context->Pan(input.MouseDelta.x / side, input.MouseDelta.y / side);
+        }
         if (ImGui::IsItemHovered())
         {
+            if (ImGui::IsItemDeactivated() && ImGui::IsMouseReleased(ImGuiMouseButton_Middle))
+            {
+                const ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
+                if (drag.x == 0.0f && drag.y == 0.0f)
+                {
+                    const ImVec2 corner = ImGui::GetItemRectMin();
+                    preview.Context->Pan(0.5f - (input.MousePos.x - corner.x) / side,
+                                         0.5f - (input.MousePos.y - corner.y) / side);
+                }
+            }
             preview.Context->Orbit(0.0f, 0.0f, input.MouseWheel);
         }
     }

@@ -53,6 +53,134 @@
 
 using namespace EditorWidgets;
 
+void ImGuiManager::DrawGlobalPostProcessSettings()
+{
+    auto& rq = RenderQuality::Get();
+    auto& advanced = AdvancedEffects::GetSettings();
+    static int selectedEffect = 0;
+    const char* effectNames[] = {
+        "トーンマッピング / カラーグレーディング",
+        "デュアルフィルタ ブルーム",
+        "レンズフレア",
+        "ビネット",
+        "色収差",
+        "フィルムグレイン",
+        "自動露出",
+        "モーションブラー",
+        "被写界深度",
+    };
+
+    ImGui::TextDisabled("以下の設定は全カメラ共通です");
+    ImGui::Combo("共通ポストプロセス", &selectedEffect, effectNames, IM_ARRAYSIZE(effectNames));
+
+    switch (selectedEffect)
+    {
+        case 0:
+        {
+            int toneMapper = static_cast<int>(rq.Tonemapper);
+            if (ImGui::Combo("トーンマッパー", &toneMapper,
+                             "ACES (従来の近似)\0AgX\0ACES Fitted (RRT+ODT)\0Khronos PBR Neutral\0"))
+            {
+                rq.Tonemapper = static_cast<ToneMapper>(toneMapper);
+            }
+            ImGui::BeginDisabled(rq.Tonemapper != ToneMapper::AgX);
+            ImGui::Checkbox("AgX Punchy", &rq.AgXPunchy);
+            ImGui::EndDisabled();
+            ImGui::SliderFloat("コントラスト", &rq.Contrast, 0.5f, 2.0f, "%.2f");
+            ImGui::SliderFloat("彩度", &rq.Saturation, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("自然な彩度", &rq.Vibrance, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("色温度", &rq.Temperature, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("色かぶり", &rq.Tint, -1.0f, 1.0f, "%.2f");
+            ImGui::DragFloat3("Lift", &rq.Lift.x, 0.005f, -0.5f, 0.5f, "%.3f");
+            ImGui::DragFloat3("Gamma", &rq.Gamma.x, 0.005f, 0.2f, 3.0f, "%.3f");
+            ImGui::DragFloat3("Gain", &rq.Gain.x, 0.005f, 0.0f, 3.0f, "%.3f");
+            if (ImGui::Button("グレーディングをリセット"))
+            {
+                rq.Contrast = rq.Saturation = 1.0f;
+                rq.Vibrance = rq.Temperature = rq.Tint = 0.0f;
+                rq.Lift = {0, 0, 0};
+                rq.Gamma = {1, 1, 1};
+                rq.Gain = {1, 1, 1};
+            }
+            break;
+        }
+        case 1:
+        {
+            ImGui::BeginDisabled(!AdvancedEffects::IsAvailable());
+            ImGui::Checkbox("デュアルフィルタ ブルーム", &rq.DualBloom);
+            ImGui::BeginDisabled(!rq.DualBloom);
+            ImGui::SliderFloat("ブルーム強度", &rq.BloomIntensity, 0.0f, 0.3f, "%.3f");
+            ImGui::SliderFloat("しきい値 (0=物理ベース)", &rq.BloomThreshold, 0.0f, 8.0f, "%.2f");
+            ImGui::SliderFloat("広がり", &rq.BloomRadius, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderInt("段数", &rq.BloomLevels, 2, 8);
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+            break;
+        }
+        case 2:
+        {
+            ImGui::BeginDisabled(!AdvancedEffects::IsAvailable());
+            ImGui::Checkbox("レンズフレア", &rq.LensFlare);
+            ImGui::BeginDisabled(!rq.LensFlare);
+            ImGui::SliderFloat("フレア強度", &rq.LensFlareIntensity, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("ハロー", &rq.LensFlareHalo, 0.0f, 2.0f, "%.2f");
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+            break;
+        }
+        case 3:
+        {
+            ImGui::SliderFloat("ビネット", &rq.Vignette, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("ビネットの柔らかさ", &rq.VignetteSmoothness, 0.01f, 1.0f, "%.2f");
+            break;
+        }
+        case 4:
+        {
+            ImGui::SliderFloat("色収差 (px)", &rq.ChromaticAberration, 0.0f, 8.0f, "%.1f");
+            break;
+        }
+        case 5:
+        {
+            ImGui::SliderFloat("フィルムグレイン", &rq.FilmGrain, 0.0f, 1.0f, "%.2f");
+            break;
+        }
+        case 6:
+        {
+            ImGui::Checkbox("自動露出 (ヒストグラム)", &advanced.AutoExposure);
+            ImGui::BeginDisabled(!advanced.AutoExposure);
+            ImGui::SliderFloat("露出補正 (EV)", &advanced.ExposureCompensation, -5.0f, 5.0f, "%.2f");
+            ImGui::DragFloatRange2("EV 範囲", &advanced.ExposureMinEv, &advanced.ExposureMaxEv, 0.1f, -16.0f, 16.0f,
+                                   "%.1f");
+            ImGui::SliderFloat("順応速度", &advanced.ExposureSpeed, 0.1f, 10.0f, "%.2f");
+            ImGui::TextDisabled("手動の「露光」は自動露出に乗算されます");
+            ImGui::EndDisabled();
+            break;
+        }
+        case 7:
+        {
+            ImGui::Checkbox("MB / DOF 半解像度", &advanced.HalfResolutionLens);
+            ImGui::Checkbox("モーションブラー", &advanced.MotionBlur);
+            ImGui::BeginDisabled(!advanced.MotionBlur);
+            ImGui::SliderFloat("シャッター", &advanced.MotionBlurShutter, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("最大長 (px)", &advanced.MotionBlurMaxPixels, 4.0f, 64.0f, "%.0f");
+            ImGui::SliderInt("サンプル数", &advanced.MotionBlurSamples, 4, 16);
+            ImGui::EndDisabled();
+            break;
+        }
+        case 8:
+        {
+            ImGui::Checkbox("MB / DOF 半解像度", &advanced.HalfResolutionLens);
+            ImGui::Checkbox("被写界深度", &advanced.DepthOfField);
+            ImGui::BeginDisabled(!advanced.DepthOfField);
+            ImGui::DragFloat("焦点距離", &advanced.FocusDistance, 0.05f, 0.05f, 1000.0f, "%.2f m");
+            ImGui::DragFloat("ピント範囲", &advanced.FocusRange, 0.05f, 0.0f, 1000.0f, "%.2f m");
+            ImGui::SliderFloat("最大ボケ (px)", &advanced.MaxBlurPixels, 1.0f, 32.0f, "%.1f");
+            ImGui::EndDisabled();
+            break;
+        }
+    }
+}
+
 void ImGuiManager::DrawPhysicsSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(430.0f, 420.0f), ImGuiCond_FirstUseEver);
@@ -806,53 +934,6 @@ void ImGuiManager::DrawProjectSettingsWindow()
                 }
             }
 
-            ImGui::SeparatorText("Tone Mapping / Color Grading");
-            int toneMapper = static_cast<int>(rq.Tonemapper);
-            if (ImGui::Combo("トーンマッパー", &toneMapper,
-                             "ACES (従来の近似)\0AgX\0ACES Fitted (RRT+ODT)\0Khronos PBR Neutral\0"))
-            {
-                rq.Tonemapper = static_cast<ToneMapper>(toneMapper);
-            }
-            ImGui::BeginDisabled(rq.Tonemapper != ToneMapper::AgX);
-            ImGui::Checkbox("AgX Punchy", &rq.AgXPunchy);
-            ImGui::EndDisabled();
-            ImGui::SliderFloat("コントラスト", &rq.Contrast, 0.5f, 2.0f, "%.2f");
-            ImGui::SliderFloat("彩度", &rq.Saturation, 0.0f, 2.0f, "%.2f");
-            ImGui::SliderFloat("自然な彩度", &rq.Vibrance, -1.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("色温度", &rq.Temperature, -1.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("色かぶり", &rq.Tint, -1.0f, 1.0f, "%.2f");
-            ImGui::DragFloat3("Lift", &rq.Lift.x, 0.005f, -0.5f, 0.5f, "%.3f");
-            ImGui::DragFloat3("Gamma", &rq.Gamma.x, 0.005f, 0.2f, 3.0f, "%.3f");
-            ImGui::DragFloat3("Gain", &rq.Gain.x, 0.005f, 0.0f, 3.0f, "%.3f");
-            if (ImGui::Button("グレーディングをリセット"))
-            {
-                rq.Contrast = rq.Saturation = 1.0f;
-                rq.Vibrance = rq.Temperature = rq.Tint = 0.0f;
-                rq.Lift = {0, 0, 0};
-                rq.Gamma = {1, 1, 1};
-                rq.Gain = {1, 1, 1};
-            }
-
-            ImGui::SeparatorText("Bloom / Lens");
-            ImGui::BeginDisabled(!AdvancedEffects::IsAvailable());
-            ImGui::Checkbox("デュアルフィルタ ブルーム", &rq.DualBloom);
-            ImGui::BeginDisabled(!rq.DualBloom);
-            ImGui::SliderFloat("ブルーム強度", &rq.BloomIntensity, 0.0f, 0.3f, "%.3f");
-            ImGui::SliderFloat("しきい値 (0=物理ベース)", &rq.BloomThreshold, 0.0f, 8.0f, "%.2f");
-            ImGui::SliderFloat("広がり", &rq.BloomRadius, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderInt("段数", &rq.BloomLevels, 2, 8);
-            ImGui::EndDisabled();
-            ImGui::Checkbox("レンズフレア", &rq.LensFlare);
-            ImGui::BeginDisabled(!rq.LensFlare);
-            ImGui::SliderFloat("フレア強度", &rq.LensFlareIntensity, 0.0f, 2.0f, "%.2f");
-            ImGui::SliderFloat("ハロー", &rq.LensFlareHalo, 0.0f, 2.0f, "%.2f");
-            ImGui::EndDisabled();
-            ImGui::EndDisabled();
-            ImGui::SliderFloat("ビネット", &rq.Vignette, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("ビネットの柔らかさ", &rq.VignetteSmoothness, 0.01f, 1.0f, "%.2f");
-            ImGui::SliderFloat("色収差 (px)", &rq.ChromaticAberration, 0.0f, 8.0f, "%.1f");
-            ImGui::SliderFloat("フィルムグレイン", &rq.FilmGrain, 0.0f, 1.0f, "%.2f");
-
             ImGui::SeparatorText("Weather");
             ImGui::Checkbox("天候を有効化", &rq.WeatherEnabled);
             ImGui::BeginDisabled(!rq.WeatherEnabled);
@@ -916,30 +997,6 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::TextDisabled("大気設定と局所フォグを使用。光芒の影はDXR有効時のみ");
         ImGui::EndDisabled();
 
-        ImGui::SeparatorText("Auto Exposure");
-        ImGui::Checkbox("自動露出 (ヒストグラム)", &advanced.AutoExposure);
-        ImGui::BeginDisabled(!advanced.AutoExposure);
-        ImGui::SliderFloat("露出補正 (EV)", &advanced.ExposureCompensation, -5.0f, 5.0f, "%.2f");
-        ImGui::DragFloatRange2("EV 範囲", &advanced.ExposureMinEv, &advanced.ExposureMaxEv, 0.1f, -16.0f, 16.0f,
-                               "%.1f");
-        ImGui::SliderFloat("順応速度", &advanced.ExposureSpeed, 0.1f, 10.0f, "%.2f");
-        ImGui::TextDisabled("手動の「露光」は自動露出に乗算されます");
-        ImGui::EndDisabled();
-
-        ImGui::SeparatorText("Motion Blur / Depth of Field");
-        ImGui::Checkbox("MB / DOF 半解像度", &advanced.HalfResolutionLens);
-        ImGui::Checkbox("モーションブラー", &advanced.MotionBlur);
-        ImGui::BeginDisabled(!advanced.MotionBlur);
-        ImGui::SliderFloat("シャッター", &advanced.MotionBlurShutter, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("最大長 (px)", &advanced.MotionBlurMaxPixels, 4.0f, 64.0f, "%.0f");
-        ImGui::SliderInt("サンプル数", &advanced.MotionBlurSamples, 4, 16);
-        ImGui::EndDisabled();
-        ImGui::Checkbox("被写界深度", &advanced.DepthOfField);
-        ImGui::BeginDisabled(!advanced.DepthOfField);
-        ImGui::DragFloat("焦点距離", &advanced.FocusDistance, 0.05f, 0.05f, 1000.0f, "%.2f m");
-        ImGui::DragFloat("ピント範囲", &advanced.FocusRange, 0.05f, 0.0f, 1000.0f, "%.2f m");
-        ImGui::SliderFloat("最大ボケ (px)", &advanced.MaxBlurPixels, 1.0f, 32.0f, "%.1f");
-        ImGui::EndDisabled();
         ImGui::BeginDisabled(giMode == 0);
         if (RendererSettings::GetRealtimeGiEnabled())
         {

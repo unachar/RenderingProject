@@ -38,6 +38,7 @@ namespace
         UINT TextureBase = g_kTHUMBNAIL_DESCRIPTOR_START;
         ComPtr<ID3D12Resource> PreviewConstants;
         XMFLOAT3 Center{};
+        XMFLOAT3 ModelOrigin{};
         float Near = 0.05f;
         float Far = 100.0f;
         bool Visible = false;
@@ -393,9 +394,13 @@ namespace
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
         description.InputLayout = {layout, 4};
-        if (FAILED(PersistentPsoCache::Graphics(GraphicsDevice::GetDevice(), description, Pipelines[index])))
+        const HRESULT pipelineResult =
+            PersistentPsoCache::Graphics(GraphicsDevice::GetDevice(), description, Pipelines[index]);
+        if (FAILED(pipelineResult))
         {
             Error = "Failed to create production preview PSO";
+            WriteGraphicsLog("Material preview: PSO creation failed, HRESULT=0x%08X, variant=%zu\n",
+                             static_cast<unsigned int>(pipelineResult), index);
             return nullptr;
         }
         if (thumbnail)
@@ -509,17 +514,21 @@ bool MaterialPreview::PrepareStartupAssets()
 {
     if (!preview.Initialize())
     {
+        WriteGraphicsLog("Startup material preview: initialization failed: %s\n", preview.Error.c_str());
         return false;
     }
     MaterialComponent defaultMaterial;
     if (!preview.Pipeline(defaultMaterial))
     {
+        WriteGraphicsLog("Startup material preview: default material failed: %s\n", preview.Error.c_str());
         return false;
     }
     for (const auto handle : MaterialManager::Registry().HandlesOfType(AssetType::Material))
     {
         if (!preview.Pipeline(MaterialManager::GetRuntime(handle).Binding))
         {
+            WriteGraphicsLog("Startup material preview: material %s failed: %s\n",
+                             FormatAssetHandle(handle).c_str(), preview.Error.c_str());
             return false;
         }
     }
@@ -604,7 +613,8 @@ namespace
                               sinf(preview.Pitch) * preview.Distance + preview.Center.y,
                               -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.z};
         ConstantBuffer3D constants;
-        constants.World = XMMatrixIdentity();
+        constants.World = XMMatrixTranspose(XMMatrixTranslation(
+            -preview.ModelOrigin.x, -preview.ModelOrigin.y, -preview.ModelOrigin.z));
         constants.View = XMMatrixTranspose(
             XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&preview.Center), XMVectorSet(0, 1, 0, 0)));
         constants.Projection = XMMatrixTranspose(SceneDepth::InfiniteReverseZPerspectiveLH(XM_PIDIV4, 1, preview.Near));
@@ -773,7 +783,8 @@ bool AnimationPreviewContext::Initialize(UINT size, UINT descriptorIndex, UINT m
 void AnimationPreviewContext::FrameModel(const XMFLOAT3& center, const XMFLOAT3& extents)
 {
     auto& state = m_Impl->State;
-    state.Center = center;
+    state.ModelOrigin = center;
+    state.Center = {};
     m_Impl->Radius = max(0.01f, sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z));
     const auto fit = FitThumbnailCamera(m_Impl->Radius);
     state.Distance = fit.Distance;
@@ -789,6 +800,18 @@ void AnimationPreviewContext::Orbit(float yaw, float pitch, float zoom)
     state.Yaw += yaw;
     state.Pitch = clamp(state.Pitch + pitch, -1.4f, 1.4f);
     state.Distance = clamp(state.Distance * expf(-zoom * 0.15f), m_Impl->Radius * 0.25f, m_Impl->Radius * 30.0f);
+}
+
+void AnimationPreviewContext::Pan(float horizontal, float vertical)
+{
+    auto& state = m_Impl->State;
+    const float scale = 2.0f * state.Distance * tanf(XM_PIDIV4 * 0.5f);
+    const float yawSin = sinf(state.Yaw);
+    const float yawCos = cosf(state.Yaw);
+    const float pitchSin = sinf(state.Pitch);
+    state.Center.x -= scale * (horizontal * yawCos + vertical * yawSin * pitchSin);
+    state.Center.y += scale * vertical * cosf(state.Pitch);
+    state.Center.z += scale * (-horizontal * yawSin + vertical * yawCos * pitchSin);
 }
 
 const string& AnimationPreviewContext::Error() const

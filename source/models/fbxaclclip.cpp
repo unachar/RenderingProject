@@ -150,10 +150,10 @@ namespace AnimationCompression
             }
         }
 
-        void Decode(uint32_t sample, std::vector<LocalPose>& output)
+        void Decode(float sample, std::vector<LocalPose>& output)
         {
             output.assign(Channels.size(), LocalPose{});
-            Context.seek(float(sample), acl::sample_rounding_policy::floor);
+            Context.seek(sample, acl::sample_rounding_policy::none);
             PoseWriter writer(output);
             Context.decompress_tracks(writer);
         }
@@ -210,10 +210,18 @@ namespace AnimationCompression
             for (unsigned index = 0; index < animation.mNumChannels; ++index)
             {
                 const auto& channel = *animation.mChannels[index];
-                if ((channel.mNumPositionKeys && samples % channel.mNumPositionKeys != 0) ||
-                    (channel.mNumRotationKeys && samples % channel.mNumRotationKeys != 0))
+                auto uniformKeys = [samples](const auto* keys, unsigned count) {
+                    if (!keys || (count != 1 && count != samples)) return false;
+                    for (unsigned key = 0; key < count; ++key)
+                        if (std::abs(keys[key].mTime - double(key)) > 0.00001) return false;
+                    return true;
+                };
+                // This codec stores one sample per tick. Sparse or nonuniform channels use the
+                // original key sampler instead of being repeated at unrelated times.
+                if (!uniformKeys(channel.mPositionKeys, channel.mNumPositionKeys) ||
+                    !uniformKeys(channel.mRotationKeys, channel.mNumRotationKeys))
                 {
-                    m_Error = "Incompatible repeating FBX key counts";
+                    m_Error = "FBX keys are not uniformly sampled";
                     return false;
                 }
                 acl::track_desc_transformf description;
@@ -318,16 +326,9 @@ namespace AnimationCompression
         {
             return false;
         }
-        float ticks = seconds * m_Impl->TickRate;
-        if (m_Impl->Duration > 0)
-        {
-            ticks = std::fmod(ticks, m_Impl->Duration);
-        }
-        if (!std::isfinite(ticks) || double(ticks) >= double(UINT32_MAX))
-        {
-            return false;
-        }
-        const auto sample = static_cast<uint32_t>((std::max)(0.0f, ticks)) % m_Impl->Statistics.Samples;
+        const float ticks = seconds * m_Impl->TickRate;
+        if (!std::isfinite(ticks)) return false;
+        const float sample = std::clamp(ticks, 0.0f, float(m_Impl->Statistics.Samples - 1));
         try
         {
             m_Impl->Decode(sample, output);

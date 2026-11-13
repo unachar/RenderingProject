@@ -346,8 +346,9 @@ void AnimationModelResource::InvalidateAnimationPoseCache()
 void AnimationModelResource::ConfigureVmdRetargeting(const char* fileName)
 {
     m_VmdRetargetTransforms.clear();
+    m_VmdKneeFollowers = {};
     if (m_IsPmxModel || !m_AiScene || !m_AiScene->mRootNode) return;
-    VmdRetarget::AddVrmHumanoidBones(std::filesystem::u8path(fileName), m_ResourceMap);
+    const bool hasVrmHumanoid = VmdRetarget::AddVrmHumanoidBones(std::filesystem::u8path(fileName), m_ResourceMap);
     VmdRetarget::AddCommonHumanoidBones(m_ResourceMap);
     VmdRetarget::AddVmdAliases(m_ResourceMap);
 
@@ -375,6 +376,68 @@ void AnimationModelResource::ConfigureVmdRetargeting(const char* fileName)
         for (unsigned i = 0; i < node->mNumChildren; ++i) self(self, node->mChildren[i], global);
     };
     visit(visit, m_AiScene->mRootNode, aiMatrix4x4());
+    if (hasVrmHumanoid)
+    {
+        auto resolve = [&](const char* human) -> const uint32_t* {
+            const auto* indices = m_ResourceMap.Find(ModelResourceMap::Humanoid, human);
+            return indices && indices->size() == 1 && globals.count(indices->front()) ? &indices->front() : nullptr;
+        };
+        auto below = [&](const string& name, const string& ancestor) {
+            for (auto parent = m_BoneParentMap.find(name); parent != m_BoneParentMap.end();
+                 parent = m_BoneParentMap.find(parent->second))
+            {
+                if (parent->second == ancestor) return true;
+            }
+            return false;
+        };
+        for (size_t side = 0; side < m_VmdKneeFollowers.size(); ++side)
+        {
+            const bool right = side != 0;
+            const auto* upperArm = resolve(right ? "rightUpperArm" : "leftUpperArm");
+            const auto* lowerArm = resolve(right ? "rightLowerArm" : "leftLowerArm");
+            const char suffix = right ? 'R' : 'L';
+            if (upperArm && lowerArm)
+            {
+                const auto direction = HumanoidIk::Translation(globals.at(*lowerArm)) -
+                                       HumanoidIk::Translation(globals.at(*upperArm));
+                // VMD motions here use the A-pose convention of the MMD rig.
+                constexpr float armDrop = 38.0f * DirectX::XM_PI / 180.0f;
+                const float horizontal = sqrtf(direction.x * direction.x + direction.z * direction.z);
+                if (horizontal > 0.000001f)
+                {
+                    const aiVector3D reference(direction.x, -horizontal * tanf(armDrop), direction.z);
+                    const auto correction = HumanoidIk::FromTo(direction, reference);
+                    const auto& upperName = m_BoneNames[*upperArm];
+                    const string sleeve = string("c_upper_jacket.") + suffix;
+                    const string uniformArm = string("c_upper_arm.") + suffix;
+                    for (auto& [name, transform] : m_VmdRetargetTransforms)
+                    {
+                        const bool startsArm = name == upperName || name == sleeve || name == uniformArm;
+                        if (startsArm || below(name, upperName) || below(name, sleeve) || below(name, uniformArm))
+                        {
+                            transform.ArmRestCorrection = correction;
+                            transform.StartsArmCorrection = startsArm;
+                        }
+                    }
+                }
+            }
+
+            const auto* knee = resolve(right ? "rightLowerLeg" : "leftLowerLeg");
+            const string helper = string("knee.") + suffix;
+            const auto follower = m_Bone.find(helper);
+            if (!knee || follower == m_Bone.end() || !below(string("r_lower_leg.") + suffix, helper)) continue;
+            const auto& driverName = m_BoneNames[*knee];
+            const auto driverParent = m_BoneParentMap.find(driverName);
+            const auto followerParent = m_BoneParentMap.find(helper);
+            if (driverName == helper || driverParent == m_BoneParentMap.end() ||
+                followerParent == m_BoneParentMap.end() || driverParent->second != followerParent->second) continue;
+            auto& driver = m_Bone.at(driverName);
+            auto inverseBind = driver.BindLocalMatrix;
+            inverseBind.Inverse();
+            if (!IsUsableSkinningMatrix(inverseBind)) continue;
+            m_VmdKneeFollowers[side] = {&driver, &follower->second, inverseBind * follower->second.BindLocalMatrix};
+        }
+    }
     // Typical MMD head-to-hips distance is about 7.5 model units.
     // An explicit scale is available for differently proportioned source motions.
     float motionScale = 1.0f;
@@ -422,7 +485,21 @@ void AnimationModelResource::BuildVmdRootMotionBindings(uint32_t boneIndex, cons
 {
     if (m_IsPmxModel || !animation) return;
     const auto* hips = VmdRetarget::RootMotionTarget(m_ResourceMap);
-    if (!hips || hips->size() != 1 || hips->front() != boneIndex) return;
+    if (!hips || hips->size() != 1 || hips->front() >= m_BoneNames.size()) return;
+    uint32_t rootTarget = hips->front();
+    const auto* torso = m_ResourceMap.Find(ModelResourceMap::Vmd, "上半身");
+    if (torso && torso->size() == 1 && torso->front() < m_BoneNames.size() && torso->front() != hips->front())
+    {
+        const auto hipsParent = m_BoneParentMap.find(m_BoneNames[hips->front()]);
+        const auto torsoParent = m_BoneParentMap.find(m_BoneNames[torso->front()]);
+        if (hipsParent != m_BoneParentMap.end() && torsoParent != m_BoneParentMap.end() &&
+            hipsParent->second == torsoParent->second)
+        {
+            const auto sharedParent = m_BoneIndexMap.find(hipsParent->second);
+            if (sharedParent != m_BoneIndexMap.end()) rootTarget = sharedParent->second;
+        }
+    }
+    if (rootTarget != boneIndex) return;
     for (const char* name : {"全ての親", "センター", "グルーブ", "腰"})
     {
         // A native MMD hierarchy already propagates these ancestor tracks.
@@ -436,6 +513,15 @@ void AnimationModelResource::BuildVmdRootMotionBindings(uint32_t boneIndex, cons
         if (existing == bindings.end()) bindings.push_back(binding);
         else *existing = binding; // Last layer wins independently for each root-motion source.
     }
+    const auto rootOrder = [](const string& name) {
+        if (name == "全ての親") return 0;
+        if (name == "センター") return 1;
+        if (name == "グルーブ") return 2;
+        return 3;
+    };
+    std::sort(bindings.begin(), bindings.end(), [&](const auto& a, const auto& b) {
+        return rootOrder(a.Name) < rootOrder(b.Name);
+    });
 }
 
 void AnimationModelResource::BuildVmdTorsoCompensation(uint32_t boneIndex, const VmdAnimation* animation,
@@ -444,6 +530,15 @@ void AnimationModelResource::BuildVmdTorsoCompensation(uint32_t boneIndex, const
     if (m_IsPmxModel || !animation || m_Bone.count("上半身")) return;
     const auto* torso = m_ResourceMap.Find(ModelResourceMap::Vmd, "上半身");
     if (!torso || torso->size() != 1 || torso->front() != boneIndex) return;
+    const auto* hips = m_ResourceMap.Find(ModelResourceMap::Vmd, "下半身");
+    if (!hips || hips->size() != 1 || hips->front() >= m_BoneNames.size() || boneIndex >= m_BoneNames.size()) return;
+    const string& hipsName = m_BoneNames[hips->front()];
+    auto parent = m_BoneParentMap.find(m_BoneNames[boneIndex]);
+    while (parent != m_BoneParentMap.end() && parent->second != hipsName)
+    {
+        parent = m_BoneParentMap.find(parent->second);
+    }
+    if (parent == m_BoneParentMap.end()) return;
     const auto lower = animation->BoneTracks.find("下半身");
     if (lower != animation->BoneTracks.end()) binding = {"下半身", &lower->second, layerIndex, {}};
 }

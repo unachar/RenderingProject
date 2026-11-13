@@ -117,6 +117,7 @@ void AnimationModelResource::UpdateBoneMatrix(aiNode* node, aiMatrix4x4 matrix)
 
     Bone* bonePtr = &it->second;
     aiMatrix4x4 worldMatrix = matrix * bonePtr->AnimationMatrix;
+    bonePtr->WorldMatrix = worldMatrix;
     bonePtr->Matrix = worldMatrix * bonePtr->OffsetMatrix;
 
     for (unsigned int n = 0; n < node->mNumChildren; n++)
@@ -140,6 +141,7 @@ void AnimationModelResource::UpdateBindPoseBoneMatrix(aiNode* node, aiMatrix4x4 
         Bone* bonePtr = &it->second;
         bonePtr->BindLocalMatrix = node->mTransformation;
         bonePtr->AnimationMatrix = node->mTransformation;
+        bonePtr->WorldMatrix = worldMatrix;
         bonePtr->Matrix = worldMatrix * bonePtr->OffsetMatrix;
     }
 
@@ -169,7 +171,8 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
         {
             maxIndex = max(maxIndex, kv.second);
         }
-        m_SkinningMatrixCount = min<uint32_t>(m_kMAX_BONES, maxIndex + 1);
+        m_SkinningMatrixCount = m_AdditionalSkinningOffsets.empty() ? min<uint32_t>(m_kMAX_BONES, maxIndex + 1)
+                                                                  : m_kMAX_BONES;
     }
     uint32_t matrixCount;
     if ((m_SkinningMatrixCount != 0))
@@ -193,20 +196,13 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
         mtx = identity;
     }
 
-    for (const auto& kv : m_BoneIndexMap)
+    const auto writeMatrix = [&](uint32_t idx, const aiMatrix4x4& src)
     {
-        uint32_t idx = kv.second;
-        if (idx >= matrixCount)
+        if (idx >= matrixCount || !IsUsableSkinningMatrix(src))
         {
-            continue;
+            return;
         }
         XMFLOAT4X4& dst = m_BoneMatricesScratch[idx];
-        const aiMatrix4x4& src = m_Bone.at(kv.first).Matrix;
-        if (!IsUsableSkinningMatrix(src))
-        {
-            dst = identity;
-            continue;
-        }
 
         dst._11 = src.a1;
         dst._12 = src.a2;
@@ -224,6 +220,15 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
         dst._42 = src.d2;
         dst._43 = src.d3;
         dst._44 = src.d4;
+    };
+    for (const auto& kv : m_BoneIndexMap)
+    {
+        writeMatrix(kv.second, m_Bone.at(kv.first).Matrix);
+    }
+    for (uint32_t i = 0; i < m_AdditionalSkinningOffsets.size(); ++i)
+    {
+        const auto& entry = m_AdditionalSkinningOffsets[i];
+        writeMatrix(m_kMAX_BONES - 1 - i, m_Bone.at(entry.BoneName).WorldMatrix * entry.Offset);
     }
 
     const UINT frameIndex = GraphicsDevice::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
@@ -509,6 +514,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
     ApplyVmdMorphs(primaryAnimation, currentFrame1);
     ApplyPmxOrderedTransforms(primaryAnimation, currentFrame1);
     ApplyVmdHumanoidIk(currentFrame1, currentFrame2, safeBlendRate, false);
+    ApplyVmdKneeFollowers();
     UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     WriteBoneMatricesToBuffer();
 }
@@ -583,6 +589,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const vector<AnimationPlaybac
     ApplyVmdMorphLayers();
     ApplyPmxOrderedTransforms(nullptr, 0.0f);
     ApplyVmdHumanoidIk(0.0f, 0.0f, 0.0f, true);
+    ApplyVmdKneeFollowers();
     UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     WriteBoneMatricesToBuffer();
 
@@ -724,66 +731,64 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
         return;
     }
 
-    auto sampleRotationKey = [](aiNodeAnim* nodeAnim, float timeInTicks, double duration) {
-        if (!nodeAnim || nodeAnim->mNumRotationKeys == 0)
-        {
-            return aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f);
-        }
-
-        float t;
-        if (duration > 0.0)
-        {
-            t = fmod(timeInTicks, static_cast<float>(duration));
-        }
-        else
-        {
-            t = timeInTicks;
-        }
-        const unsigned int keyIndex = static_cast<unsigned int>(max(0.0f, t)) % nodeAnim->mNumRotationKeys;
-        return nodeAnim->mRotationKeys[keyIndex].mValue;
-    };
-
-    auto samplePositionKey = [](aiNodeAnim* nodeAnim, float timeInTicks, double duration) {
-        if (!nodeAnim || nodeAnim->mNumPositionKeys == 0)
-        {
-            return aiVector3D(0.0f, 0.0f, 0.0f);
-        }
-
-        float t;
-        if (duration > 0.0)
-        {
-            t = fmod(timeInTicks, static_cast<float>(duration));
-        }
-        else
-        {
-            t = timeInTicks;
-        }
-        const unsigned int keyIndex = static_cast<unsigned int>(max(0.0f, t)) % nodeAnim->mNumPositionKeys;
-        return nodeAnim->mPositionKeys[keyIndex].mValue;
-    };
-
     const bool useAcl1 = TrySampleAclClip(animation1, frame1, m_AclPoseScratch1);
     const bool sameSample = animation1 == animation2 && frame1 == frame2;
     const bool useAcl2 = sameSample ? useAcl1 : TrySampleAclClip(animation2, frame2, m_AclPoseScratch2);
     const auto& decoded2 = sameSample ? m_AclPoseScratch1 : m_AclPoseScratch2;
     const auto* acl1 = useAcl1 ? &m_AclClips.at(animation1) : nullptr;
     const auto* acl2 = useAcl2 ? &m_AclClips.at(animation2) : nullptr;
-    auto samplePose = [&](aiNodeAnim* channel, const aiAnimation* animation, float seconds,
-                          const AnimationCompression::FbxAclClip* compressed,
-                          const vector<AnimationCompression::LocalPose>& decoded) {
+    auto samplePose = [](const aiNodeAnim* channel, const aiAnimation* animation, float seconds,
+                         const aiMatrix4x4& bind, const AnimationCompression::FbxAclClip* compressed,
+                         const vector<AnimationCompression::LocalPose>& decoded) {
+        aiVector3D scale, position;
+        aiQuaternion rotation;
+        bind.Decompose(scale, rotation, position);
+        if (!channel || !animation)
+        {
+            return aiMatrix4x4(scale, rotation, position);
+        }
+        const double rate = animation->mTicksPerSecond > 0.0 ? animation->mTicksPerSecond : 25.0;
+        const double time = (std::max)(0.0, static_cast<double>(seconds) * rate);
+        auto interval = [time](const auto* keys, unsigned count) {
+            unsigned next = 0;
+            while (next < count && keys[next].mTime <= time) ++next;
+            if (next == 0) return std::pair<unsigned, unsigned>{0, 0};
+            if (next == count) return std::pair<unsigned, unsigned>{count - 1, count - 1};
+            return std::pair<unsigned, unsigned>{next - 1, next};
+        };
+        auto fraction = [time](const auto& a, const auto& b) {
+            const double span = b.mTime - a.mTime;
+            return span > 0.0 ? static_cast<float>((time - a.mTime) / span) : 0.0f;
+        };
+        if (channel->mNumPositionKeys && channel->mPositionKeys)
+        {
+            const auto [a, b] = interval(channel->mPositionKeys, channel->mNumPositionKeys);
+            const float t = fraction(channel->mPositionKeys[a], channel->mPositionKeys[b]);
+            position = channel->mPositionKeys[a].mValue * (1.0f - t) + channel->mPositionKeys[b].mValue * t;
+        }
+        if (channel->mNumRotationKeys && channel->mRotationKeys)
+        {
+            const auto [a, b] = interval(channel->mRotationKeys, channel->mNumRotationKeys);
+            const float t = fraction(channel->mRotationKeys[a], channel->mRotationKeys[b]);
+            aiQuaternion::Interpolate(rotation, channel->mRotationKeys[a].mValue, channel->mRotationKeys[b].mValue, t);
+            rotation.Normalize();
+        }
+        if (channel->mNumScalingKeys && channel->mScalingKeys)
+        {
+            const auto [a, b] = interval(channel->mScalingKeys, channel->mNumScalingKeys);
+            const float t = fraction(channel->mScalingKeys[a], channel->mScalingKeys[b]);
+            scale = channel->mScalingKeys[a].mValue * (1.0f - t) + channel->mScalingKeys[b].mValue * t;
+        }
         if (compressed)
         {
             const uint32_t index = compressed->FindChannel(channel);
             if (index < decoded.size())
             {
-                return decoded[index];
+                rotation = decoded[index].Rotation;
+                position = decoded[index].Position;
             }
         }
-        const float rate =
-            animation && animation->mTicksPerSecond != 0 ? static_cast<float>(animation->mTicksPerSecond) : 25.0f;
-        const double duration = animation ? animation->mDuration : 0.0;
-        return AnimationCompression::LocalPose{sampleRotationKey(channel, seconds * rate, duration),
-                                               samplePositionKey(channel, seconds * rate, duration)};
+        return aiMatrix4x4(scale, rotation, position);
     };
 
     for (auto& pair : m_Bone)
@@ -792,19 +797,17 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
         aiNodeAnim* nodeAnim1 = FindNodeAnimChannelCached(animation1, pair.first);
         aiNodeAnim* nodeAnim2 = FindNodeAnimChannelCached(animation2, pair.first);
 
-        const auto pose1 = samplePose(nodeAnim1, animation1, frame1, acl1, m_AclPoseScratch1);
-        const auto pose2 = samplePose(nodeAnim2, animation2, frame2, acl2, decoded2);
-        const auto& rotation1 = pose1.Rotation;
-        const auto& rotation2 = pose2.Rotation;
-        const auto& pos1 = pose1.Position;
-        const auto& pos2 = pose2.Position;
-
-        const aiVector3D pos = pos1 * (1.f - blendRate) + pos2 * blendRate;
-
+        const auto pose1 = samplePose(nodeAnim1, animation1, frame1, bonePtr->BindLocalMatrix, acl1, m_AclPoseScratch1);
+        const auto pose2 = samplePose(nodeAnim2, animation2, frame2, bonePtr->BindLocalMatrix, acl2, decoded2);
+        aiVector3D scale1, scale2, pos1, pos2;
+        aiQuaternion rotation1, rotation2;
+        pose1.Decompose(scale1, rotation1, pos1);
+        pose2.Decompose(scale2, rotation2, pos2);
         aiQuaternion rotation;
-        aiQuaternion::Interpolate(rotation, rotation1, rotation2, blendRate);
-
-        bonePtr->AnimationMatrix = aiMatrix4x4(aiVector3D(1.0f, 1.0f, 1.0f), rotation, pos);
+        aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
+        rotation.Normalize();
+        bonePtr->AnimationMatrix = aiMatrix4x4(scale1 * (1.0f - safeBlendRate) + scale2 * safeBlendRate, rotation,
+                                               pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate);
     }
 
     UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());

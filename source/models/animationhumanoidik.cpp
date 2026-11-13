@@ -2,6 +2,17 @@
 #include "animationmodel.h"
 #include "vmdikbinding.h"
 
+void AnimationModelResource::ApplyVmdKneeFollowers()
+{
+    for (const auto& knee : m_VmdKneeFollowers)
+    {
+        if (knee.Driver)
+        {
+            knee.Follower->AnimationMatrix = knee.Driver->AnimationMatrix * knee.BindOffset;
+        }
+    }
+}
+
 void AnimationModelResource::BuildHumanoidIkChannel(const VmdAnimation* animation, size_t layerIndex,
                                                      unsigned side, VmdHumanoidIkChannel& channel)
 {

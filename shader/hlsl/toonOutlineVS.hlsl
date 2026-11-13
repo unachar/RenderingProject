@@ -4,7 +4,7 @@
 
 PSInput3D main(VSInput3D input)
 {
-    PSInput3D output;
+    PSInput3D output = (PSInput3D)0;
     float normalLenSq = dot(input.Normal, input.Normal);
     float3 safeNormal = (normalLenSq > 0.000001f) ? input.Normal : float3(0.0f, 0.0f, 0.0f);
     float3 extrusionVector = mul(safeNormal, (float3x3)World);

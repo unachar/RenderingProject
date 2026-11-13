@@ -18,6 +18,8 @@ struct Transform
 {
     bool Enabled = false;
     aiQuaternion GlobalBindRotation{};
+    aiQuaternion ArmRestCorrection{};
+    bool StartsArmCorrection = false;
     aiMatrix3x3 ParentInverse{};
     aiMatrix3x3 ParentBindLinear{};
     float TranslationScale = 1.0f;
@@ -27,6 +29,10 @@ inline void Apply(const Transform& transform, aiQuaternion& rotation, aiVector3D
     if (!transform.Enabled) return;
     auto inverse = transform.GlobalBindRotation;
     inverse.Conjugate();
+    auto inverseCorrection = transform.ArmRestCorrection;
+    inverseCorrection.Conjugate();
+    rotation = transform.StartsArmCorrection ? rotation * transform.ArmRestCorrection
+                                             : inverseCorrection * rotation * transform.ArmRestCorrection;
     rotation = inverse * rotation * transform.GlobalBindRotation;
     rotation.Normalize();
     position = transform.ParentInverse * (position * transform.TranslationScale);
@@ -63,9 +69,9 @@ inline const std::vector<HumanBone>& HumanBones()
 {
     static const auto bones = [] {
         std::vector<HumanBone> result = {
-            {"hips", "下半身", {"Hips", "Pelvis", "J_Bip_C_Hips"}},
-            {"spine", "上半身", {"Spine", "J_Bip_C_Spine"}},
-            {"chest", "上半身2", {"Chest", "Spine1", "J_Bip_C_Chest"}},
+            {"hips", "下半身", {"Hips", "Pelvis", "J_Bip_C_Hips", "lowerbody"}},
+            {"spine", "上半身", {"Spine", "J_Bip_C_Spine", "upperbody"}},
+            {"chest", "上半身2", {"Chest", "Spine1", "J_Bip_C_Chest", "upperbody01"}},
             {"upperChest", "上半身3", {"UpperChest", "Spine2", "J_Bip_C_UpperChest"}},
             {"neck", "首", {"Neck", "J_Bip_C_Neck"}},
             {"head", "頭", {"Head", "J_Bip_C_Head"}},
@@ -73,20 +79,20 @@ inline const std::vector<HumanBone>& HumanBones()
             {"rightEye", "右目", {"RightEye", "eye.R", "J_Adj_R_FaceEye"}},
             {"leftShoulder", "左肩", {"LeftShoulder", "J_Bip_L_Shoulder"}},
             {"rightShoulder", "右肩", {"RightShoulder", "J_Bip_R_Shoulder"}},
-            {"leftUpperArm", "左腕", {"LeftUpperArm", "LeftArm", "J_Bip_L_UpperArm"}},
-            {"rightUpperArm", "右腕", {"RightUpperArm", "RightArm", "J_Bip_R_UpperArm"}},
-            {"leftLowerArm", "左ひじ", {"LeftLowerArm", "LeftForeArm", "J_Bip_L_LowerArm"}},
-            {"rightLowerArm", "右ひじ", {"RightLowerArm", "RightForeArm", "J_Bip_R_LowerArm"}},
-            {"leftHand", "左手首", {"LeftHand", "J_Bip_L_Hand"}},
-            {"rightHand", "右手首", {"RightHand", "J_Bip_R_Hand"}},
-            {"leftUpperLeg", "左足", {"LeftUpperLeg", "LeftUpLeg", "J_Bip_L_UpperLeg"}},
-            {"rightUpperLeg", "右足", {"RightUpperLeg", "RightUpLeg", "J_Bip_R_UpperLeg"}},
-            {"leftLowerLeg", "左ひざ", {"LeftLowerLeg", "LeftLeg", "J_Bip_L_LowerLeg"}},
-            {"rightLowerLeg", "右ひざ", {"RightLowerLeg", "RightLeg", "J_Bip_R_LowerLeg"}},
-            {"leftFoot", "左足首", {"LeftFoot", "J_Bip_L_Foot"}},
-            {"rightFoot", "右足首", {"RightFoot", "J_Bip_R_Foot"}},
-            {"leftToes", "左つま先", {"LeftToes", "LeftToeBase", "J_Bip_L_ToeBase"}},
-            {"rightToes", "右つま先", {"RightToes", "RightToeBase", "J_Bip_R_ToeBase"}}
+            {"leftUpperArm", "左腕", {"LeftUpperArm", "LeftArm", "J_Bip_L_UpperArm", "arm_L"}},
+            {"rightUpperArm", "右腕", {"RightUpperArm", "RightArm", "J_Bip_R_UpperArm", "arm_R"}},
+            {"leftLowerArm", "左ひじ", {"LeftLowerArm", "LeftForeArm", "J_Bip_L_LowerArm", "elbow_L"}},
+            {"rightLowerArm", "右ひじ", {"RightLowerArm", "RightForeArm", "J_Bip_R_LowerArm", "elbow_R"}},
+            {"leftHand", "左手首", {"LeftHand", "J_Bip_L_Hand", "wrist_L"}},
+            {"rightHand", "右手首", {"RightHand", "J_Bip_R_Hand", "wrist_R"}},
+            {"leftUpperLeg", "左足", {"LeftUpperLeg", "LeftUpLeg", "J_Bip_L_UpperLeg", "leg_L"}},
+            {"rightUpperLeg", "右足", {"RightUpperLeg", "RightUpLeg", "J_Bip_R_UpperLeg", "leg_R"}},
+            {"leftLowerLeg", "左ひざ", {"LeftLowerLeg", "LeftLeg", "J_Bip_L_LowerLeg", "knee_L"}},
+            {"rightLowerLeg", "右ひざ", {"RightLowerLeg", "RightLeg", "J_Bip_R_LowerLeg", "knee_R"}},
+            {"leftFoot", "左足首", {"LeftFoot", "J_Bip_L_Foot", "ankle_L"}},
+            {"rightFoot", "右足首", {"RightFoot", "J_Bip_R_Foot", "ankle_R"}},
+            {"leftToes", "左つま先", {"LeftToes", "LeftToeBase", "J_Bip_L_ToeBase", "toe_L"}},
+            {"rightToes", "右つま先", {"RightToes", "RightToeBase", "J_Bip_R_ToeBase", "toe_R"}}
         };
         const char* english[] = {"Thumb", "Index", "Middle", "Ring", "Little"};
         const char* mixamo[] = {"Thumb", "Index", "Middle", "Ring", "Pinky"};
@@ -153,6 +159,24 @@ template<class TrackMap> inline const typename TrackMap::mapped_type* FindTrack(
 {
     const auto exact = tracks.find(targetName);
     if (exact != tracks.end()) return &exact->second;
+    // These sleeve joints branch beside the humanoid upper arms.
+    const bool sleeveUpper = targetName == "c_upper_arm.L" || targetName == "c_upper_arm.R" ||
+                             targetName == "c_upper_jacket.L" || targetName == "c_upper_jacket.R";
+    const bool sleeveLower = targetName == "c_lower_jacket.L" || targetName == "c_lower_jacket.R" ||
+                             targetName == "r_jacket_elbow.L" || targetName == "r_jacket_elbow.R";
+    if (sleeveUpper || sleeveLower)
+    {
+        const bool left = targetName.back() == 'L';
+        const char* human = sleeveUpper ? (left ? "leftUpperArm" : "rightUpperArm")
+                                        : (left ? "leftLowerArm" : "rightLowerArm");
+        const auto* arm = map.Find(ModelResourceMap::Humanoid, human);
+        if (arm && arm->size() == 1 && arm->front() != targetIndex)
+        {
+            const char* name = sleeveUpper ? (left ? "左腕" : "右腕") : (left ? "左ひじ" : "右ひじ");
+            const auto track = tracks.find(name);
+            if (track != tracks.end()) return &track->second;
+        }
+    }
     const auto* aliases = map.NamesForIndex(ModelResourceMap::Vmd, targetIndex);
     if (!aliases) return nullptr;
     const typename TrackMap::mapped_type* found = nullptr;

@@ -59,6 +59,7 @@ struct DeformVertex
 struct Bone
 {
     aiMatrix4x4 Matrix{};
+    aiMatrix4x4 WorldMatrix{};
     aiMatrix4x4 AnimationMatrix{};
     aiMatrix4x4 BindLocalMatrix{};
     aiMatrix4x4 OffsetMatrix{};
@@ -327,8 +328,21 @@ class AnimationModelResource
     array<HumanoidIk::Leg, 2> m_HumanoidIkLegs{};
     array<VmdHumanoidIkChannel, 2> m_HumanoidIkPrimary{}, m_HumanoidIkSecondary{}, m_HumanoidIkLayered{};
     unordered_map<string, VmdRetarget::Transform> m_VmdRetargetTransforms;
+    struct VmdKneeFollower
+    {
+        Bone* Driver = nullptr;
+        Bone* Follower = nullptr;
+        aiMatrix4x4 BindOffset{};
+    };
+    array<VmdKneeFollower, 2> m_VmdKneeFollowers{};
     vector<MeshData> m_Meshes{};
     vector<string> m_BoneNames{};
+    struct SkinningOffset
+    {
+        string BoneName;
+        aiMatrix4x4 Offset;
+    };
+    vector<SkinningOffset> m_AdditionalSkinningOffsets;
     vector<vector<DeformVertex>> m_DeformVertex{};
     vector<vector<GpuSkinVertex>> m_GpuSkinVertices{};
     vector<vector<GpuSkinVertex>> m_BaseGpuSkinVertices{};
@@ -410,6 +424,7 @@ class AnimationModelResource
                                float frame2, float blendRate);
     void UpdateVmdBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
     void ConfigureVmdRetargeting(const char* fileName);
+    void ApplyVmdKneeFollowers();
     void BuildHumanoidIkChannel(const VmdAnimation* animation, size_t layerIndex, unsigned side,
                                 VmdHumanoidIkChannel& channel);
     void SetupHumanoidIkRig();

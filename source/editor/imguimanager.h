@@ -244,6 +244,7 @@ class ImGuiManager
     static void DrawProceduralWindow();
     static void DrawRaytracingWindow();
     static void DrawProjectSettingsWindow();
+    static void DrawGlobalPostProcessSettings();
     static void DrawPhysicsSettingsWindow();
     static void LoadProjectSettings();
     static bool PersistentSettings(std::ostream* output, const string& key = {}, const string& value = {});

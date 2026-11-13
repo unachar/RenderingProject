@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cimport.h"
+#include <assimp/config.h>
 #include "scene.h"
 #include "fastgltfimport.h"
 #include <algorithm>
@@ -42,10 +43,33 @@ inline string ModelPathLowerExtension(const filesystem::path& path)
     return extension;
 }
 
-inline const aiScene* ImportModelScene(const char* fileName, unsigned int flags)
+inline const aiScene* ImportModelScene(const char* fileName, unsigned int flags, bool bakeFbxPivots = false)
 {
     const filesystem::path path = ModelPathFromUtf8(fileName);
     const string extension = ModelPathLowerExtension(path);
+    if (extension == ".fbx" && bakeFbxPivots)
+    {
+        const auto* original = aiImportFile(fileName, flags);
+        const aiString mixamoHips("mixamorig:Hips");
+        if (!original || !original->mRootNode || !original->mRootNode->FindNode(mixamoHips))
+        {
+            return original;
+        }
+        auto* properties = aiCreatePropertyStore();
+        if (!properties)
+        {
+            return original;
+        }
+        aiSetImportPropertyInteger(properties, AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, 0);
+        const auto* scene = aiImportFileExWithProperties(fileName, flags, nullptr, properties);
+        aiReleasePropertyStore(properties);
+        if (!scene)
+        {
+            return original;
+        }
+        aiReleaseImport(original);
+        return scene;
+    }
     const auto fastgltf = std::getenv("DX12_USE_FASTGLTF");
     const bool gltfInput = extension == ".gltf" || extension == ".glb" || extension == ".vrm";
     const bool disableFast = fastgltf && std::strcmp(fastgltf, "0") == 0;
