@@ -198,8 +198,6 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
     // ライブトゥーンのマテリアルテクスチャ（Def / 顔陰影反転 / 質感ランプ）
-    // Visibility 解決（コンピュート）では暗黙微分の Sample が使えないので対象外。
-#ifndef SHADER_VISIBILITY_RESOLVE
     {
 #ifdef SHADER_GPU_DRIVEN
         uint4 liveToonTextures = asuint(LoadSceneMaterialVector(gSceneMaterials, materialID, 190u));
@@ -212,14 +210,15 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
         toonSurface.Albedo = output.Color.rgb;
         toonSurface.ShadowThreshold = output.Shadow.r;
         toonSurface.ShadowSoftness = output.Shadow.g;
+        toonSurface.Roughness = output.Material.g;
         ApplyLiveToonMaterialTextures(liveToonTextures, liveToonParams, materialUv, normal,
                                       SurfaceViewDirectionCommon(In.WorldPos, In.CameraPos), materialPartId,
                                       g_SamplerState, toonSurface);
         output.Color.rgb = toonSurface.Albedo;
         output.Shadow.r = toonSurface.ShadowThreshold;
         output.Shadow.g = toonSurface.ShadowSoftness;
+        output.Material.g = toonSurface.Roughness;
     }
-#endif
     // POM セルフシャドウ（主光源）。
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     output.Color.a = 1.0f;

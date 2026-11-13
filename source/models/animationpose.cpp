@@ -253,6 +253,13 @@ bool AnimationModelResource::GetBoneGlobalTransform(const string& boneName, XMFL
     {
         return false;
     }
+    RefreshGlobalPose();
+    transform = m_PmxGlobalMatricesScratch[nodeIt->second];
+    return true;
+}
+
+void AnimationModelResource::RefreshGlobalPose()
+{
     if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
     {
         m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
@@ -282,8 +289,30 @@ bool AnimationModelResource::GetBoneGlobalTransform(const string& boneName, XMFL
         }
         XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], global);
     }
-    transform = m_PmxGlobalMatricesScratch[nodeIt->second];
-    return true;
+}
+
+vector<AnimationModelResource::DebugBone> AnimationModelResource::GetDebugSkeleton()
+{
+    if (m_PmxRuntimeNodes.empty())
+    {
+        RebuildPmxRuntimeCache();
+    }
+    RefreshGlobalPose();
+    vector<DebugBone> bones;
+    vector<int> visibleParents(m_PmxRuntimeNodes.size(), -1);
+    for (size_t index = 0; index < m_PmxRuntimeNodes.size(); ++index)
+    {
+        const auto& node = m_PmxRuntimeNodes[index];
+        const int parent = node.ParentIndex >= 0 ? visibleParents[node.ParentIndex] : -1;
+        visibleParents[index] = parent;
+        if (node.BonePtr)
+        {
+            const auto& pose = m_PmxGlobalMatricesScratch[index];
+            visibleParents[index] = static_cast<int>(bones.size());
+            bones.push_back({node.Name, parent, {pose._41, pose._42, pose._43}});
+        }
+    }
+    return bones;
 }
 
 bool AnimationModelResource::GetBoneBindGlobalTransform(const string& boneName, XMFLOAT4X4& transform)

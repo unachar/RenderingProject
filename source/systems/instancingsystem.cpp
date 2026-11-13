@@ -1542,6 +1542,7 @@ namespace
             cb.MaterialMode = static_cast<int>(mat.ShaderClassMode);
             cb.ShaderClass = static_cast<int>(mat.ShaderClass);
             cb.ToonOutlineWidth = mat.ToonOutlineWidth;
+            cb.ToonOutlineColor = {mat.ToonOutlineColor.x, mat.ToonOutlineColor.y, mat.ToonOutlineColor.z, 0.0f};
             cb.ToonOutlineScreenWidth = mat.ToonOutlineScreenWidth;
             cb.ToonOutlineUseScreenSpace =
                 static_cast<int>(mat.ToonOutlineWidthModeSetting == ToonOutlineWidthMode::ScreenPixels);

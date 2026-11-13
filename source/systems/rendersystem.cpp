@@ -513,6 +513,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
                     cb3D.MaterialMode = static_cast<int>(mat.ShaderClassMode);
                     cb3D.ShaderClass = static_cast<int>(mat.ShaderClass);
                     cb3D.ToonOutlineWidth = mat.ToonOutlineWidth;
+                    cb3D.ToonOutlineColor = {mat.ToonOutlineColor.x, mat.ToonOutlineColor.y, mat.ToonOutlineColor.z, 0.0f};
                     if (cb3D.UseTexture != 0 && mat.TextureID >= 0)
                     {
                         srvIndex = mat.TextureID;
@@ -738,6 +739,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             cb3D.MaterialMode = static_cast<int>(mat.ShaderClassMode);
             cb3D.ShaderClass = static_cast<int>(mat.ShaderClass);
             cb3D.ToonOutlineWidth = mat.ToonOutlineWidth;
+            cb3D.ToonOutlineColor = {mat.ToonOutlineColor.x, mat.ToonOutlineColor.y, mat.ToonOutlineColor.z, 0.0f};
             if (cb3D.UseTexture != 0 && mat.TextureID >= 0)
             {
                 srvIndex = mat.TextureID;

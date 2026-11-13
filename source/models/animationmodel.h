@@ -395,6 +395,7 @@ class AnimationModelResource
     vector<pair<uint32_t, float>> m_VmdActiveMorphsScratch{};
     vector<aiVector3D> m_VmdMorphPositionOffsetsScratch{};
     vector<XMFLOAT2> m_VmdMorphUvOffsetsScratch{};
+    void RefreshGlobalPose();
     vector<PmxRuntimeNode> m_PmxRuntimeNodes{};
     unordered_map<string, size_t> m_PmxRuntimeNodeIndexMap{};
     vector<XMFLOAT4X4> m_PmxGlobalMatricesScratch{};
@@ -487,10 +488,21 @@ class AnimationModelResource
     void UpdateBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
     void InvalidateAnimationPoseCache();
     void ResetBoneMatricesToBindPose();
+    struct DebugBone
+    {
+        string Name;
+        int Parent = -1;
+        XMFLOAT3 Position{};
+    };
+    vector<DebugBone> GetDebugSkeleton();
+    const vector<GpuSkinVertex>& GetSkinInputVertices(UINT mesh) const { return m_BaseGpuSkinVertices.at(mesh); }
     bool GetBoneGlobalTransform(const string& boneName, XMFLOAT4X4& transform);
     bool GetBoneBindGlobalTransform(const string& boneName, XMFLOAT4X4& transform);
     bool SetBoneGlobalTransform(const string& boneName, const XMFLOAT4X4& transform, bool preserveTranslation);
     void CommitPhysicsPose();
+    const vector<string>& GetBoneNames() const { return m_BoneNames; }
+    vector<string> GetPreviewExpressionNames() const;
+    bool SetPreviewExpression(size_t expression, float weight);
 
     bool ApplyMeshShadingOverridePartIds(const vector<int>& overridePartIds);
     // outlineModes: bit mask of requested ToonOutlineMeshMode presets; zero skins only the base mesh.

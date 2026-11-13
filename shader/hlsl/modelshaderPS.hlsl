@@ -410,12 +410,14 @@ float4 ShadeForward(in PSInput3D In)
         toonSurface.Albedo = baseColor.rgb;
         toonSurface.ShadowThreshold = shadowThreshold;
         toonSurface.ShadowSoftness = shadowSoftness;
+        toonSurface.Roughness = material.g;
         ApplyLiveToonMaterialTextures(LiveToonTextures, LiveToonMaterialParams, materialUv, surfaceNormal,
                                       SurfaceViewDirectionCommon(In.WorldPos, CameraPos), shaderClass,
                                       g_SamplerState, toonSurface);
         baseColor.rgb = toonSurface.Albedo;
         shadowThreshold = toonSurface.ShadowThreshold;
         shadowSoftness = max(toonSurface.ShadowSoftness, 0.0001f);
+        material.g = toonSurface.Roughness;
     }
 #endif
 
@@ -436,7 +438,7 @@ float4 ShadeForward(in PSInput3D In)
         float3 color = directLight + EvaluateLiveToonAmbientStyled(baseColor.rgb, irradiance, shaderClass);
         [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
         {
-            float3 environment = SampleEnvironmentLatLong(reflect(-toonView, surfaceNormal), 0.5f);
+            float3 environment = SampleEnvironmentLatLong(reflect(-toonView, surfaceNormal), saturate(LiveToonStyle5.z));
             color += EvaluateLiveToonEnvironmentSpecular(baseColor.rgb, surfaceNormal, toonView, environment,
                                                          shaderClass);
         }

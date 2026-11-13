@@ -207,7 +207,8 @@ namespace
         }
         constants.LiveToonTextures = {LiveToonTextures::ResolveHeapOffset(material.LiveToonDefPath),
                                       LiveToonTextures::ResolveHeapOffset(material.LiveToonFacePath),
-                                      LiveToonTextures::ResolveHeapOffset(material.LiveToonTextureRampPath), 0u};
+                                      LiveToonTextures::ResolveHeapOffset(material.LiveToonTextureRampPath),
+                                      material.LiveToonDefSmoothness ? 1u : 0u};
         constants.LiveToonMaterialParams = {material.LiveToonDefStrength, material.LiveToonFaceStrength,
                                             material.LiveToonTextureRampMultiply, material.LiveToonTextureRampAdd};
 
@@ -418,7 +419,13 @@ bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3
     const uint32_t heightIndex = offset(material.HeightTextureID);
     constants.AssetParallax.z = heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f;
     constants.AssetParallax.w = static_cast<float>(textureBase);
-    constants.LiveToonTextures = {UINT32_MAX, UINT32_MAX, UINT32_MAX, 0u}; // プレビューはテクスチャ基点が異なる
+    // Rebase scene texture indices to the preview material table.
+    const auto previewToonOffset = [&offset](uint32_t sceneIndex) {
+        return sceneIndex < 512u ? offset(FrameConstants::g_kTEXTURE_SRV_START_INDEX + sceneIndex) : UINT32_MAX;
+    };
+    constants.LiveToonTextures.x = previewToonOffset(constants.LiveToonTextures.x);
+    constants.LiveToonTextures.y = previewToonOffset(constants.LiveToonTextures.y);
+    constants.LiveToonTextures.z = previewToonOffset(constants.LiveToonTextures.z);
     uint8_t* mapped = nullptr;
     if (FAILED(buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))))
     {

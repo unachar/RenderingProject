@@ -208,9 +208,7 @@ template<class TrackMap> inline const typename TrackMap::mapped_type* FindTrack(
     return found;
 }
 
-// Read the standardized humanoid extension before using bone-name heuristics.
-// VRM 0.x and 1.0 both reference glTF node indices, not skin palette indices.
-inline bool AddVrmHumanoidBones(const std::filesystem::path& file, ModelResourceMap& map)
+inline bool ReadGlbJson(const std::filesystem::path& file, Json::Value& root)
 {
     try
     {
@@ -230,10 +228,24 @@ inline bool AddVrmHumanoidBones(const std::filesystem::path& file, ModelResource
         std::string bytes(size, '\0');
         if (!input.read(bytes.data(), size)) return false;
         Json::CharReaderBuilder builder;
-        Json::Value root;
         std::string errors;
         auto reader = std::unique_ptr<Json::CharReader>(builder.newCharReader());
         if (!reader->parse(bytes.data(), bytes.data() + bytes.size(), &root, &errors)) return false;
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+// VRM humanoid extensions reference glTF node indices.
+inline bool AddVrmHumanoidBones(const std::filesystem::path& file, ModelResourceMap& map)
+{
+    try
+    {
+        Json::Value root;
+        if (!ReadGlbJson(file, root)) return false;
         auto add = [&](const std::string& human, const Json::Value& node) {
             if (!node.isUInt() || node.asUInt() >= root["nodes"].size()) return;
             const auto name = root["nodes"][node.asUInt()]["name"].asString();

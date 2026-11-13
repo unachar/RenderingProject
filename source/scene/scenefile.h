@@ -977,6 +977,14 @@ namespace SceneFile
         a("convert", c.IsConvert);
         a("animationPaths", c.AnimationPaths);
         a("independentPose", c.UseIndependentPose);
+        a("faceCorrectionEnabled", c.FaceCorrection.Enabled);
+        a("faceCorrectionMorph", c.FaceCorrection.Morph);
+        a("faceCorrectionDirection", c.FaceCorrection.Direction);
+        a("faceCorrectionStartAngle", c.FaceCorrection.StartAngle);
+        a("faceCorrectionFullAngle", c.FaceCorrection.FullAngle);
+        a("faceCorrectionStrength", c.FaceCorrection.Strength);
+        a("faceCorrectionFrontYaw", c.FaceCorrection.FrontYaw);
+        a("faceCorrectionHeadBone", c.FaceCorrection.HeadBone);
         a("animations", c.Animations);
         a("current", c.CurrentAnimation);
         a("next", c.NextAnimation);
@@ -1177,6 +1185,7 @@ namespace SceneFile
         a("shaderClassMode", c.ShaderClassMode);
         a("shaderClass", c.ShaderClass);
         a("toonOutlineWidth", c.ToonOutlineWidth);
+        a("toonOutlineColor", c.ToonOutlineColor);
         a("toonOutlineScreenWidth", c.ToonOutlineScreenWidth);
         a("toonOutlineMode", c.ToonOutlineRenderMode);
         a("toonOutlineWidthMode", c.ToonOutlineWidthModeSetting);
@@ -1208,6 +1217,7 @@ namespace SceneFile
         });
         a("liveToonDefPath", c.LiveToonDefPath);
         a("liveToonDefStrength", c.LiveToonDefStrength);
+        a("liveToonDefSmoothness", c.LiveToonDefSmoothness);
         a("liveToonFacePath", c.LiveToonFacePath);
         a("liveToonFaceStrength", c.LiveToonFaceStrength);
         a("liveToonTextureRampPath", c.LiveToonTextureRampPath);

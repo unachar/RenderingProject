@@ -66,7 +66,9 @@ class AdvancedEffects final
         bool DepthOfField = false;
         float FocusDistance = 5.0f;
         float FocusRange = 2.0f;
+        float NearBlurStrength = 1.0f;
         float MaxBlurPixels = 12.0f;
+        bool ScaleDofWithResolution = false;
     };
 
     static Settings& GetSettings()
@@ -1361,8 +1363,14 @@ class AdvancedEffects final
         constants.MotionBlurParams = {
             std::clamp(settings.MotionBlurShutter, 0.0f, 2.0f), std::clamp(settings.MotionBlurMaxPixels, 1.0f, 128.0f),
             static_cast<float>(std::clamp(settings.MotionBlurSamples, 2, 32)), motionBlur ? 1.0f : 0.0f};
+        float dofRadius = std::clamp(settings.MaxBlurPixels, 1.0f, 48.0f);
+        if (settings.ScaleDofWithResolution)
+        {
+            // Both lens passes measure their sample offsets in full-resolution pixels.
+            dofRadius *= static_cast<float>(s_Height) / 1080.0f;
+        }
         constants.DofParams = {(std::max)(0.05f, settings.FocusDistance), (std::max)(0.0f, settings.FocusRange),
-                               std::clamp(settings.MaxBlurPixels, 1.0f, 48.0f), dof ? 1.0f : 0.0f};
+                               dofRadius, std::clamp(settings.NearBlurStrength, 0.0f, 1.0f)};
         // ビット1：物理スカイは自身の大気をすでに積分しているため、従来の大気パスと同様に、
         // 背景には追加のフォグを適用しない。
         UINT fogFlags = 0;

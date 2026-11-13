@@ -15,6 +15,7 @@
 #include "systemmanager.h"
 #include "texturemanager.h"
 #include "world.h"
+#include "vmdretarget.h"
 #include "gpuscene/gpuscenechanges.h"
 
 namespace
@@ -22,6 +23,19 @@ namespace
     constexpr wchar_t modelFilter[] = L"モデル (*.pmx;*.fbx;*.vrm;*.gltf;*.glb)\0*.pmx;*.fbx;*.vrm;*.gltf;*.glb\0";
     constexpr wchar_t clipFilter[] =
         L"アニメーション (*.vmd;*.fbx;*.gltf;*.glb;*.dae;*.bvh)\0*.vmd;*.fbx;*.gltf;*.glb;*.dae;*.bvh\0";
+
+    struct PreviewSpring
+    {
+        string Bone;
+        string Tip;
+        float Stiffness = 1.0f;
+        float Drag = 0.4f;
+        float Gravity = 0.0f;
+        XMFLOAT3 GravityDirection{0.0f, -1.0f, 0.0f};
+        XMFLOAT3 PreviousTip{};
+        XMFLOAT3 CurrentTip{};
+        bool Initialized = false;
+    };
 
     struct PreviewState
     {
@@ -31,12 +45,36 @@ namespace
         vector<AnimationPreview::Clip> Clips;
         vector<MaterialComponent> Materials;
         AnimationPreview::Playback Playback;
+        unique_ptr<IPhysicsBackend> Physics;
+        PmxBoneRig PhysicsRig;
+        bool PhysicsEnabled = true;
+        bool ResetPhysics = true;
+        double PhysicsTime = 0.0;
+        string PhysicsError;
+        vector<PreviewSpring> Springs;
+        int SpringBone = 0;
+        int SpringTip = 0;
+        vector<string> Expressions;
+        int Expression = 0;
+        float ExpressionWeight = 0.0f;
+        float AppliedExpressionWeight = 0.0f;
+        int AppliedExpression = 0;
+        int ExpressionDriver = 0;
+        int ExpressionViewAxis = 0;
+        float ExpressionAngleStart = 45.0f;
+        float ExpressionAngleEnd = 90.0f;
+        float ExpressionStart = 0.0f;
+        float ExpressionEnd = 1.0f;
         string ModelPath;
         bool Convert = true;
         int SourceModelId = -1;
         shared_ptr<AnimationModelResource> SourceOwner;
         int SelectedClip = -1;
         bool Visible = false;
+        bool ShowWireframe = false;
+        bool ShowSkeleton = false;
+        bool ShowWeights = false;
+        int WeightBone = 0;
         int LastPlaybackFrame = -1;
         bool ImportSelection = false;
         char ModelInput[2048]{};
@@ -165,7 +203,7 @@ namespace
         return {};
     }
 
-    void UpdatePose()
+    void SamplePose(float sampleTime)
     {
         if (!preview.Model)
         {
@@ -177,7 +215,7 @@ namespace
             if (clip.Enabled)
             {
                 const float time =
-                    AnimationPreview::LayerSampleTime(preview.Playback.Time, clip.Seconds,
+                    AnimationPreview::LayerSampleTime(sampleTime, clip.Seconds,
                                                       AnimationPreview::Duration(preview.Clips), preview.Playback.Loop);
                 layers.push_back({clip.Name, time});
             }
@@ -189,6 +227,235 @@ namespace
         else
         {
             preview.Model->UpdateBoneMatrices(layers);
+        }
+    }
+
+    void ClearPreviewPhysics()
+    {
+        if (preview.Physics)
+        {
+            preview.PhysicsRig.Destroy(*preview.Physics);
+            preview.Physics.reset();
+        }
+    }
+
+    vector<PreviewSpring> LoadVrmSprings(const string& path, bool convert)
+    {
+        string extension = filesystem::u8path(path).extension().string();
+        transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
+            return static_cast<char>(tolower(letter));
+        });
+        if (extension != ".vrm")
+        {
+            return {};
+        }
+        Json::Value root;
+        if (!VmdRetarget::ReadGlbJson(filesystem::u8path(path), root))
+        {
+            return {};
+        }
+
+        const Json::Value& document = root;
+        const auto& nodes = document["nodes"];
+        const auto& springs = document["extensions"]["VRMC_springBone"]["springs"];
+        const auto nodeName = [&nodes](const Json::Value& joint) -> string {
+            const auto& index = joint["node"];
+            if (!index.isUInt() || index.asUInt() >= nodes.size())
+            {
+                return {};
+            }
+            const string name = nodes[index.asUInt()]["name"].asString();
+            return name.empty() ? "nodes[" + to_string(index.asUInt()) + "]" : name;
+        };
+        vector<PreviewSpring> result;
+        for (const auto& chain : springs)
+        {
+            const auto& joints = chain["joints"];
+            for (Json::ArrayIndex index = 1; index < joints.size(); ++index)
+            {
+                const auto& joint = joints[index - 1];
+                PreviewSpring spring;
+                spring.Bone = nodeName(joint);
+                spring.Tip = nodeName(joints[index]);
+                if (spring.Bone.empty() || spring.Tip.empty() || spring.Bone == spring.Tip)
+                {
+                    continue;
+                }
+                spring.Stiffness = joint.get("stiffness", 1.0f).asFloat();
+                spring.Drag = joint.get("dragForce", 0.4f).asFloat();
+                spring.Gravity = joint.get("gravityPower", 0.0f).asFloat();
+                spring.Stiffness = clamp(spring.Stiffness, 0.0f, 100.0f);
+                spring.Drag = clamp(spring.Drag, 0.0f, 1.0f);
+                spring.Gravity = clamp(spring.Gravity, 0.0f, 100.0f);
+                const auto& gravity = joint["gravityDir"];
+                if (gravity.isArray() && gravity.size() == 3 && gravity[0].isNumeric() &&
+                    gravity[1].isNumeric() && gravity[2].isNumeric())
+                {
+                    spring.GravityDirection = {gravity[0].asFloat(), gravity[1].asFloat(),
+                                               gravity[2].asFloat() * (convert ? -1.0f : 1.0f)};
+                }
+                if (none_of(result.begin(), result.end(), [&](const PreviewSpring& existing) {
+                        return existing.Bone == spring.Bone;
+                    }))
+                {
+                    result.push_back(move(spring));
+                }
+            }
+        }
+        return result;
+    }
+
+    void ApplySpringPose(float step)
+    {
+        bool changed = false;
+        for (auto& spring : preview.Springs)
+        {
+            XMFLOAT4X4 boneMatrix{}, tipMatrix{};
+            if (!preview.Model->GetBoneGlobalTransform(spring.Bone, boneMatrix) ||
+                !preview.Model->GetBoneGlobalTransform(spring.Tip, tipMatrix))
+            {
+                continue;
+            }
+            XMMATRIX bone = XMLoadFloat4x4(&boneMatrix);
+            const XMVECTOR origin = bone.r[3];
+            const XMVECTOR animatedTip = XMLoadFloat4x4(&tipMatrix).r[3];
+            const XMVECTOR axis = animatedTip - origin;
+            const float length = XMVectorGetX(XMVector3Length(axis));
+            if (!(length > 0.00001f))
+            {
+                continue;
+            }
+            const XMVECTOR restDirection = axis / length;
+            if (!spring.Initialized)
+            {
+                XMStoreFloat3(&spring.CurrentTip, animatedTip);
+                spring.PreviousTip = spring.CurrentTip;
+                spring.Initialized = true;
+                continue;
+            }
+            XMVECTOR direction = XMLoadFloat3(&spring.CurrentTip) - origin;
+            if (step > 0.0f)
+            {
+                direction += (XMLoadFloat3(&spring.CurrentTip) - XMLoadFloat3(&spring.PreviousTip)) *
+                             (1.0f - clamp(spring.Drag, 0.0f, 1.0f));
+                direction += (restDirection * spring.Stiffness +
+                              XMLoadFloat3(&spring.GravityDirection) * spring.Gravity) * step;
+            }
+            const float directionLength = XMVectorGetX(XMVector3Length(direction));
+            direction = directionLength > 0.00001f ? direction / directionLength : restDirection;
+            if (step > 0.0f)
+            {
+                spring.PreviousTip = spring.CurrentTip;
+                XMStoreFloat3(&spring.CurrentTip, origin + direction * length);
+            }
+
+            const float cosine = clamp(XMVectorGetX(XMVector3Dot(restDirection, direction)), -1.0f, 1.0f);
+            if (cosine > 0.999999f)
+            {
+                continue;
+            }
+            XMVECTOR rotationAxis = XMVector3Cross(restDirection, direction);
+            if (cosine < -0.999999f)
+            {
+                rotationAxis = XMVector3Orthogonal(restDirection);
+            }
+            const XMMATRIX rotation = XMMatrixRotationAxis(rotationAxis, acosf(cosine));
+            bone.r[3] = XMVectorSet(0, 0, 0, 1);
+            bone *= rotation;
+            bone.r[3] = origin;
+            XMStoreFloat4x4(&boneMatrix, bone);
+            changed |= preview.Model->SetBoneGlobalTransform(spring.Bone, boneMatrix, true);
+        }
+        if (changed)
+        {
+            preview.Model->CommitPhysicsPose();
+            preview.Model->InvalidateAnimationPoseCache();
+        }
+    }
+
+    void UpdateSpringPose(float time)
+    {
+        constexpr double step = 1.0 / 60.0;
+        if (preview.ResetPhysics || time < preview.PhysicsTime || time - preview.PhysicsTime > step * 8)
+        {
+            preview.ResetPhysics = false;
+            preview.PhysicsTime = time;
+            for (auto& spring : preview.Springs)
+            {
+                spring.Initialized = false;
+            }
+        }
+        while (time - preview.PhysicsTime >= step)
+        {
+            preview.PhysicsTime += step;
+            SamplePose(static_cast<float>(preview.PhysicsTime));
+            ApplySpringPose(static_cast<float>(step));
+        }
+        SamplePose(time);
+        ApplySpringPose(0.0f);
+    }
+
+    void UpdatePose()
+    {
+        if (!preview.Model)
+        {
+            return;
+        }
+        const float time = preview.Playback.Time;
+        if (preview.PhysicsEnabled && !preview.Springs.empty())
+        {
+            UpdateSpringPose(time);
+            return;
+        }
+        if (!preview.PhysicsEnabled || !preview.Model->HasPmxPhysics())
+        {
+            ClearPreviewPhysics();
+            SamplePose(time);
+            return;
+        }
+
+        const TransformComponent transform;
+        constexpr double fixedStep = 1.0 / 60.0;
+        constexpr int maxSteps = 8;
+        if (preview.ResetPhysics || time < preview.PhysicsTime || time - preview.PhysicsTime > fixedStep * maxSteps)
+        {
+            ClearPreviewPhysics();
+            preview.ResetPhysics = false;
+            preview.PhysicsTime = time;
+            preview.PhysicsError.clear();
+            SamplePose(time);
+
+            auto backend = CreateBulletPhysicsBackend();
+            if (!backend->Init())
+            {
+                preview.PhysicsError = "プレビュー用の物理エンジンを初期化できません。";
+                return;
+            }
+            if (const auto* scenePhysics = SystemManager::GetSystem<PhysicsSystem>())
+            {
+                backend->SetGravity(scenePhysics->GetSettings().Gravity);
+            }
+            preview.PhysicsRig.Build(*backend, *preview.Model, PhysicsComponent{}, transform);
+            preview.PhysicsRig.SyncBodies(*backend, *preview.Model, transform, true);
+            preview.Physics = move(backend);
+            return;
+        }
+
+        if (preview.Physics)
+        {
+            for (int step = 0; step < maxSteps && time - preview.PhysicsTime >= fixedStep; ++step)
+            {
+                preview.PhysicsTime += fixedStep;
+                SamplePose(static_cast<float>(preview.PhysicsTime));
+                preview.PhysicsRig.SyncBodies(*preview.Physics, *preview.Model, transform);
+                preview.Physics->Step(static_cast<float>(fixedStep));
+            }
+        }
+        SamplePose(time);
+        if (preview.Physics)
+        {
+            preview.PhysicsRig.Apply(*preview.Physics, *preview.Model, transform);
+            preview.Model->InvalidateAnimationPoseCache();
         }
     }
 
@@ -214,7 +481,24 @@ namespace
             return false;
         }
         preview.Materials = PreviewMaterials(*model, material);
+        preview.ResetPhysics = true;
         preview.Model = move(model);
+        if (preview.ModelPath != path || preview.Convert != convert)
+        {
+            preview.Springs.clear();
+            try
+            {
+                preview.Springs = LoadVrmSprings(path, convert);
+            }
+            catch (const Json::Exception&)
+            {
+                preview.Springs.clear();
+            }
+        }
+        preview.Expressions = preview.Model->GetPreviewExpressionNames();
+        preview.Expression = 0;
+        preview.AppliedExpression = 0;
+        preview.AppliedExpressionWeight = 0.0f;
         preview.Context = move(context);
         preview.Descriptor = move(descriptor);
         preview.Clips = move(clips);
@@ -404,6 +688,7 @@ namespace
                 if (ImGui::Checkbox("##Enabled", &clip.Enabled))
                 {
                     AnimationPreview::SetClipEnabled(preview.Clips, index, clip.Enabled);
+                    preview.ResetPhysics = true;
                     preview.Playback.Seek(preview.Playback.Time, AnimationPreview::Duration(preview.Clips));
                 }
                 ImGui::SameLine();
@@ -446,6 +731,7 @@ namespace
         {
             preview.Clips.erase(preview.Clips.begin() + preview.SelectedClip);
             preview.SelectedClip = -1;
+            preview.ResetPhysics = true;
             preview.Playback.Seek(0.0f, AnimationPreview::Duration(preview.Clips));
         }
         ImGui::EndDisabled();
@@ -461,6 +747,7 @@ namespace
         {
             if (!preview.Playback.Playing && preview.Playback.Time >= duration)
             {
+                preview.ResetPhysics = true;
                 preview.Playback.Time = 0.0f;
             }
             preview.Playback.Playing = !preview.Playback.Playing;
@@ -468,16 +755,235 @@ namespace
         ImGui::SameLine();
         if (ImGui::Button("先頭へ"))
         {
+            preview.ResetPhysics = true;
             preview.Playback.Time = 0.0f;
         }
-        ImGui::Checkbox("プレビューをループ", &preview.Playback.Loop);
+        if (ImGui::Checkbox("プレビューをループ", &preview.Playback.Loop))
+        {
+            preview.ResetPhysics = true;
+        }
         ImGui::SliderFloat("速度", &preview.Playback.Speed, 0.0f, 4.0f, "%.2f 倍");
         if (ImGui::SliderFloat("再生位置", &preview.Playback.Time, 0.0f, duration, "%.2f 秒"))
         {
+            preview.ResetPhysics = true;
             preview.Playback.Playing = false;
         }
         ImGui::Text("%.2f / %.2f 秒", preview.Playback.Time, duration);
         ImGui::EndDisabled();
+        if (preview.Model && (preview.Model->HasPmxPhysics() || !preview.Springs.empty()))
+        {
+            if (ImGui::Checkbox("揺れものの物理を再生", &preview.PhysicsEnabled))
+            {
+                preview.ResetPhysics = true;
+                preview.PhysicsError.clear();
+            }
+            ImGui::SetItemTooltip("シーク時に揺れをリセットします。");
+            if (!preview.PhysicsError.empty())
+            {
+                ImGui::TextWrapped("%s", preview.PhysicsError.c_str());
+            }
+        }
+
+    }
+
+    void DrawExpressionPreview()
+    {
+        if (preview.Expressions.empty())
+        {
+            return;
+        }
+        ImGui::SeparatorText("表情モーフ");
+        if (ImGui::BeginCombo("モーフ", preview.Expressions[preview.Expression].c_str()))
+        {
+            for (int index = 0; index < static_cast<int>(preview.Expressions.size()); ++index)
+            {
+                if (ImGui::Selectable(preview.Expressions[index].c_str(), preview.Expression == index))
+                {
+                    preview.Expression = index;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SliderFloat("表情の強さ", &preview.ExpressionWeight, 0.0f, 1.0f);
+        const char* drivers[] = {"手動", "再生位置", "カメラ角度"};
+        ImGui::Combo("モーフの制御", &preview.ExpressionDriver, drivers, IM_ARRAYSIZE(drivers));
+        if (preview.ExpressionDriver == 2)
+        {
+            const char* axes[] = {"左右共通", "右側", "左側", "見上げ"};
+            ImGui::Combo("補正する方向", &preview.ExpressionViewAxis, axes, IM_ARRAYSIZE(axes));
+            ImGui::SliderFloat("補正開始角", &preview.ExpressionAngleStart, 0.0f, 90.0f, "%.1f°");
+            ImGui::SliderFloat("補正最大角", &preview.ExpressionAngleEnd, 0.0f, 90.0f, "%.1f°");
+            ImGui::SetItemTooltip("鼻ポチを後ろへ下げるモーフも、横から見たときに適用できます。");
+        }
+        if (preview.ExpressionDriver == 1)
+        {
+            ImGui::DragFloat("開始秒", &preview.ExpressionStart, 0.02f, 0.0f, 3600.0f);
+            ImGui::DragFloat("終了秒", &preview.ExpressionEnd, 0.02f, 0.0f, 3600.0f);
+        }
+    }
+
+    void UpdateExpressionPreview()
+    {
+        if (preview.Expressions.empty())
+        {
+            return;
+        }
+        float weight = preview.ExpressionWeight;
+        if (preview.ExpressionDriver == 2 && preview.Context)
+        {
+            const float angle = preview.Context->ViewAngleDegrees(preview.ExpressionViewAxis);
+            const float span = max(preview.ExpressionAngleEnd - preview.ExpressionAngleStart, 0.01f);
+            const float amount = clamp((angle - preview.ExpressionAngleStart) / span, 0.0f, 1.0f);
+            weight *= amount * amount * (3.0f - 2.0f * amount);
+        }
+        if (preview.ExpressionDriver == 1)
+        {
+            const float duration = max(preview.ExpressionEnd - preview.ExpressionStart, 0.001f);
+            const float time = clamp((preview.Playback.Time - preview.ExpressionStart) / duration, 0.0f, 1.0f);
+            weight *= time * time * (3.0f - 2.0f * time);
+        }
+        if (preview.AppliedExpression == preview.Expression && fabsf(preview.AppliedExpressionWeight - weight) < 1e-5f)
+        {
+            return;
+        }
+        if (!GraphicsDevice::WaitForGpuIdle())
+        {
+            return;
+        }
+        if (preview.AppliedExpression != preview.Expression && preview.AppliedExpressionWeight > 0.0f)
+        {
+            preview.Model->SetPreviewExpression(preview.AppliedExpression, 0.0f);
+        }
+        if (preview.Model->SetPreviewExpression(preview.Expression, weight))
+        {
+            preview.AppliedExpression = preview.Expression;
+            preview.AppliedExpressionWeight = weight;
+        }
+    }
+
+    void DrawSpringPreview()
+    {
+        if (!preview.Model || preview.Model->HasPmxPhysics())
+        {
+            return;
+        }
+        const auto& names = preview.Model->GetBoneNames();
+        if (names.size() < 2 || !ImGui::CollapsingHeader("揺れボーン設定"))
+        {
+            return;
+        }
+        auto selectBone = [&names](const char* label, int& selected) {
+            selected = clamp(selected, 0, static_cast<int>(names.size()) - 1);
+            if (ImGui::BeginCombo(label, names[selected].c_str()))
+            {
+                for (int index = 0; index < static_cast<int>(names.size()); ++index)
+                {
+                    if (ImGui::Selectable(names[index].c_str(), index == selected))
+                    {
+                        selected = index;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        };
+        selectBone("回転するボーン", preview.SpringBone);
+        selectBone("先端ボーン", preview.SpringTip);
+        const auto& bone = names[preview.SpringBone];
+        const auto& tip = names[preview.SpringTip];
+        const bool duplicate = any_of(preview.Springs.begin(), preview.Springs.end(),
+                                      [&](const auto& spring) { return spring.Bone == bone; });
+        ImGui::BeginDisabled(bone == tip || duplicate);
+        if (ImGui::Button("揺れボーンを追加"))
+        {
+            preview.Springs.push_back({bone, tip});
+            preview.ResetPhysics = true;
+        }
+        ImGui::EndDisabled();
+        for (size_t index = 0; index < preview.Springs.size(); ++index)
+        {
+            auto& spring = preview.Springs[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::TextWrapped("%s → %s", spring.Bone.c_str(), spring.Tip.c_str());
+            ImGui::DragFloat("戻る強さ", &spring.Stiffness, 0.05f, 0.0f, 100.0f);
+            ImGui::SliderFloat("減衰", &spring.Drag, 0.0f, 1.0f);
+            ImGui::DragFloat("重力の強さ", &spring.Gravity, 0.01f, 0.0f, 100.0f);
+            if (ImGui::Button("削除"))
+            {
+                preview.Springs.erase(preview.Springs.begin() + index);
+                preview.ResetPhysics = true;
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+    }
+
+    void DrawDebugSettings()
+    {
+        ImGui::SeparatorText("デバッグ表示");
+        ImGui::Checkbox("ワイヤーフレーム", &preview.ShowWireframe);
+        ImGui::Checkbox("ボーンフレーム", &preview.ShowSkeleton);
+        const auto& bones = preview.Model->GetBoneNames();
+        ImGui::BeginDisabled(bones.empty());
+        ImGui::Checkbox("スキンウェイト", &preview.ShowWeights);
+        if (preview.ShowWeights && !bones.empty())
+        {
+            preview.WeightBone = clamp(preview.WeightBone, 0, static_cast<int>(bones.size()) - 1);
+            if (ImGui::BeginCombo("対象ボーン", bones[preview.WeightBone].c_str()))
+            {
+                for (int index = 0; index < static_cast<int>(bones.size()); ++index)
+                {
+                    ImGui::PushID(index);
+                    if (ImGui::Selectable(bones[index].c_str(), index == preview.WeightBone))
+                    {
+                        preview.WeightBone = index;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::TextUnformatted("0: 濃紺  /  0.5: 緑  /  1: 橙");
+        }
+        ImGui::EndDisabled();
+    }
+
+    void DrawSkeletonOverlay(ImVec2 minimum, ImVec2 maximum)
+    {
+        const auto bones = preview.Model->GetDebugSkeleton();
+        vector<ImVec2> points(bones.size());
+        vector<bool> visible(bones.size());
+        for (size_t index = 0; index < bones.size(); ++index)
+        {
+            XMFLOAT2 uv{};
+            visible[index] = preview.Context->ProjectPoint(bones[index].Position, uv);
+            if (visible[index])
+            {
+                points[index] = {minimum.x + uv.x * (maximum.x - minimum.x),
+                                 minimum.y + uv.y * (maximum.y - minimum.y)};
+            }
+        }
+
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(minimum, maximum, true);
+        const auto& names = preview.Model->GetBoneNames();
+        for (size_t index = 0; index < bones.size(); ++index)
+        {
+            if (!visible[index])
+            {
+                continue;
+            }
+            const auto& bone = bones[index];
+            const bool selected = preview.ShowWeights && static_cast<size_t>(preview.WeightBone) < names.size() &&
+                                  bone.Name == names[preview.WeightBone];
+            const ImU32 color = selected ? IM_COL32(255, 166, 64, 255) : IM_COL32(109, 235, 255, 255);
+            if (bone.Parent >= 0 && visible[bone.Parent])
+            {
+                draw->AddLine(points[bone.Parent], points[index], IM_COL32(15, 22, 34, 255), 3.0f);
+                draw->AddLine(points[bone.Parent], points[index], color, 1.4f);
+            }
+            draw->AddCircleFilled(points[index], selected ? 4.0f : 2.5f, color);
+        }
+        draw->PopClipRect();
     }
 
     void DrawPreviewImage()
@@ -494,6 +1000,7 @@ namespace
         }
         ImGui::SameLine();
         ImGui::TextDisabled("左ドラッグ: 回転 / 中ドラッグ: 移動 / 中クリック: 中央へ / ホイール: ズーム");
+        DrawDebugSettings();
         const auto available = ImGui::GetContentRegionAvail();
         const float side = max(1.0f, min(available.x, available.y));
         ImGui::InvisibleButton("##AnimationOrbit", ImVec2(side, side),
@@ -522,6 +1029,10 @@ namespace
                 }
             }
             preview.Context->Orbit(0.0f, 0.0f, input.MouseWheel);
+        }
+        if (preview.ShowSkeleton)
+        {
+            DrawSkeletonOverlay(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         }
     }
 }
@@ -617,6 +1128,8 @@ void AnimationPreviewWindow::Draw(bool* open)
         DrawModelSettings();
         DrawClipSettings();
         DrawPlayback();
+        DrawExpressionPreview();
+        DrawSpringPreview();
         ImGui::SeparatorText("シーンへ適用");
         const auto target = ImGuiManager::GetSelectedEntity();
         if (Registry::IsAlive(target) && ComponentManager::HasComponent<NameComponent>(target))
@@ -648,23 +1161,32 @@ void AnimationPreviewWindow::Draw(bool* open)
         ImGui::EndChild();
         ImGui::TableSetColumnIndex(1);
         ImGui::BeginChild("##AnimationPreview", ImVec2(0, 0), ImGuiChildFlags_None);
+        if (preview.LastPlaybackFrame != ImGui::GetFrameCount())
+        {
+            preview.LastPlaybackFrame = ImGui::GetFrameCount();
+            const float deltaTime = ImGui::GetIO().DeltaTime;
+            const float duration = AnimationPreview::Duration(preview.Clips);
+            if (preview.Playback.Playing && preview.Playback.Loop && duration > 0.0f &&
+                preview.Playback.Time + deltaTime * preview.Playback.Speed >= duration)
+            {
+                preview.ResetPhysics = true;
+            }
+            preview.Playback.Advance(deltaTime, duration);
+            UpdatePose();
+            UpdateExpressionPreview();
+        }
         DrawPreviewImage();
         ImGui::EndChild();
         ImGui::EndTable();
     }
-    if (preview.LastPlaybackFrame != ImGui::GetFrameCount())
-    {
-        preview.LastPlaybackFrame = ImGui::GetFrameCount();
-        preview.Playback.Advance(ImGui::GetIO().DeltaTime, AnimationPreview::Duration(preview.Clips));
-    }
-    UpdatePose();
     ImGui::End();
 }
 
 void AnimationPreviewWindow::Render()
 {
     if (preview.Visible && preview.Model && preview.Context &&
-        !preview.Context->Render(*preview.Model, preview.Materials))
+        !preview.Context->Render(*preview.Model, preview.Materials, preview.ShowWireframe,
+                                 preview.ShowWeights && !preview.Model->GetBoneNames().empty() ? preview.WeightBone : -1))
     {
         preview.Error = "プレビューを描画できません: " + preview.Context->Error();
     }
@@ -672,5 +1194,6 @@ void AnimationPreviewWindow::Render()
 
 void AnimationPreviewWindow::Shutdown()
 {
+    ClearPreviewPhysics();
     preview = PreviewState{};
 }

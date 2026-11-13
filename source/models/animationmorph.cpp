@@ -836,3 +836,79 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
         }
     }
 }
+
+vector<string> AnimationModelResource::GetPreviewExpressionNames() const
+{
+    vector<string> names;
+    if (!m_AiScene || !m_PmxMorphs.empty())
+    {
+        return names;
+    }
+    for (unsigned meshIndex = 0; meshIndex < m_AiScene->mNumMeshes; ++meshIndex)
+    {
+        const auto& mesh = *m_AiScene->mMeshes[meshIndex];
+        for (unsigned target = 0; target < mesh.mNumAnimMeshes; ++target)
+        {
+            const auto& morph = *mesh.mAnimMeshes[target];
+            names.push_back("Mesh " + to_string(meshIndex + 1) + " / " +
+                            (morph.mName.length ? string(morph.mName.C_Str()) : to_string(target + 1)));
+        }
+    }
+    return names;
+}
+
+bool AnimationModelResource::SetPreviewExpression(size_t expression, float weight)
+{
+    if (!m_AiScene || !m_PmxMorphs.empty() || !std::isfinite(weight))
+    {
+        return false;
+    }
+    for (size_t meshIndex = 0; meshIndex < m_Meshes.size(); ++meshIndex)
+    {
+        const auto& mesh = *m_AiScene->mMeshes[meshIndex];
+        if (expression >= mesh.mNumAnimMeshes)
+        {
+            expression -= mesh.mNumAnimMeshes;
+            continue;
+        }
+
+        auto& meshData = m_Meshes[meshIndex];
+        const auto& morph = *mesh.mAnimMeshes[expression];
+        if (!meshData.InputVertexBuffer || morph.mNumVertices != mesh.mNumVertices)
+        {
+            return false;
+        }
+
+        UINT8* destination = nullptr;
+        const CD3DX12_RANGE readRange(0, 0);
+        if (FAILED(meshData.InputVertexBuffer->Map(0, &readRange, reinterpret_cast<void**>(&destination))))
+        {
+            return false;
+        }
+        auto& vertices = m_GpuSkinVertices[meshIndex];
+        vertices = m_BaseGpuSkinVertices[meshIndex];
+        for (size_t index = 0; index < vertices.size(); ++index)
+        {
+            auto& vertex = vertices[index];
+            if (morph.mVertices)
+            {
+                const auto offset = (morph.mVertices[index] - mesh.mVertices[index]) * weight;
+                vertex.Position.x += offset.x;
+                vertex.Position.y += offset.y;
+                vertex.Position.z += offset.z;
+            }
+            if (morph.mNormals && mesh.mNormals)
+            {
+                const auto offset = (morph.mNormals[index] - mesh.mNormals[index]) * weight;
+                vertex.Normal.x += offset.x;
+                vertex.Normal.y += offset.y;
+                vertex.Normal.z += offset.z;
+            }
+        }
+        memcpy(destination, vertices.data(), vertices.size() * sizeof(GpuSkinVertex));
+        meshData.InputVertexBuffer->Unmap(0, nullptr);
+        ++m_SkinningVersion;
+        return true;
+    }
+    return false;
+}

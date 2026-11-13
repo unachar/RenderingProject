@@ -128,6 +128,7 @@ struct ConstantBuffer3D
     // マテリアルグラフのオブジェクト情報（MaterialGraphVM.hlsli）。Extents が 0 のときはシェーダー側の既定値
     XMFLOAT4 ObjectBoundsCenter = {0.0f, 0.0f, 0.0f, 0.0f};  // xyz = ローカルの範囲の中心, w = インスタンスの番号（乱数の種）
     XMFLOAT4 ObjectBoundsExtents = {0.0f, 0.0f, 0.0f, 0.0f}; // xyz = ローカルの範囲の半分の大きさ, w = 1（有効）
+    XMFLOAT4 ToonOutlineColor{};
 };
 
 struct VertexResource

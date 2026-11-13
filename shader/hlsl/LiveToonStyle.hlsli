@@ -3,7 +3,7 @@
 
 // ---------------------------------------------------------------------------------------------
 // ライブ用トゥーンスタイル（学マスのライブシーン風）。ToonLighting.hlsli の拡張。
-// パラメーターはシーン全体の LightParams.LiveToonStyle0..3（source/rendering/livetoonstyle.h）。
+// パラメーターはシーン全体の LightParams.LiveToonStyle0..5（source/rendering/livetoonstyle.h）。
 // Forward（modelshaderPS）と Deferred（DeferredLightingPS）の両方が SurfaceLighting.hlsli 経由で
 // 同じ関数を使うので、経路による見た目の差は出ない。
 //
@@ -26,15 +26,21 @@ float3 LiveToonSaturate(float3 color, float amount)
 
 // 陰影ランプ（シーン全体）。横軸 = 光量（左 = 影、右 = 光）、上半分 = 肌、下半分 = 肌以外。
 // 戻り値の w が 0 のときはランプ無効。
-float4 LiveToonShadowRamp(float lit, bool skin)
+float4 LiveToonShadowRamp(float lit, bool skin, float3 albedo, float3 shadedAlbedo)
 {
 #ifdef MEGALIGHTS_LIGHT_TEXTURES
     [branch] if (LiveToonStyle4.x >= 0.0f && LiveToonStyle4.y > 0.0f)
     {
         uint index = (uint)LiveToonStyle4.x;
-        float2 uv = float2(clamp(lit, 0.01f, 0.99f), skin ? 0.25f : 0.75f);
-        float3 ramp = MegaLightTextures[NonUniformResourceIndex(index)].SampleLevel(TextureSampler, uv, 0.0f).rgb;
-        return float4(ramp, saturate(LiveToonStyle4.y));
+        bool packedRamp = LiveToonStyle4.z > 0.5f;
+        float2 uv = float2(clamp(lit, 0.01f, 0.99f), packedRamp ? 0.5f : (skin ? 0.25f : 0.75f));
+        float4 ramp = MegaLightTextures[NonUniformResourceIndex(index)].SampleLevel(TextureSampler, uv, 0.0f);
+        float3 color = albedo * ramp.rgb;
+        if (packedRamp && !skin)
+        {
+            color = lerp(shadedAlbedo, albedo, saturate(ramp.a));
+        }
+        return float4(color, saturate(LiveToonStyle4.y));
     }
 #endif
     return float4(1.0f, 1.0f, 1.0f, 0.0f);
@@ -105,6 +111,11 @@ float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, 
         float hardRim = LiveToonBand(edge, 1.0f - rimWidth * 0.55f, 0.03f);
         hardRim *= LiveToonBand(saturate(nDotL + 0.35f), 0.25f, 0.2f);
         additive += rimAlbedo * rimLight * visibility * hardRim * max(LiveToonStyle2.y, 0.0f) * (skin ? 0.5f : 1.0f);
+        float3 halfDir = LiveToonNormalize(lightDir + viewDir, normal);
+        float highlight = pow(saturate(dot(normal, halfDir)), lerp(80.0f, 16.0f, saturate(roughness)));
+        highlight = LiveToonBand(highlight, 0.55f, 0.06f) * saturate(nDotL);
+        additive += rimAlbedo * radiance * visibility * highlight * max(LiveToonStyle5.x, 0.0f) *
+                    (skin ? 0.25f : 1.0f);
         return additive;
     }
 
@@ -124,8 +135,13 @@ float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, 
     float shadowLevel = lerp(1.0f, skin ? 0.62f : 0.48f, saturate(shadowStrength));
     float3 diffuse = lerp(shadowColor * shadowLevel, albedo, lit) * skinRadiance;
     // 陰影ランプ：ベタ影 → ランプの色のグラデーション（肌と肌以外を 1 枚で描き分け）
-    float4 shadowRamp = LiveToonShadowRamp(lit, skin);
-    diffuse = lerp(diffuse, albedo * shadowRamp.rgb * skinRadiance, shadowRamp.w);
+    // The packed ramp shapes the N·L transition before the cel threshold.
+    // Legacy two-row ramps keep their existing post-threshold coordinate.
+    float rampCoordinate = LiveToonStyle4.z > 0.5f
+                               ? saturate(coordinate + 0.5f - shadowThreshold) * cast
+                               : lit;
+    float4 shadowRamp = LiveToonShadowRamp(rampCoordinate, skin, albedo, shadowColor * shadowLevel);
+    diffuse = lerp(diffuse, shadowRamp.rgb * skinRadiance, shadowRamp.w);
     // 色付きの透過影（ガラス越し）は色だけ反映
     float3 visibilityTint = visibility / max(castVisibility, 1e-3f);
     diffuse *= lerp(float3(1.0f, 1.0f, 1.0f), saturate(visibilityTint), step(1e-3f, castVisibility));
@@ -137,6 +153,33 @@ float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, 
     float ramp = LiveToonBand(specular, 0.55f, 0.06f) * 0.7f + LiveToonBand(specular, 0.85f, 0.03f) * 0.3f;
     float rampStrength = max(LiveToonStyle3.x, 0.0f) * (skin ? 0.15f : (hair ? 0.6f : 1.0f));
     float3 specularTerm = lerp(albedo, float3(1.0f, 1.0f, 1.0f), 0.5f) * radiance * ramp * rampStrength * lit;
+
+#ifdef MEGALIGHTS_LIGHT_TEXTURES
+    [branch] if (LiveToonStyle4.w > 0.0f && rampStrength > 0.0f)
+    {
+        uint rampCode = (uint)LiveToonStyle4.w;
+        bool usePartRows = rampCode > 512u;
+        uint index = (rampCode - 1u) % 512u;
+        float rampY = 0.5f;
+        if (usePartRows)
+        {
+            uint width, height;
+            MegaLightTextures[NonUniformResourceIndex(index)].GetDimensions(width, height);
+            if (height >= 4u && height % 4u == 0u)
+            {
+                // Align to a texel center so even a four-pixel-high ramp cannot blend adjacent rows.
+                uint row = (uint)clamp(round(materialClass) - 1.0f, 0.0f, 3.0f);
+                uint rowHeight = height / 4u;
+                rampY = (row * rowHeight + rowHeight / 2u + 0.5f) / height;
+            }
+        }
+        float2 uv = float2(clamp(specular, 0.01f, 0.99f), rampY);
+        float4 response = MegaLightTextures[NonUniformResourceIndex(index)].SampleLevel(TextureSampler, uv, 0.0f);
+        float diffuseMix = saturate(response.a);
+        specularTerm *= response.rgb * (1.0f - diffuseMix);
+        diffuse += response.rgb * radiance * (diffuseMix * rampStrength * lit);
+    }
+#endif
 
     if (hair)
     {
@@ -153,7 +196,8 @@ float3 EvaluateLiveToonStageLight(float3 albedo, float3 normal, float3 viewDir, 
                  (softRim * max(LiveToonStyle2.x, 0.0f) + hardRim * max(LiveToonStyle2.y, 0.0f)) *
                  (skin ? 0.45f : 1.0f);
 
-    return diffuse + specularTerm + rim;
+    float3 backlight = albedo * skinRadiance * saturate(-nDotL) * max(LiveToonStyle5.y, 0.0f);
+    return diffuse + specularTerm + rim + backlight;
 }
 
 // 従来のトゥーンとライブスタイルを LiveToonStyle0.x でブレンドする入口。

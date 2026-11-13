@@ -48,6 +48,11 @@ class BulletPhysicsBackend final : public IPhysicsBackend
     PhysicsJointHandle m_NextJoint = 1;
 
   public:
+    ~BulletPhysicsBackend() override
+    {
+        Shutdown();
+    }
+
     const char* GetName() const override
     {
         return "Bullet";

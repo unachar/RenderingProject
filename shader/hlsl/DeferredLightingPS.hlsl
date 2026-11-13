@@ -235,7 +235,7 @@ float4 ShadeDeferred(PSInputPostProcess input)
             float3 reflected = reflect(-viewDir, surfaceNormal);
             float2 reflectedUv = float2(frac(atan2(reflected.z, reflected.x) / (2.0f * PI) + 0.5f),
                                         acos(clamp(reflected.y, -1.0f, 1.0f)) / PI);
-            float3 environment = EnvironmentTexture.SampleLevel(TextureSampler, reflectedUv, 4.0f).rgb;
+            float3 environment = EnvironmentTexture.SampleLevel(TextureSampler, reflectedUv, saturate(LiveToonStyle5.z) * 8.0f).rgb;
             baseColor.rgb += EvaluateLiveToonEnvironmentSpecular(toonAlbedo, surfaceNormal, viewDir, environment,
                                                                  shaderClass);
         }

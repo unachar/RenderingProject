@@ -17,7 +17,7 @@
 //   6. 落ち影の濃さ                 … セルフシャドウ / 落ち影の濃さを陰影と独立に調整
 //
 // Deferred のフルスクリーンパスは他エンティティのマテリアルを参照できないため、これはシーン全体の
-// 設定として LightParams（b1）の末尾 4 個の float4 で渡す（ルートシグネチャは変更しない）。
+// 設定として LightParams（b1）の末尾 6 個の float4 で渡す（ルートシグネチャは変更しない）。
 // ---------------------------------------------------------------------------------------------
 struct LiveToonStyleSettings
 {
@@ -42,6 +42,12 @@ struct LiveToonStyleSettings
     // 陰影ランプ（シーン全体・1 枚）。横軸 = 影(左)→光(右)、上半分 = 肌、下半分 = 肌以外。
     std::string ShadowRampPath;
     float ShadowRampStrength = 1.0f;
+    bool PackedShadowRamp = false;
+    std::string SpecularRampPath;
+    bool SpecularRampByPart = false;
+    float LocalSpecular = 0.0f;
+    float BacklightDiffuse = 0.0f;
+    float EnvironmentRoughness = 0.5f;
 };
 
 // マテリアル・ランプ用のテクスチャ解決。パス → ディスクリプタ番号をキャッシュし、
@@ -66,7 +72,10 @@ namespace LiveToonTextures
         {
             descriptor = -1;
         }
-        cache.emplace(path, descriptor);
+        if (descriptor >= 0)
+        {
+            cache.emplace(path, descriptor);
+        }
         return descriptor;
     }
 
@@ -96,8 +105,8 @@ namespace LiveToonStyle
         Get() = LiveToonStyleSettings{};
     }
 
-    // LightParams.LiveToonStyle0..4 と同じ並び。
-    inline void Write(XMFLOAT4 (&out)[5])
+    // LightParams.LiveToonStyle0..5 と同じ並び。
+    inline void Write(XMFLOAT4 (&out)[6])
     {
         const LiveToonStyleSettings& s = Get();
         out[0] = {s.Blend, s.ShadowTintStrength, s.AdditiveSoftness, s.AdditiveGain};
@@ -105,6 +114,13 @@ namespace LiveToonStyle
         out[2] = {s.RimSoft, s.RimHard, s.RimWidth, s.RimLightTint};
         out[3] = {s.RampSpecular, s.HairAngelRing, s.EnvSpecular, s.CastShadowDensity};
         const uint32_t ramp = LiveToonTextures::ResolveHeapOffset(s.ShadowRampPath);
-        out[4] = {ramp == UINT32_MAX ? -1.0f : static_cast<float>(ramp), s.ShadowRampStrength, 0.0f, 0.0f};
+        const uint32_t specularRamp = LiveToonTextures::ResolveHeapOffset(s.SpecularRampPath);
+        // Values 1–512 use the shared row. Values 513–1024 select rows by material class.
+        const uint32_t specularRampCode =
+            specularRamp == UINT32_MAX ? 0u : specularRamp + 1u + (s.SpecularRampByPart ? 512u : 0u);
+        out[4] = {ramp == UINT32_MAX ? -1.0f : static_cast<float>(ramp), s.ShadowRampStrength,
+                  s.PackedShadowRamp ? 1.0f : 0.0f,
+                  static_cast<float>(specularRampCode)};
+        out[5] = {s.LocalSpecular, s.BacklightDiffuse, s.EnvironmentRoughness, 0.0f};
     }
 } // namespace LiveToonStyle

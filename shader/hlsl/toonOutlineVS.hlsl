@@ -28,7 +28,7 @@ PSInput3D main(VSInput3D input)
     output.Normal = worldNormal;
     output.TexCoord = input.TexCoord;
 
-    output.Diffuse = float4(0.0f, 0.0f, 0.0f, saturate(MaterialAlpha));
+    output.Diffuse = float4(ToonOutlineColor.rgb, saturate(MaterialAlpha));
     output.WorldPos = worldPos.xyz;
     output.ViewPos = viewPos.xyz;
     output.CameraPos = CameraPos;

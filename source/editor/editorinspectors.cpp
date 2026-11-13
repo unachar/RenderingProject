@@ -715,6 +715,8 @@ static void DrawLiveToonStyleControls()
     ImGui::SeparatorText("加算ライト（点 / スポット / 矩形）");
     ImGui::SliderFloat("回り込み", &s.AdditiveSoftness, 0.0f, 1.0f);
     ImGui::SliderFloat("加算ライト強度", &s.AdditiveGain, 0.0f, 3.0f);
+    ImGui::SliderFloat("加算ライトのハイライト", &s.LocalSpecular, 0.0f, 2.0f);
+    ImGui::SliderFloat("主光源の裏側への補助光", &s.BacklightDiffuse, 0.0f, 1.0f);
     ImGui::SeparatorText("リム");
     ImGui::SliderFloat("ソフトリム", &s.RimSoft, 0.0f, 2.0f);
     ImGui::SliderFloat("ハードリム", &s.RimHard, 0.0f, 2.0f);
@@ -724,10 +726,22 @@ static void DrawLiveToonStyleControls()
     ImGui::SliderFloat("ランプスペキュラ", &s.RampSpecular, 0.0f, 2.0f);
     ImGui::SliderFloat("天使の輪（髪）", &s.HairAngelRing, 0.0f, 2.0f);
     ImGui::SliderFloat("環境スペキュラ", &s.EnvSpecular, 0.0f, 2.0f);
+    ImGui::SliderFloat("環境反射のぼかし", &s.EnvironmentRoughness, 0.0f, 1.0f);
     ImGui::SeparatorText("陰影ランプ（シーン全体）");
-    ImGui::TextWrapped("横軸 = 影（左）→ 光（右）。上半分 = 肌、下半分 = 肌以外。パスを貼り付けて Enter。");
+    ImGui::Checkbox("RGB / α 形式", &s.PackedShadowRamp);
+    ImGui::TextWrapped(s.PackedShadowRamp ? "RGB は肌の乗算色、α は肌以外の影色から明色への補間。"
+                                        : "上段は肌、下段は肌以外。横軸は影から光への遷移。");
     DrawLiveToonPathInput("陰影ランプ画像", s.ShadowRampPath);
     ImGui::SliderFloat("陰影ランプの強さ", &s.ShadowRampStrength, 0.0f, 1.0f);
+    ImGui::SeparatorText("ライト応答の質感ランプ");
+    DrawLiveToonPathInput("質感ランプ画像", s.SpecularRampPath);
+    ImGui::Checkbox("質感ランプを部位別に使う", &s.SpecularRampByPart);
+    if (s.SpecularRampByPart)
+    {
+        ImGui::TextWrapped("画像を縦に4等分し、上から髪・衣装・肌・汎用トゥーンを配置します。");
+    }
+    ImGui::TextWrapped("横軸はハイライトの応答。α でスペキュラの乗算から拡散光への加算に切り替えます。");
+    ImGui::TextDisabled("強さは「ランプスペキュラ」で調整します。");
     if (ImGui::Button("ライブスタイルを標準値に戻す"))
     {
         LiveToonStyle::Reset();
@@ -981,6 +995,7 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
         material.ToonOutlineWidthModeSetting = static_cast<ToonOutlineWidthMode>(outlineWidthMode);
         changed = true;
     }
+    changed |= ImGui::ColorEdit3("アウトライン色", &material.ToonOutlineColor.x, ImGuiColorEditFlags_Float);
     changed |= ImGui::SliderFloat("アウトライン幅", &material.ToonOutlineWidth, 0.0f, 0.20f);
     changed |= ImGui::SliderFloat("スクリーン幅px", &material.ToonOutlineScreenWidth, 0.0f, 24.0f, "%.1f");
     changed |= ImGui::SliderFloat("TEO幅スケール", &material.ToonOutlineTeoWidthScale, 0.0f, 3.0f);
@@ -1129,7 +1144,9 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
     ImGui::SeparatorText("ライブトゥーンのテクスチャ");
     ImGui::TextWrapped("トゥーン系クラス（髪・服・肌・トゥーン）に適用。パスを貼り付けて Enter。");
     changed |= DrawLiveToonPathInput("Def テクスチャ", material.LiveToonDefPath);
-    ImGui::SetItemTooltip("R = 影しきい値の補正（0.5 で変化なし）、G = 境界のぼかし倍率、B = 質感ランプのマスク");
+    ImGui::SetItemTooltip("R = 影しきい値の補正（0.5 で変化なし）、B = 視線角度ランプのマスク");
+    changed |= ImGui::Checkbox("Def の G をスムースネスに使う", &material.LiveToonDefSmoothness);
+    ImGui::SetItemTooltip("有効時は白ほどハイライトが鋭くなります。無効時は G で影境界のぼかしを調整します。");
     changed |= ImGui::SliderFloat("Def の強さ", &material.LiveToonDefStrength, 0.0f, 2.0f);
     changed |= DrawLiveToonPathInput("顔陰影反転", material.LiveToonFacePath);
     ImGui::SetItemTooltip("R = 影側でも光を残す領域（頬など）");
@@ -2085,6 +2102,64 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             auto& animModel = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
             ImGui::Text("アニメーションモデル: あり");
             ImGui::Checkbox("座標変換", &animModel.IsConvert);
+            const auto before = CaptureEntity(entity);
+            auto& correction = animModel.FaceCorrection;
+            bool faceChanged = ImGui::Checkbox("顔の角度補正", &correction.Enabled);
+            if (correction.Enabled)
+            {
+                auto* model = ModelManager::GetAnimModel(animModel.ModelId);
+                const auto names = model ? model->GetPreviewExpressionNames() : vector<string>{};
+                if (names.empty())
+                {
+                    ImGui::TextDisabled("このモデルには対応する補正モーフがありません。");
+                }
+                else
+                {
+                    const bool valid = correction.Morph >= 0 && static_cast<size_t>(correction.Morph) < names.size();
+                    if (ImGui::BeginCombo("補正モーフ", valid ? names[correction.Morph].c_str() : "選択"))
+                    {
+                        for (int index = 0; index < static_cast<int>(names.size()); ++index)
+                        {
+                            ImGui::PushID(index);
+                            if (ImGui::Selectable(names[index].c_str(), correction.Morph == index))
+                            {
+                                correction.Morph = index;
+                                faceChanged = true;
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    const char* directions[] = {"左右共通", "右側", "左側", "見上げ"};
+                    faceChanged |= ImGui::Combo("補正方向", &correction.Direction, directions, IM_ARRAYSIZE(directions));
+                    faceChanged |= ImGui::SliderFloat("補正開始角", &correction.StartAngle, 0.0f, 90.0f, "%.1f°");
+                    faceChanged |= ImGui::SliderFloat("補正最大角", &correction.FullAngle, 0.0f, 90.0f, "%.1f°");
+                    faceChanged |= ImGui::SliderFloat("補正強さ", &correction.Strength, 0.0f, 1.0f);
+                    faceChanged |= ImGui::SliderFloat("モデル正面の角度", &correction.FrontYaw, -180.0f, 180.0f, "%.1f°");
+                    if (ImGui::BeginCombo("顔の基準位置", correction.HeadBone.empty() ? "モデルの中心"
+                                                                                    : correction.HeadBone.c_str()))
+                    {
+                        if (ImGui::Selectable("モデルの中心", correction.HeadBone.empty()))
+                        {
+                            correction.HeadBone.clear();
+                            faceChanged = true;
+                        }
+                        for (const auto& bone : model->GetBoneNames())
+                        {
+                            if (ImGui::Selectable(bone.c_str(), correction.HeadBone == bone))
+                            {
+                                correction.HeadBone = bone;
+                                faceChanged = true;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
+            }
+            if (faceChanged)
+            {
+                BeginUndoCapture(entity, before);
+            }
             if (ImGui::Button("アニメーションをプレビュー・設定"))
             {
                 AnimationPreviewWindow::OpenForSelection();

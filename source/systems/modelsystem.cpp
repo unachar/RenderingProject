@@ -104,6 +104,7 @@ static bool ShouldDrawToonOutline(EntityID entity)
 
 void ApplyToonOutlineConstants(ConstantBuffer3D& cb, const MaterialComponent& material, float widthScale = 1.0f)
 {
+    cb.ToonOutlineColor = {material.ToonOutlineColor.x, material.ToonOutlineColor.y, material.ToonOutlineColor.z, 0.0f};
     cb.ToonOutlineWidth = material.ToonOutlineWidth * widthScale;
     cb.ToonOutlineScreenWidth = material.ToonOutlineScreenWidth * widthScale;
     cb.ViewportSize = {max(static_cast<float>(GraphicsDevice::GetSceneWidth()), 1.0f),

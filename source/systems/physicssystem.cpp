@@ -241,14 +241,7 @@ void PhysicsSystem::DestroyBoneRig(EntityID entity)
     }
     if (IPhysicsBackend* backend = GetBackend(it->second.Engine))
     {
-        for (PhysicsJointHandle joint : it->second.Joints)
-        {
-            backend->DestroyJoint(joint);
-        }
-        for (const BoneBodyRuntime& body : it->second.Bodies)
-        {
-            backend->DestroyBody(body.Body);
-        }
+        it->second.Rig.Destroy(*backend);
     }
     m_BoneRigs.erase(it);
 }
@@ -359,19 +352,26 @@ void PhysicsSystem::CreateBoneRig(EntityID entity)
     rig.Engine = physics.UsePhysicsEngine;
     rig.ModelId = animation.ModelId;
     rig.SettingsHash = GetSettingsHash(physics, transform);
+    rig.Rig.Build(*backend, *model, physics, transform, static_cast<uint64_t>(entity) << 32);
+    m_BoneRigs[entity] = move(rig);
+}
+
+void PmxBoneRig::Build(IPhysicsBackend& backend, AnimationModelResource& model,
+                       const PhysicsComponent& physics, const TransformComponent& transform, uint64_t userDataPrefix)
+{
     const XMMATRIX entityWorld = BuildEntityWorld(transform);
     const XMFLOAT3 scale = AbsoluteScale(transform);
     const float uniformScale = max(scale.x, max(scale.y, scale.z)) * max(physics.PmxColliderScale, 0.001f);
 
-    const auto& rigidBodies = model->GetPmxRigidBodies();
-    rig.Bodies.reserve(rigidBodies.size());
+    const auto& rigidBodies = model.GetPmxRigidBodies();
+    m_Bodies.reserve(rigidBodies.size());
     for (size_t bodyIndex = 0; bodyIndex < rigidBodies.size(); ++bodyIndex)
     {
         const PmxRigidBodyData& pmx = rigidBodies[bodyIndex];
         const XMMATRIX rigidModel = BuildPmxTransform(pmx.Rotation, pmx.Position);
         XMMATRIX boneGlobal = XMMatrixIdentity();
         XMFLOAT4X4 storedBone{};
-        const bool hasBone = !pmx.BoneName.empty() && model->GetBoneBindGlobalTransform(pmx.BoneName, storedBone);
+        const bool hasBone = !pmx.BoneName.empty() && model.GetBoneBindGlobalTransform(pmx.BoneName, storedBone);
         if (hasBone)
         {
             boneGlobal = XMLoadFloat4x4(&storedBone);
@@ -437,28 +437,28 @@ void PhysicsSystem::CreateBoneRig(EntityID entity)
         desc.AllowSleeping = physics.AllowSleeping;
         desc.CollisionLayer = pmx.CollisionGroup;
         desc.CollisionMask = static_cast<uint16_t>(~pmx.CollisionMask);
-        desc.UserData = (static_cast<uint64_t>(entity) << 32) | bodyIndex;
+        desc.UserData = userDataPrefix | bodyIndex;
 
-        BoneBodyRuntime runtime{};
-        runtime.Body = backend->CreateBody(desc);
+        BodyRuntime runtime{};
+        runtime.Body = backend.CreateBody(desc);
         runtime.BoneName = pmx.BoneName;
         runtime.Operation = pmx.Operation;
         XMStoreFloat4x4(&runtime.Offset, offset);
         XMStoreFloat4x4(&runtime.InverseOffset, inverseOffset);
-        rig.Bodies.push_back(move(runtime));
+        m_Bodies.push_back(move(runtime));
     }
 
-    const auto& joints = model->GetPmxJoints();
-    rig.Joints.reserve(joints.size());
+    const auto& joints = model.GetPmxJoints();
+    m_Joints.reserve(joints.size());
     for (const PmxJointData& pmx : joints)
     {
-        if (pmx.RigidBodyA < 0 || pmx.RigidBodyB < 0 || pmx.RigidBodyA >= static_cast<int32_t>(rig.Bodies.size()) ||
-            pmx.RigidBodyB >= static_cast<int32_t>(rig.Bodies.size()))
+        if (pmx.RigidBodyA < 0 || pmx.RigidBodyB < 0 || pmx.RigidBodyA >= static_cast<int32_t>(m_Bodies.size()) ||
+            pmx.RigidBodyB >= static_cast<int32_t>(m_Bodies.size()))
         {
             continue;
         }
-        const PhysicsBodyHandle bodyA = rig.Bodies[static_cast<size_t>(pmx.RigidBodyA)].Body;
-        const PhysicsBodyHandle bodyB = rig.Bodies[static_cast<size_t>(pmx.RigidBodyB)].Body;
+        const PhysicsBodyHandle bodyA = m_Bodies[static_cast<size_t>(pmx.RigidBodyA)].Body;
+        const PhysicsBodyHandle bodyB = m_Bodies[static_cast<size_t>(pmx.RigidBodyB)].Body;
         if (bodyA == kInvalidPhysicsBody || bodyB == kInvalidPhysicsBody)
         {
             continue;
@@ -480,13 +480,12 @@ void PhysicsSystem::CreateBoneRig(EntityID entity)
         desc.AngularSpring = {pmx.AngularSpring.x * physics.PmxStiffnessScale,
                               pmx.AngularSpring.y * physics.PmxStiffnessScale,
                               pmx.AngularSpring.z * physics.PmxStiffnessScale};
-        const PhysicsJointHandle joint = backend->CreateJoint(desc);
+        const PhysicsJointHandle joint = backend.CreateJoint(desc);
         if (joint != kInvalidPhysicsJoint)
         {
-            rig.Joints.push_back(joint);
+            m_Joints.push_back(joint);
         }
     }
-    m_BoneRigs[entity] = move(rig);
 }
 
 void PhysicsSystem::SynchronizeRuntimeObjects()
@@ -605,21 +604,45 @@ void PhysicsSystem::SynchronizeKinematicBodies()
         {
             continue;
         }
-        const XMMATRIX entityWorld = BuildEntityWorld(transform);
-        for (const BoneBodyRuntime& body : rig.Bodies)
+        rig.Rig.SyncBodies(*backend, *model, transform);
+    }
+}
+
+void PmxBoneRig::Destroy(IPhysicsBackend& backend)
+{
+    for (PhysicsJointHandle joint : m_Joints)
+    {
+        backend.DestroyJoint(joint);
+    }
+    for (const BodyRuntime& body : m_Bodies)
+    {
+        backend.DestroyBody(body.Body);
+    }
+    m_Joints.clear();
+    m_Bodies.clear();
+}
+
+void PmxBoneRig::SyncBodies(IPhysicsBackend& backend, AnimationModelResource& model,
+                            const TransformComponent& transform, bool reset) const
+{
+    const XMMATRIX entityWorld = BuildEntityWorld(transform);
+    for (const BodyRuntime& body : m_Bodies)
+    {
+        if ((!reset && body.Operation != 0) || body.Body == kInvalidPhysicsBody)
         {
-            if (body.Operation != 0 || body.Body == kInvalidPhysicsBody)
-            {
-                continue;
-            }
-            XMFLOAT4X4 boneStored{};
-            if (body.BoneName.empty() || !model->GetBoneGlobalTransform(body.BoneName, boneStored))
-            {
-                continue;
-            }
-            const XMMATRIX bodyWorld = XMLoadFloat4x4(&body.Offset) * XMLoadFloat4x4(&boneStored) * entityWorld;
-            backend->SetBodyTransform(body.Body, DecomposePhysicsTransform(bodyWorld), false);
+            continue;
         }
+        XMFLOAT4X4 boneStored{};
+        XMMATRIX bodyWorld = XMLoadFloat4x4(&body.Offset) * entityWorld;
+        if (!body.BoneName.empty() && model.GetBoneGlobalTransform(body.BoneName, boneStored))
+        {
+            bodyWorld = XMLoadFloat4x4(&body.Offset) * XMLoadFloat4x4(&boneStored) * entityWorld;
+        }
+        else if (!reset || !body.BoneName.empty())
+        {
+            continue;
+        }
+        backend.SetBodyTransform(body.Body, DecomposePhysicsTransform(bodyWorld), reset);
     }
 }
 
@@ -659,28 +682,34 @@ void PhysicsSystem::ApplySimulationResults()
         {
             continue;
         }
-        bool poseChanged = false;
-        for (const BoneBodyRuntime& body : rig.Bodies)
+        rig.Rig.Apply(*backend, *model, transform);
+    }
+}
+
+void PmxBoneRig::Apply(const IPhysicsBackend& backend, AnimationModelResource& model,
+                       const TransformComponent& transform) const
+{
+    bool poseChanged = false;
+    for (const BodyRuntime& body : m_Bodies)
+    {
+        if (body.Operation == 0 || body.Body == kInvalidPhysicsBody || body.BoneName.empty())
         {
-            if (body.Operation == 0 || body.Body == kInvalidPhysicsBody || body.BoneName.empty())
-            {
-                continue;
-            }
-            PhysicsTransform bodyPose{};
-            if (!backend->GetBodyTransform(body.Body, bodyPose))
-            {
-                continue;
-            }
-            const XMMATRIX modelRigid = ConvertPhysicsWorldToModel(bodyPose, transform);
-            const XMMATRIX boneGlobal = XMLoadFloat4x4(&body.InverseOffset) * modelRigid;
-            XMFLOAT4X4 stored{};
-            XMStoreFloat4x4(&stored, boneGlobal);
-            poseChanged |= model->SetBoneGlobalTransform(body.BoneName, stored, body.Operation == 2);
+            continue;
         }
-        if (poseChanged)
+        PhysicsTransform bodyPose{};
+        if (!backend.GetBodyTransform(body.Body, bodyPose))
         {
-            model->CommitPhysicsPose();
+            continue;
         }
+        const XMMATRIX modelRigid = ConvertPhysicsWorldToModel(bodyPose, transform);
+        const XMMATRIX boneGlobal = XMLoadFloat4x4(&body.InverseOffset) * modelRigid;
+        XMFLOAT4X4 stored{};
+        XMStoreFloat4x4(&stored, boneGlobal);
+        poseChanged |= model.SetBoneGlobalTransform(body.BoneName, stored, body.Operation == 2);
+    }
+    if (poseChanged)
+    {
+        model.CommitPhysicsPose();
     }
 }
 
@@ -765,14 +794,19 @@ const char* PhysicsSystem::GetBackendName(PhysicsEngine engine) const
     return "Unavailable";
 }
 
+size_t PmxBoneRig::BodyCount() const
+{
+    return static_cast<size_t>(count_if(m_Bodies.begin(), m_Bodies.end(), [](const BodyRuntime& body) {
+        return body.Body != kInvalidPhysicsBody;
+    }));
+}
+
 size_t PhysicsSystem::GetBoneBodyCount() const
 {
     size_t count = 0;
     for (const auto& [entity, rig] : m_BoneRigs)
     {
-        count += static_cast<size_t>(count_if(rig.Bodies.begin(), rig.Bodies.end(), [](const BoneBodyRuntime& body) {
-            return body.Body != kInvalidPhysicsBody;
-        }));
+        count += rig.Rig.BodyCount();
     }
     return count;
 }
@@ -782,7 +816,7 @@ size_t PhysicsSystem::GetBoneJointCount() const
     size_t count = 0;
     for (const auto& [entity, rig] : m_BoneRigs)
     {
-        count += rig.Joints.size();
+        count += rig.Rig.JointCount();
     }
     return count;
 }

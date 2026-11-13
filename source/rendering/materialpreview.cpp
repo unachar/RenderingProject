@@ -62,6 +62,8 @@ namespace
         array<D3D12_VERTEX_BUFFER_VIEW, 3> Views{};
         array<UINT, 3> Counts{};
         array<ComPtr<ID3D12PipelineState>, 24> Pipelines;
+        array<ComPtr<ID3D12PipelineState>, 2> DebugPipelines;
+        ID3D12PipelineState* DebugPipeline(bool wireframe);
 
         D3D12_CPU_DESCRIPTOR_HANDLE CpuSrv() const
         {
@@ -409,6 +411,51 @@ namespace
         }
         return Pipelines[index].Get();
     }
+    ID3D12PipelineState* PreviewState::DebugPipeline(bool wireframe)
+    {
+        auto& pipeline = DebugPipelines[wireframe ? 1 : 0];
+        if (pipeline)
+        {
+            return pipeline.Get();
+        }
+        ComPtr<ID3DBlob> vertex;
+        ComPtr<ID3DBlob> pixel;
+        constexpr auto path = L"shader/hlsl/AnimationPreviewDebug.hlsl";
+        if (FAILED(D3DCompileFromFile(path, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "VSMain", "vs_5_1",
+                                      0, 0, vertex.GetAddressOf(), nullptr)) ||
+            FAILED(D3DCompileFromFile(path, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "PSMain", "ps_5_1",
+                                      0, 0, pixel.GetAddressOf(), nullptr)))
+        {
+            Error = "デバッグ描画シェーダーをコンパイルできません";
+            return nullptr;
+        }
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = ShaderPipelines::GetModelRootSignature();
+        desc.VS = CD3DX12_SHADER_BYTECODE(vertex.Get());
+        desc.PS = CD3DX12_SHADER_BYTECODE(pixel.Get());
+        desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        desc.RasterizerState.FillMode = wireframe ? D3D12_FILL_MODE_WIREFRAME : D3D12_FILL_MODE_SOLID;
+        desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
+        desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        desc.SampleMask = UINT_MAX;
+        desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        desc.NumRenderTargets = 1;
+        desc.RTVFormats[0] = Target->GetDesc().Format;
+        desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        desc.SampleDesc.Count = 1;
+        const D3D12_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"BLENDWEIGHT", 0, DXGI_FORMAT_R32_FLOAT, 1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
+        desc.InputLayout = {layout, 2};
+        if (FAILED(PersistentPsoCache::Graphics(GraphicsDevice::GetDevice(), desc, pipeline)))
+        {
+            Error = "デバッグ描画パイプラインを作成できません";
+            return nullptr;
+        }
+        return pipeline.Get();
+    }
 } // 名前空間
 
 void MaterialPreview::SetVisible(bool visible)
@@ -537,10 +584,26 @@ bool MaterialPreview::PrepareStartupAssets()
 
 namespace
 {
-    bool RenderPreview(PreviewState& preview, const MaterialComponent& material, UINT firstVertex = 0,
-                       UINT vertexCount = 0, UINT partIndex = 0, UINT partCount = 1, const MeshData* mesh = nullptr)
+    ConstantBuffer3D PreviewCameraConstants(const PreviewState& preview)
     {
-        auto* pipeline = preview.Pipeline(material);
+        const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.x,
+                              sinf(preview.Pitch) * preview.Distance + preview.Center.y,
+                              -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.z};
+        ConstantBuffer3D constants;
+        constants.World = XMMatrixTranspose(XMMatrixTranslation(
+            -preview.ModelOrigin.x, -preview.ModelOrigin.y, -preview.ModelOrigin.z));
+        constants.View = XMMatrixTranspose(
+            XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&preview.Center), XMVectorSet(0, 1, 0, 0)));
+        constants.Projection = XMMatrixTranspose(SceneDepth::InfiniteReverseZPerspectiveLH(XM_PIDIV4, 1, preview.Near));
+        constants.CameraPos = eye;
+        return constants;
+    }
+
+    bool RenderPreview(PreviewState& preview, const MaterialComponent& material, UINT firstVertex = 0,
+                       UINT vertexCount = 0, UINT partIndex = 0, UINT partCount = 1, const MeshData* mesh = nullptr,
+                       const D3D12_VERTEX_BUFFER_VIEW* weights = nullptr, bool wireframe = false, bool showWeights = false)
+    {
+        auto* pipeline = weights ? preview.DebugPipeline(wireframe) : preview.Pipeline(material);
         if (!pipeline)
         {
             return false;
@@ -581,9 +644,9 @@ namespace
         constexpr size_t flagsOffset = shadowDataOffset + RendererState::g_kMAX_SHADER_LIGHTS;
         lights[shadowDataOffset] = {-1, 0, 0, 0}; // スタジオライトにはシーンのシャドウマップがない。
         lights[flagsOffset] = {1, 1, 0, 0};       // 不透明パスとフォワードパスで物理ライティングを有効にする。
-        XMFLOAT4 toonStyle[5];
+        XMFLOAT4 toonStyle[6];
         LiveToonStyle::Write(toonStyle);
-        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 5;
+        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 6;
         std::copy(std::begin(toonStyle), std::end(toonStyle), lights + toonStyleOffset);
         commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() +
                                                            GraphicsDevice::GetFrameIndex() * constantBytes);
@@ -609,16 +672,8 @@ namespace
                                                             GraphicsDevice::GetFrameIndex() * 2816);
         commands->SetGraphicsRootConstantBufferView(26, zeroAddress);
         commands->SetGraphicsRootConstantBufferView(27, zeroAddress);
-        const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.x,
-                              sinf(preview.Pitch) * preview.Distance + preview.Center.y,
-                              -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.z};
-        ConstantBuffer3D constants;
-        constants.World = XMMatrixTranspose(XMMatrixTranslation(
-            -preview.ModelOrigin.x, -preview.ModelOrigin.y, -preview.ModelOrigin.z));
-        constants.View = XMMatrixTranspose(
-            XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&preview.Center), XMVectorSet(0, 1, 0, 0)));
-        constants.Projection = XMMatrixTranspose(SceneDepth::InfiniteReverseZPerspectiveLH(XM_PIDIV4, 1, preview.Near));
-        constants.CameraPos = eye;
+        auto constants = PreviewCameraConstants(preview);
+        constants.MaterialPadding = showWeights ? 1.0f : 0.0f;
         constants.UseTexture = material.UseTexture;
         constants.UseNormalMap = material.NormalMapID >= 0;
         constants.MaterialMode = 1;
@@ -677,6 +732,10 @@ namespace
         if (mesh)
         {
             commands->IASetVertexBuffers(0, 1, &mesh->VertexBufferView);
+            if (weights)
+            {
+                commands->IASetVertexBuffers(1, 1, weights);
+            }
             commands->IASetIndexBuffer(&mesh->IndexBufferView);
             commands->DrawIndexedInstanced(mesh->IndexCount, 1, 0, 0, 0);
         }
@@ -749,6 +808,9 @@ struct AnimationPreviewContext::Impl
     PreviewState State;
     UINT MaterialCount = 1;
     float Radius = 1.0f;
+    ComPtr<ID3D12Resource> Weights;
+    size_t WeightCount = 0;
+    int WeightBone = -2;
 };
 
 AnimationPreviewContext::AnimationPreviewContext() : m_Impl(make_unique<Impl>()) {}
@@ -802,6 +864,25 @@ void AnimationPreviewContext::Orbit(float yaw, float pitch, float zoom)
     state.Distance = clamp(state.Distance * expf(-zoom * 0.15f), m_Impl->Radius * 0.25f, m_Impl->Radius * 30.0f);
 }
 
+float AnimationPreviewContext::ViewAngleDegrees(int axis) const
+{
+    const auto& state = m_Impl->State;
+    if (axis == 3)
+    {
+        return XMConvertToDegrees(-state.Pitch);
+    }
+    const float yaw = XMConvertToDegrees(remainderf(state.Yaw, XM_2PI));
+    if (axis == 1)
+    {
+        return yaw;
+    }
+    if (axis == 2)
+    {
+        return -yaw;
+    }
+    return fabsf(yaw);
+}
+
 void AnimationPreviewContext::Pan(float horizontal, float vertical)
 {
     auto& state = m_Impl->State;
@@ -819,13 +900,30 @@ const string& AnimationPreviewContext::Error() const
     return m_Impl->State.Error;
 }
 
-bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector<MaterialComponent>& materials)
+bool AnimationPreviewContext::ProjectPoint(const XMFLOAT3& point, XMFLOAT2& uv) const
+{
+    const auto camera = PreviewCameraConstants(m_Impl->State);
+    const auto transform = XMMatrixTranspose(camera.World) * XMMatrixTranspose(camera.View) *
+                           XMMatrixTranspose(camera.Projection);
+    XMFLOAT4 clip{};
+    XMStoreFloat4(&clip, XMVector3Transform(XMLoadFloat3(&point), transform));
+    if (clip.w <= 0.0f || clip.z > clip.w)
+    {
+        return false;
+    }
+    uv = {clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f};
+    return std::isfinite(uv.x) && std::isfinite(uv.y);
+}
+
+bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector<MaterialComponent>& materials,
+                                     bool wireframe, int weightBone)
 {
     auto& state = m_Impl->State;
     if (!state.Target || materials.size() != model.GetMeshCount() || materials.size() > m_Impl->MaterialCount)
     {
         return false;
     }
+    const bool debug = wireframe || weightBone >= 0;
     vector<UINT> meshes;
     for (UINT index = 0; index < model.GetMeshCount(); ++index)
     {
@@ -834,7 +932,7 @@ bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector
         {
             continue;
         }
-        if (!state.Pipeline(materials[index]))
+        if (!(debug ? state.DebugPipeline(wireframe) : state.Pipeline(materials[index])))
         {
             return false;
         }
@@ -844,6 +942,66 @@ bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector
     {
         state.Error = "プレビューできるメッシュがありません";
         return false;
+    }
+    vector<D3D12_VERTEX_BUFFER_VIEW> weightViews;
+    if (debug)
+    {
+        size_t count = 0;
+        for (UINT index : meshes)
+        {
+            count += model.GetSkinInputVertices(index).size();
+        }
+        if (!m_Impl->Weights || m_Impl->WeightBone != weightBone || m_Impl->WeightCount != count)
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+            const auto desc = CD3DX12_RESOURCE_DESC::Buffer(max<size_t>(count, 1) * sizeof(float));
+            ComPtr<ID3D12Resource> buffer;
+            if (FAILED(GraphicsDevice::GetDevice()->CreateCommittedResource(
+                    &heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                    IID_PPV_ARGS(&buffer))))
+            {
+                state.Error = "ウェイト描画バッファを作成できません";
+                return false;
+            }
+            float* values = nullptr;
+            const CD3DX12_RANGE readRange(0, 0);
+            if (FAILED(buffer->Map(0, &readRange, reinterpret_cast<void**>(&values))))
+            {
+                state.Error = "ウェイト描画バッファに書き込めません";
+                return false;
+            }
+            for (UINT index : meshes)
+            {
+                for (const auto& vertex : model.GetSkinInputVertices(index))
+                {
+                    float weight = 0.0f;
+                    for (int influence = 0; influence < 4; ++influence)
+                    {
+                        if (vertex.BoneIndices[influence] == weightBone)
+                        {
+                            weight += vertex.BoneWeights[influence];
+                        }
+                    }
+                    *values++ = weight;
+                }
+            }
+            buffer->Unmap(0, nullptr);
+            if (m_Impl->Weights && !GraphicsDevice::WaitForGpuIdle())
+            {
+                state.Error = "ウェイト描画バッファを更新できません";
+                return false;
+            }
+            m_Impl->Weights = move(buffer);
+            m_Impl->WeightBone = weightBone;
+            m_Impl->WeightCount = count;
+        }
+        auto address = m_Impl->Weights->GetGPUVirtualAddress();
+        for (UINT index : meshes)
+        {
+            const auto bytes = static_cast<UINT>(model.GetSkinInputVertices(index).size() * sizeof(float));
+            weightViews.push_back({address, bytes, sizeof(float)});
+            address += bytes;
+        }
     }
     auto* commands = GraphicsDevice::GetCommandList();
     model.DispatchGpuSkinning(commands);
@@ -864,7 +1022,8 @@ bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector
             CD3DX12_RESOURCE_BARRIER::Transition(mesh.VertexBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                                  D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
         commands->ResourceBarrier(1, &transition);
-        const bool rendered = RenderPreview(state, material, 0, 0, part, static_cast<UINT>(meshes.size()), &mesh);
+        const bool rendered = RenderPreview(state, material, 0, 0, part, static_cast<UINT>(meshes.size()), &mesh,
+                                            debug ? &weightViews[part] : nullptr, wireframe, weightBone >= 0);
         transition = CD3DX12_RESOURCE_BARRIER::Transition(mesh.VertexBuffer.Get(),
                                                           D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

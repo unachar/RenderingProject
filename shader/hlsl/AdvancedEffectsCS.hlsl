@@ -27,7 +27,7 @@ cbuffer AdvancedConstants : register(b0)
     float4 ExposureParams;       // 輝度の最小 log2 値、log2 範囲、露出補正 EV、順応速度
     float4 ExposureLimits;       // 最小露出、最大露出、下位パーセンタイル、上位パーセンタイル
     float4 MotionBlurParams;     // シャッタースケール、最大長（px）、サンプル数、有効フラグ
-    float4 DofParams;            // 焦点距離、合焦範囲、最大半径（px）、有効フラグ
+    float4 DofParams;            // 焦点距離、合焦範囲、最大半径（px）、手前のボケ強度
     uint4 Features;              // フォグ、自動露出、モーションブラー、被写界深度
     float4 LocalFogData0[16];    // 位置、半径
     float4 LocalFogData1[16];    // 高度による減衰、密度、形状（1 = 球）、有効フラグ
@@ -591,7 +591,7 @@ float CircleOfConfusion(float2 uv, float depth)
                                : length(WorldFromDepth(uv, depth) - CameraRayOrigin(uv, CameraPosition.xyz, InvViewProjection));
     float focus = max(DofParams.x, 0.05f);
     float blur = saturate((abs(dist - focus) - DofParams.y * 0.5f) / focus);
-    return blur * DofParams.z; // ピクセル単位
+    return blur * DofParams.z * (dist < focus ? DofParams.w : 1.0f);
 }
 
 Texture2D<float4> HalfResolveInput : register(t0, space11);

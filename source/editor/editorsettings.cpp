@@ -174,7 +174,12 @@ void ImGuiManager::DrawGlobalPostProcessSettings()
             ImGui::BeginDisabled(!advanced.DepthOfField);
             ImGui::DragFloat("焦点距離", &advanced.FocusDistance, 0.05f, 0.05f, 1000.0f, "%.2f m");
             ImGui::DragFloat("ピント範囲", &advanced.FocusRange, 0.05f, 0.0f, 1000.0f, "%.2f m");
-            ImGui::SliderFloat("最大ボケ (px)", &advanced.MaxBlurPixels, 1.0f, 32.0f, "%.1f");
+            ImGui::SliderFloat("手前のボケ強度", &advanced.NearBlurStrength, 0.0f, 1.0f);
+            ImGui::Checkbox("画面の高さに合わせてボケを拡大", &advanced.ScaleDofWithResolution);
+            ImGui::SetItemTooltip("1080pの半径を基準に、描画解像度に応じてボケ半径を調整します。");
+            ImGui::SliderFloat(advanced.ScaleDofWithResolution ? "最大ボケ (1080p基準 px)###DofRadius"
+                                                               : "最大ボケ (px)###DofRadius",
+                               &advanced.MaxBlurPixels, 1.0f, 48.0f, "%.1f");
             ImGui::EndDisabled();
             break;
         }
@@ -1464,16 +1469,27 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("livetoon.RampSpecular", liveToon.RampSpecular, 0.0, 2.0);
     field("livetoon.HairAngelRing", liveToon.HairAngelRing, 0.0, 2.0);
     field("livetoon.EnvSpecular", liveToon.EnvSpecular, 0.0, 2.0);
+    field("livetoon.LocalSpecular", liveToon.LocalSpecular, 0.0, 2.0);
+    field("livetoon.BacklightDiffuse", liveToon.BacklightDiffuse, 0.0, 1.0);
+    field("livetoon.EnvironmentRoughness", liveToon.EnvironmentRoughness, 0.0, 1.0);
     field("livetoon.CastShadowDensity", liveToon.CastShadowDensity, 0.0, 1.0);
     field("livetoon.ShadowRampStrength", liveToon.ShadowRampStrength, 0.0, 1.0);
+    field("livetoon.PackedShadowRamp", liveToon.PackedShadowRamp, 0, 1);
+    field("livetoon.SpecularRampByPart", liveToon.SpecularRampByPart, 0, 1);
     // 陰影ランプのパス（文字列。数値用の EditorConfig::Value は使えないので直接扱う）
     if (output)
     {
         *output << "livetoon.ShadowRampPath=" << liveToon.ShadowRampPath << '\n';
+        *output << "livetoon.SpecularRampPath=" << liveToon.SpecularRampPath << '\n';
     }
     else if (key == "livetoon.ShadowRampPath")
     {
         liveToon.ShadowRampPath = value;
+        matched = true;
+    }
+    else if (key == "livetoon.SpecularRampPath")
+    {
+        liveToon.SpecularRampPath = value;
         matched = true;
     }
     field("editor.gizmo", m_GizmoOperation, 0, 3);
@@ -1636,7 +1652,9 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("advanced.DepthOfField", advanced.DepthOfField, 0, 1);
     field("advanced.FocusDistance", advanced.FocusDistance, 0.05, 10000);
     field("advanced.FocusRange", advanced.FocusRange, 0, 10000);
+    field("advanced.NearBlurStrength", advanced.NearBlurStrength, 0, 1);
     field("advanced.MaxBlurPixels", advanced.MaxBlurPixels, 1, 48);
+    field("advanced.ScaleDofWithResolution", advanced.ScaleDofWithResolution, 0, 1);
     auto& thumbnails = AssetThumbnailManager::Settings();
     field("asset_thumbnail_size", thumbnails.Size, 32, 256);
     field("asset_thumbnail_generations", thumbnails.MaxGenerationsPerFrame, 1, 64);

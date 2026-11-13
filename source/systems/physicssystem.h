@@ -18,6 +18,34 @@ struct PhysicsSettings
     DirectX::XMFLOAT3 Gravity = {0.0f, -9.81f, 0.0f};
 };
 
+class AnimationModelResource;
+struct TransformComponent;
+
+class PmxBoneRig
+{
+    struct BodyRuntime
+    {
+        PhysicsBodyHandle Body = kInvalidPhysicsBody;
+        std::string BoneName;
+        uint8_t Operation = 0;
+        DirectX::XMFLOAT4X4 Offset{};
+        DirectX::XMFLOAT4X4 InverseOffset{};
+    };
+
+    std::vector<BodyRuntime> m_Bodies;
+    std::vector<PhysicsJointHandle> m_Joints;
+
+  public:
+    void Build(IPhysicsBackend& backend, AnimationModelResource& model, const PhysicsComponent& physics,
+               const TransformComponent& transform, uint64_t userDataPrefix = 0);
+    void Destroy(IPhysicsBackend& backend);
+    void SyncBodies(IPhysicsBackend& backend, AnimationModelResource& model,
+                    const TransformComponent& transform, bool reset = false) const;
+    void Apply(const IPhysicsBackend& backend, AnimationModelResource& model, const TransformComponent& transform) const;
+    size_t BodyCount() const;
+    size_t JointCount() const { return m_Joints.size(); }
+};
+
 class PhysicsSystem final : public SystemBase
 {
     struct EntityBodyRuntime
@@ -27,22 +55,12 @@ class PhysicsSystem final : public SystemBase
         uint64_t SettingsHash = 0;
     };
 
-    struct BoneBodyRuntime
-    {
-        PhysicsBodyHandle Body = kInvalidPhysicsBody;
-        string BoneName{};
-        uint8_t Operation = 0;
-        DirectX::XMFLOAT4X4 Offset{};
-        DirectX::XMFLOAT4X4 InverseOffset{};
-    };
-
     struct BoneRigRuntime
     {
         PhysicsEngine Engine = PhysicsEngine::Bullet;
         int ModelId = -1;
         uint64_t SettingsHash = 0;
-        vector<BoneBodyRuntime> Bodies{};
-        vector<PhysicsJointHandle> Joints{};
+        PmxBoneRig Rig;
     };
 
     array<unique_ptr<IPhysicsBackend>, 3> m_Backends{};

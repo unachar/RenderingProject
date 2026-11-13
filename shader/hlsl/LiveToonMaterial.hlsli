@@ -9,17 +9,27 @@
 // として既存の経路に流す。GBuffer の追加チャンネルもルートシグネチャの変更も不要。
 //
 //  Def テクスチャ   : R = 影しきい値の補正（0.5 で変化なし。明るいほど影が出にくい）
-//                     G = 境界のぼかし倍率（0.5 で等倍、1 で 2 倍）
+//                     G = 境界のぼかし倍率、またはスムースネス（マテリアル設定で切替）
 //                     B = 質感ランプのマスク（1 で全面に適用）
 //  顔陰影反転       : R = 影側でも光を残す領域（頬など）。白いほど強く光を残す
 //  質感ランプ       : 横軸 = 視線と法線の角度（左 = 正面、右 = 縁）。オーロラ・偏光塗料風の色変化
 // ---------------------------------------------------------------------------------------------
+
+float4 SampleLiveToonMap(uint index, SamplerState materialSampler, float2 uv)
+{
+#ifdef SHADER_VISIBILITY_RESOLVE
+    return LoadMaterialTexture(index).SampleGrad(materialSampler, uv, VisibilityUvDx, VisibilityUvDy);
+#else
+    return LoadMaterialTexture(index).Sample(materialSampler, uv);
+#endif
+}
 
 struct LiveToonMaterialSurface
 {
     float3 Albedo;
     float ShadowThreshold;
     float ShadowSoftness;
+    float Roughness;
 };
 
 void ApplyLiveToonMaterialTextures(uint4 textures, float4 parameters, float2 uv, float3 normal, float3 viewDir,
@@ -33,14 +43,21 @@ void ApplyLiveToonMaterialTextures(uint4 textures, float4 parameters, float2 uv,
     float rampMask = 1.0f;
     [branch] if (textures.x < 512u && parameters.x > 0.0f)
     {
-        float4 def = LoadMaterialTexture(textures.x).Sample(materialSampler, uv);
+        float4 def = SampleLiveToonMap(textures.x, materialSampler, uv);
         surface.ShadowThreshold = saturate(surface.ShadowThreshold - (def.r - 0.5f) * parameters.x);
-        surface.ShadowSoftness *= lerp(1.0f, max(def.g * 2.0f, 0.05f), saturate(parameters.x));
+        if ((textures.w & 1u) != 0u)
+        {
+            surface.Roughness = lerp(surface.Roughness, 1.0f - def.g, saturate(parameters.x));
+        }
+        else
+        {
+            surface.ShadowSoftness *= lerp(1.0f, max(def.g * 2.0f, 0.05f), saturate(parameters.x));
+        }
         rampMask = lerp(1.0f, def.b, saturate(parameters.x));
     }
     [branch] if (textures.y < 512u && parameters.y > 0.0f)
     {
-        float faceLight = LoadMaterialTexture(textures.y).Sample(materialSampler, uv).r;
+        float faceLight = SampleLiveToonMap(textures.y, materialSampler, uv).r;
         // しきい値を 0 へ寄せる：影側（N・L < 0）でも光が残る。真後ろからの光では従来どおり影になる。
         surface.ShadowThreshold = lerp(surface.ShadowThreshold, 0.0f, saturate(faceLight * parameters.y));
     }

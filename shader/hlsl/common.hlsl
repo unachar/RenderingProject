@@ -103,6 +103,7 @@ cbuffer ConstantBuffer3D : register(b0)
     // マテリアルグラフのオブジェクト情報（rendertypes.h と同じ並び。MaterialBindings::FillObjectConstants）
     float4 ObjectBoundsCenter;  // xyz = ローカルの範囲の中心, w = インスタンスの番号（乱数の種）
     float4 ObjectBoundsExtents; // xyz = ローカルの範囲の半分の大きさ, w = 1（有効）
+    float4 ToonOutlineColor;
 };
 
 float3 SurfaceViewDirectionCommon(float3 worldPosition, float3 cameraPosition)
@@ -287,6 +288,7 @@ cbuffer LightParams : register(b1)
     float4 LiveToonStyle2; // x: ソフトリム, y: ハードリム, z: リム幅, w: リムのライト色
     float4 LiveToonStyle3; // x: ランプスペキュラ, y: 天使の輪, z: 環境スペキュラ, w: 落ち影の濃さ
     float4 LiveToonStyle4; // x: 陰影ランプのテクスチャ番号（<0 で無効）, y: 陰影ランプの強さ
+    float4 LiveToonStyle5; // Local specular, backlight diffuse, environment roughness
 };
 
 StructuredBuffer<uint> LightTileIndices : register(t11);

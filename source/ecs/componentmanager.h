@@ -129,8 +129,25 @@ struct CameraComponent
     float OrthographicHeight = 10.0f;
 };
 
+struct FaceCorrectionSettings
+{
+    bool Enabled = false;
+    int Morph = 0;
+    int Direction = 0;
+    float StartAngle = 45.0f;
+    float FullAngle = 90.0f;
+    float Strength = 1.0f;
+    float FrontYaw = 0.0f;
+    string HeadBone;
+};
+
 struct AnimationModelComponent
 {
+    FaceCorrectionSettings FaceCorrection{};
+    EntityID FaceCorrectionOwner = g_kINVALID_ENTITY;
+    int FaceCorrectionModel = -1;
+    int AppliedFaceMorph = -1;
+    float AppliedFaceWeight = 0.0f;
     LookAtRuntime LookAt{};
     int ModelId = -1;
     string ModelPath;
@@ -363,6 +380,7 @@ struct MaterialComponent
     MaterialMode ShaderClassMode = MaterialMode::Auto;
     ShaderClass ShaderClass = ShaderClass::Unlit;
     float ToonOutlineWidth = 0.035f;
+    XMFLOAT3 ToonOutlineColor = {0.0f, 0.0f, 0.0f};
     float ToonOutlineScreenWidth = 3.0f;
     ToonOutlineMode ToonOutlineRenderMode = ToonOutlineMode::Extrude;
     ToonOutlineWidthMode ToonOutlineWidthModeSetting = ToonOutlineWidthMode::World;
@@ -391,6 +409,7 @@ struct MaterialComponent
     // ライブトゥーンのマテリアルテクスチャ（トゥーン系クラスのみ）
     string LiveToonDefPath;             // Def：R = 影しきい値の補正(0.5 で変化なし), G = 境界のぼかし倍率, B = 質感ランプのマスク
     float LiveToonDefStrength = 1.0f;
+    bool LiveToonDefSmoothness = false;
     string LiveToonFacePath;            // 顔陰影反転：R = 影側でも光を残す領域（頬など）
     float LiveToonFaceStrength = 1.0f;
     string LiveToonTextureRampPath;     // 質感ランプ：横軸 = 視線角度（正面→縁）
