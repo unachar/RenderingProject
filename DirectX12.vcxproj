@@ -1436,6 +1436,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <None Include="shader\hlsl\VGGeometryDecode.hlsli" />
     <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DirectStorage.1.3.0\native\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp">

@@ -283,7 +283,8 @@ class AdvancedEffects final
         }
         const auto& quality = RenderQuality::Get();
         const bool weather = quality.WeatherEnabled && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f);
-        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || quality.SunFlare || weather;
+        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || quality.SunFlare || weather ||
+                           quality.Diffusion;
         const bool lens = s_Settings.HalfResolutionLens && (s_Settings.MotionBlur || s_Settings.DepthOfField);
         const bool any = s_Settings.FroxelFog || s_Settings.AutoExposure || s_Settings.MotionBlur ||
                          s_Settings.DepthOfField || bloom;
@@ -353,6 +354,7 @@ class AdvancedEffects final
         const bool dualBloom = quality.DualBloom && s_BloomRequested;
         const bool bloomPass =
             s_BloomAvailable && (dualBloom || quality.LensFlare || quality.SunFlare ||
+                                 (quality.Diffusion && quality.DiffusionAmount > 0.001f) ||
                                  (weather && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f)));
         if (!s_Available || !commands || !scene || !depth || !(fog || exposure || motionBlur || dof || bloomPass))
         {
@@ -590,9 +592,10 @@ class AdvancedEffects final
         float FlareIntensity, FlareHalo, RainIntensity, SnowIntensity;
         float Time, WindX;
         UINT FirstLevel, Flags;
+        float DiffusionAmount, DiffusionRadius, DiffusionPad0, DiffusionPad1; // ディフュージョン（合成パス）
     };
 
-    static_assert(sizeof(BloomConstants) == 64);
+    static_assert(sizeof(BloomConstants) == 80);
 
     // 太陽のレンズフレア（b1）。太陽の画面位置・色は CPU で求め、遮蔽は GPU で深度から判定する
     struct SunFlareConstants
@@ -927,9 +930,13 @@ class AdvancedEffects final
         constants.WindX = quality.WindX;
         constants.FirstLevel = 0;
         const SunFlareConstants sunFlare = ComputeSunFlare(quality);
+        const bool diffusion = quality.Diffusion && quality.DiffusionAmount > 0.001f;
+        constants.DiffusionAmount = diffusion ? std::clamp(quality.DiffusionAmount, 0.0f, 1.0f) : 0.0f;
+        // 1080p 換算の半径を出力解像度に合わせる（解像度が変わってもにじみの見た目が同じ）
+        constants.DiffusionRadius = std::clamp(quality.DiffusionRadius, 1.0f, 24.0f) * static_cast<float>(s_Height) / 1080.0f;
         constants.Flags = (dualBloom ? 1u : 0u) | (quality.LensFlare ? 2u : 0u) |
                           (constants.RainIntensity > 0.001f ? 4u : 0u) | (constants.SnowIntensity > 0.001f ? 8u : 0u) |
-                          (sunFlare.Visible > 0.0f ? 16u : 0u);
+                          (sunFlare.Visible > 0.0f ? 16u : 0u) | (diffusion ? 32u : 0u);
         commands->SetPipelineState(s_BloomCombinePso.Get());
         commands->SetComputeRoot32BitConstants(0, sizeof(constants) / 4, &constants, 0);
         commands->SetComputeRoot32BitConstants(2, sizeof(sunFlare) / 4, &sunFlare, 0);
@@ -1400,3 +1407,5 @@ class AdvancedEffects final
         }
     }
 };
+
+

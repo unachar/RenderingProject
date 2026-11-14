@@ -13,7 +13,8 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpa
             float3 worldPosition : TEXCOORD1, float3 normalWS : NORMAL)
     : SV_TARGET
 {
-    clip(0.5f - abs(PBRPadding.y - 3.0f));
+    // PBRPadding.x = ShadowMode（3 = Transmittance）。y は ShadowCutoff。
+    clip(0.5f - abs(PBRPadding.x - 3.0f));
     if (ShadowTransmissionParams.x > 0.5f)
     {
         float previousDepth = PreviousPeelDepth.Load(int4(int2(position.xy), 0, 0));
@@ -52,4 +53,6 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpa
     float3 transmission = saturate(Transparent0.y) * (1.0f - saturate(metallic)) * slab;
     return float4(saturate(lerp(1.0f, transmission, opacity)), 1.0f);
 }
+
+
 

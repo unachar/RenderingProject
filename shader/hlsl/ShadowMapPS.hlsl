@@ -16,7 +16,10 @@ void main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpaci
         opacity *= material.BaseColor.a;
     }
     clip(opacity - (1.0f / 255.0f));
-    int shadowMode = (int)round(PBRPadding.y);
+    // PBRParams の PBRPadding は CPU 側 PBRConstants::Reserved と同じ位置（x = ShadowMode, y = ShadowCutoff）。
+    // 以前は y（= ShadowCutoff 既定 0.5 → round で 0 = None）を影モードとして読んでおり、
+    // 全キャスターが clip されてシャドウマップ / VSM が空になっていた。
+    int shadowMode = (int)round(PBRPadding.x);
     clip((float)shadowMode - 0.5f);
     clip(2.5f - (float)shadowMode);
     if (shadowMode == 2)
@@ -25,7 +28,9 @@ void main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpaci
         {
             opacity *= BaseTexture.Sample(MaterialSampler, uv).a;
         }
-        clip(opacity - max(PBRPadding.z, 1.0f / 255.0f));
+        clip(opacity - max(PBRPadding.y, 1.0f / 255.0f));
     }
 }
+
+
 

@@ -19544,11 +19544,14 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
     if (g.NavWindow && g.NavWindow->RootWindow->DockNode == node)
         tab_bar->SelectedTabId = g.NavWindow->RootWindow->TabId;
 
-    // Selected newly added tabs, or persistent tab ID if the tab bar was just recreated
-    if (tab_bar_is_recreated && TabBarFindTabByID(tab_bar, node->SelectedTabId) != NULL)
-        tab_bar->SelectedTabId = tab_bar->NextSelectedTabId = node->SelectedTabId;
-    else if (tab_bar->Tabs.Size > tabs_count_old)
-        tab_bar->SelectedTabId = tab_bar->NextSelectedTabId = tab_bar->Tabs.back().Window->TabId;
+    // An explicit selection (including workspace restore) takes priority over new tabs.
+    if (tab_bar->NextSelectedTabId == 0)
+    {
+        if (tab_bar_is_recreated && TabBarFindTabByID(tab_bar, node->SelectedTabId) != NULL)
+            tab_bar->SelectedTabId = tab_bar->NextSelectedTabId = node->SelectedTabId;
+        else if (tab_bar->Tabs.Size > tabs_count_old)
+            tab_bar->SelectedTabId = tab_bar->NextSelectedTabId = tab_bar->Tabs.back().Window->TabId;
+    }
 
     // Begin tab bar
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs; // | ImGuiTabBarFlags_NoTabListScrollingButtons);
@@ -21526,7 +21529,8 @@ static void DockSettingsHandler_DockNodeToSettings(ImGuiDockContext* dc, ImGuiDo
     node_settings.ID = node->ID;
     node_settings.ParentNodeId = node->ParentNode ? node->ParentNode->ID : 0;
     node_settings.ParentWindowId = (node->IsDockSpace() && node->HostWindow && node->HostWindow->ParentWindow) ? node->HostWindow->ParentWindow->ID : 0;
-    node_settings.SelectedTabId = node->SelectedTabId;
+    node_settings.SelectedTabId = node->TabBar && node->TabBar->NextSelectedTabId
+        ? node->TabBar->NextSelectedTabId : node->SelectedTabId;
     node_settings.SplitAxis = (signed char)(node->IsSplitNode() ? node->SplitAxis : ImGuiAxis_None);
     node_settings.Depth = (char)depth;
     node_settings.Flags = (node->LocalFlags & ImGuiDockNodeFlags_SavedFlagsMask_);

@@ -65,7 +65,8 @@ namespace VirtualGeometryResources
             }
             const auto& owner = state.PendingAssets.at(id).Owner;
             const uint32_t priority = owner ? owner->ImportSettings.StreamingPriority : manifest->StreamingPriority;
-            uint32_t pageBase = VirtualGeometryStreaming::Register(manifest, priority);
+            uint32_t pageBase =
+                VirtualGeometryStreaming::Register(manifest, priority, owner && owner->StreamRayGeometry);
             if (pageBase == UINT32_MAX)
             {
                 WriteGraphicsLog("Geometry Page admission failed: pinned pages exceed budget or device unsupported\n");
@@ -321,6 +322,13 @@ namespace VirtualGeometryResources
     bool Ready(uint32_t asset)
     {
         return asset < Data().Table.size() && (Data().Table[asset].Flags & 1u) != 0;
+    }
+
+    uint32_t Find(const VirtualGeometryRuntime::RuntimeAsset* asset)
+    {
+        const auto& ids = Data().Ids;
+        const auto found = ids.find(asset);
+        return found == ids.end() ? UINT32_MAX : found->second;
     }
 
     uint32_t AssetCount()

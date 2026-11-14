@@ -281,7 +281,7 @@ cbuffer LightParams : register(b1)
     float4 AtmosphereCamera;
     float4 SkySunDirection;
     float4 SkyParameters;
-    float4 LightIesProfiles[MAX_SHADER_LIGHTS]; // x: 配光テクスチャ番号+1、y: 軸回りの回転（周）
+    float4 LightIesProfiles[MAX_SHADER_LIGHTS]; // x: 配光テクスチャ番号+1、y: 軸回りの回転（周）、z: 発光半径（m）
     // ライブ用トゥーンスタイル（source/rendering/livetoonstyle.h と同じ並び）
     float4 LiveToonStyle0; // x: ブレンド, y: 影乗算色の効き, z: 加算ライトの回り込み, w: 加算ライトの強さ
     float4 LiveToonStyle1; // rgb: 影の乗算色, w: 肌の血色
@@ -289,6 +289,8 @@ cbuffer LightParams : register(b1)
     float4 LiveToonStyle3; // x: ランプスペキュラ, y: 天使の輪, z: 環境スペキュラ, w: 落ち影の濃さ
     float4 LiveToonStyle4; // x: 陰影ランプのテクスチャ番号（<0 で無効）, y: 陰影ランプの強さ
     float4 LiveToonStyle5; // Local specular, backlight diffuse, environment roughness
+    float4 LiveToonStyle6; // キャラ別陰影ランプ スロット 1..4 のテクスチャ番号（< 0 で無効）
+    float4 LiveToonStyle7; // x, y: スロット 5, 6, z: 質感ランプの行数, w: 未使用
     float4 ReflectionProbeCenters[8];
     float4 ReflectionProbeSettings[8];
     // x = テクスチャ Mip LOD バイアス（DLSS / TSR 時に log2(内部/表示)）、y = 2^x（source/rendering/texturemipbias.h）
@@ -319,10 +321,12 @@ float SceneShadowForLightCommon(uint index, float3 worldPos, float3 normal, floa
         {
             return 1.0f;
         }
-        float maximumDistance = LightPositionTypes[index].w < 0.5f
-                                    ? SceneRayParameters.x
-                                    : min(length(LightPositionTypes[index].xyz - worldPos), SceneRayParameters.x);
-        return TraceSceneShadow(worldPos, normal, lightDir, maximumDistance);
+        if (LightPositionTypes[index].w < 0.5f)
+        {
+            return TraceSceneShadow(worldPos, normal, lightDir, SceneRayParameters.x);
+        }
+        return TraceSceneLocalShadow(worldPos, normal, lightDir, LightPositionTypes[index].xyz,
+                                     LightIesProfiles[index].z);
     }
 #endif
     return 1.0f;
@@ -1011,6 +1015,11 @@ void ResolveLightAggregate(float3 worldPos, float2 pixelPosition, out float3 lig
         {
             continue;
         }
+        // キャラ専用ライト（照射チャンネル bit0 なし）は背景側の Forward に入れない（ToonLighting.hlsli と同じ符号化）
+        if (LightIesProfiles[lightIndex].w >= 0.5f && (((uint)floor(LightIesProfiles[lightIndex].w)) & 1u) == 0u)
+        {
+            continue;
+        }
 
         int i = (int)lightIndex;
 
@@ -1123,6 +1132,9 @@ cbuffer PBRParams : register(b2)
 
     // 球面法線補間 (SNI) パラメータ: xyz = 球中心(ワールド空間), w = 半径（>0 で有効）
     float4 SniParams;
+    // ライブトゥーン拡張（ベクトル 193, 194。LiveToonMaterial.hlsli: ApplyLiveToonMaterialTextures）
+    uint4 LiveToonTextures2;  // x: シェードカラー, y: レイヤー（汗）, z: 陰影ランプのスロット | 質感ランプ行 << 8, w: フラグ
+    float4 LiveToonParams2;   // x: シェードカラーの強さ, y: レイヤーのブレンド, z: リムマスクの効き, w: スペキュラマスクの効き
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)
@@ -1253,7 +1265,7 @@ cbuffer PostProcessParams : register(b0)
     float4 RaytracingSunDirection;
     // 描画品質の設定（renderquality.h）
     float4 GradeParams0; // トーンマッパー、コントラスト、彩度、自然な彩度
-    float4 GradeParams1; // 色温度、色かぶり、AgX のパンチ、未使用
+    float4 GradeParams1; // 色温度、色かぶり、AgX のパンチ、GT の黒の締まり（c）
     float4 GradeLift;
     float4 GradeGamma;
     float4 GradeGain;
@@ -1262,7 +1274,7 @@ cbuffer PostProcessParams : register(b0)
     float4 WeatherParams0; // 濡れ、水たまり、雪、雨
     float4 WeatherParams1; // 降雪、風の x、風の z、未使用
     float4 QualityFlags;   // エネルギー補償、面光源、OIT の有効フラグ、RT 屈折
-    float4 QualityReserved;
+    float4 QualityReserved; // GT トーンマッパー：P（最大輝度）、a（コントラスト）、m（線形の開始）、l（線形の長さ）
 };
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)
@@ -1459,3 +1471,5 @@ float4 SampleMaterialGradCommon(Texture2D source, SamplerState samplerState, flo
     float scale = exp2(MaterialMipBiasCommon());
     return source.SampleGrad(samplerState, uv, uvDx * scale, uvDy * scale);
 }
+
+

@@ -23,7 +23,10 @@ cbuffer BloomConstants : register(b0)
     float Time;
     float WindX;
     uint FirstLevel;
-    uint Flags; // bit0 = ブルーム、bit1 = フレア、bit2 = 雨、bit3 = 雪、bit4 = 太陽のレンズフレア
+    uint Flags; // bit0 = ブルーム、bit1 = フレア、bit2 = 雨、bit3 = 雪、bit4 = 太陽のレンズフレア、bit5 = ディフュージョン
+    float DiffusionAmount;
+    float DiffusionRadius; // 出力解像度のピクセル
+    float2 DiffusionPad;
 };
 
 // 太陽のレンズフレア（AdvancedEffects::SunFlareConstants と同じ並び）
@@ -380,6 +383,27 @@ float3 SunLensFlare(float2 uv, float visibility)
     }
     float2 uv = (id.xy + 0.5f) / DestinationSize;
     float3 color = Source0[id.xy].rgb;
+    if ((Flags & 32u) != 0)
+    {
+        // ディフュージョン（ソフトフォーカス）：黄金角スパイラル 16 タップでにじませ、「比較（明）」で重ねる。
+        // 暗部は持ち上げず、明るい部分の周りだけがふわっと広がる（肌・衣装をやわらかく見せる撮影用フィルター風）。
+        const float2 texel = 1.0f / (float2)DestinationSize;
+        float weightSum = 1.0f / (1.0f + dot(color, kLuma));
+        float3 blurred = color * weightSum;
+        [unroll] for (uint tap = 1u; tap < 16u; ++tap)
+        {
+            float radius = sqrt((float)tap / 15.0f) * DiffusionRadius;
+            float angle = (float)tap * 2.39996323f;
+            float2 offset = float2(cos(angle), sin(angle)) * radius * texel;
+            float3 sampleColor = Source0.SampleLevel(LinearClamp, uv + offset, 0).rgb;
+            // 輝点 1 つで全体が白むのを抑える（Karis 平均と同じ考え方）
+            float weight = 1.0f / (1.0f + dot(sampleColor, kLuma));
+            blurred += sampleColor * weight;
+            weightSum += weight;
+        }
+        blurred /= weightSum;
+        color = lerp(color, max(color, blurred), DiffusionAmount);
+    }
     float3 bloom = 0.0f;
     if ((Flags & 1u) != 0)
     {
@@ -414,3 +438,5 @@ float3 SunLensFlare(float2 uv, float visibility)
     }
     Destination[id.xy] = float4(color, 1.0f);
 }
+
+

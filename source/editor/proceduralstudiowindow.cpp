@@ -8,6 +8,8 @@
 #include "assets/noiseasset.h"
 #include "assets/materialmanager.h"
 #include "proceduralmodelexport.h"
+#include "virtualgeometry/virtualgeometrybuilder.h"
+#include "virtualgeometry/virtualgeometryserializer.h"
 #include "editordescriptors.h"
 #include "graphicsdevice.h"
 #include "rendererstate.h"
@@ -2000,15 +2002,23 @@ namespace ProcStudioEditorDetail
     {
         filesystem::path path;
         const bool fbx = s.ModelExportFormat == 1;
-        const wchar_t* filter = fbx ? L"Autodesk FBX (*.fbx)\0*.fbx\0" : L"Wavefront OBJ (*.obj)\0*.obj\0";
-        if (!ProceduralIO::SaveFileDialog(filter, fbx ? L"fbx" : L"obj",
-                                          fbx ? L"procedural_model.fbx" : L"procedural_model.obj", path))
+        const bool virtualGeometry = s.ModelExportFormat == 2;
+        const bool textureMode = s.Mode == Category::Model && s.ModelSurface == Surface::Texture;
+        if (virtualGeometry && textureMode)
+        {
+            s.Status = "VGMesh は頂点カラーで保存します。外部画像を使う場合は OBJ または FBX を選択してください。";
+            return;
+        }
+        const wchar_t* filter = virtualGeometry ? L"Virtual Geometry (*.vgmesh)\0*.vgmesh\0"
+                                : fbx ? L"Autodesk FBX (*.fbx)\0*.fbx\0" : L"Wavefront OBJ (*.obj)\0*.obj\0";
+        const wchar_t* extension = virtualGeometry ? L"vgmesh" : fbx ? L"fbx" : L"obj";
+        const auto filename = wstring(L"procedural_model.") + extension;
+        if (!ProceduralIO::SaveFileDialog(filter, extension, filename.c_str(), path))
         {
             return;
         }
         const auto modelParams = s.Model;
         const bool solidMode = s.Mode == Category::Solid || s.ModelSurface == Surface::Solid;
-        const bool textureMode = s.Mode == Category::Model && s.ModelSurface == Surface::Texture;
         auto solidParams = s.Solid;
         solidParams.Tileable = true;
         const auto textureParams = s.Texture;
@@ -2032,7 +2042,7 @@ namespace ProcStudioEditorDetail
                     }
                     textureName = ProceduralIO::ToUtf8(texturePath.filename());
                 }
-                if (!fbx && !solidMode &&
+                if (!virtualGeometry && !fbx && !solidMode &&
                     (modelParams.Kind == ModelKind::Terrain || modelParams.Kind == ModelKind::WaterSurface))
                 {
                     ProcStudio::WriteGridObj(path, modelParams, !textureMode, textureMode ? uvScale : 1.0f,
@@ -2060,6 +2070,27 @@ namespace ProcStudioEditorDetail
                     {
                         uv = {uv.X * uvScale, uv.Y * uvScale};
                     }
+                }
+                if (virtualGeometry)
+                {
+                    vector<VirtualGeometryVertex> vertices;
+                    vertices.reserve(mesh.Positions.size());
+                    for (size_t i = 0; i < mesh.Positions.size(); ++i)
+                    {
+                        const auto& p = mesh.Positions[i];
+                        const auto& n = mesh.Normals[i];
+                        const auto& uv = mesh.UVs[i];
+                        const auto& color = mesh.Colors[i];
+                        vertices.push_back({{p.X, p.Y, p.Z}, {n.X, n.Y, n.Z}, {uv.X, uv.Y},
+                                            {color.X, color.Y, color.Z, 1.0f}});
+                    }
+                    auto built = VirtualGeometryBuilder::Build(vertices, mesh.Indices, VGSettings::Production());
+                    if (!built)
+                    {
+                        return built.Error;
+                    }
+                    VirtualGeometrySerializer::SaveEncoded(path, built.Asset, error);
+                    return error;
                 }
                 ProceduralIO::SaveModelFile(path, mesh, !textureMode, textureName, error);
                 return error;
@@ -2607,7 +2638,7 @@ namespace ProcStudioEditorDetail
                         SaveSolidVolume(s);
                     }
                     ImGui::SetNextItemWidth(140);
-                    ImGui::Combo("モデル形式", &s.ModelExportFormat, "OBJ\0FBX (ASCII)\0");
+                    ImGui::Combo("モデル形式", &s.ModelExportFormat, "OBJ\0FBX (ASCII)\0VGMesh (圧縮ページ)\0");
                     if (ImGui::Button("焼き込んだモデルを保存..."))
                     {
                         SaveModel(s);
@@ -2662,7 +2693,7 @@ namespace ProcStudioEditorDetail
                     }
                     ImGui::BeginDisabled(busySaving);
                     ImGui::SetNextItemWidth(140);
-                    ImGui::Combo("モデル形式", &s.ModelExportFormat, "OBJ\0FBX (ASCII)\0");
+                    ImGui::Combo("モデル形式", &s.ModelExportFormat, "OBJ\0FBX (ASCII)\0VGMesh (圧縮ページ)\0");
                     if (ImGui::Button("モデルを保存..."))
                     {
                         SaveModel(s);

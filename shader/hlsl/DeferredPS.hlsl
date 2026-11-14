@@ -70,9 +70,9 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     AssetParallaxResult pom =
         ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
     float2 materialUv = pom.Uv;
-    float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
+    float materialPartId = MaterialMode == 1 ? ResolveLiveToonMaterialClass(In.Diffuse.a, (float)ShaderClass) : max(In.Diffuse.a, 0.0f);
     // SNI ヘッドマスク: materialPartId + 100.0f でエンコードされている
-    float headMask = step(15.0f, materialPartId);
+    float headMask = step(100.0f, materialPartId);
     materialPartId = materialPartId - headMask * 100.0f;
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -201,22 +201,33 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 #ifdef SHADER_GPU_DRIVEN
         uint4 liveToonTextures = asuint(LoadSceneMaterialVector(gSceneMaterials, materialID, 190u));
         float4 liveToonParams = LoadSceneMaterialVector(gSceneMaterials, materialID, 191u);
+        uint4 liveToonTextures2 = asuint(LoadSceneMaterialVector(gSceneMaterials, materialID, 193u));
+        float4 liveToonParams2 = LoadSceneMaterialVector(gSceneMaterials, materialID, 194u);
 #else
         uint4 liveToonTextures = LiveToonTextures;
         float4 liveToonParams = LiveToonMaterialParams;
+        uint4 liveToonTextures2 = LiveToonTextures2;
+        float4 liveToonParams2 = LiveToonParams2;
 #endif
         LiveToonMaterialSurface toonSurface;
         toonSurface.Albedo = output.Color.rgb;
         toonSurface.ShadowThreshold = output.Shadow.r;
         toonSurface.ShadowSoftness = output.Shadow.g;
         toonSurface.Roughness = output.Material.g;
-        ApplyLiveToonMaterialTextures(liveToonTextures, liveToonParams, materialUv, normal,
-                                      SurfaceViewDirectionCommon(In.WorldPos, In.CameraPos), materialPartId,
-                                      g_SamplerState, toonSurface);
+        toonSurface.Extra = LiveToonExtraDefault();
+        ApplyLiveToonMaterialTextures(liveToonTextures, liveToonParams, liveToonTextures2, liveToonParams2, materialUv,
+                                      normal, SurfaceViewDirectionCommon(In.WorldPos, In.CameraPos), materialPartId,
+                                      output.Material.r, g_SamplerState, toonSurface);
         output.Color.rgb = toonSurface.Albedo;
         output.Shadow.r = toonSurface.ShadowThreshold;
         output.Shadow.g = toonSurface.ShadowSoftness;
         output.Material.g = toonSurface.Roughness;
+        // 学マス方式の拡張データは、トゥーンが使わない Material.r（メタリック）/ .b（フレネル）に詰める。
+        // ライティング（DeferredLightingPS）で UnpackLiveToonExtra して g_LiveToonExtra に戻す。
+        if (toonSurface.Extra.Valid)
+        {
+            PackLiveToonExtra(toonSurface.Extra, output.Material.r, output.Material.b);
+        }
     }
     // POM セルフシャドウ（主光源）。
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
@@ -254,6 +265,8 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 #endif
+
+
 
 
 

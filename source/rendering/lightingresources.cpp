@@ -144,13 +144,23 @@ namespace
         XMFLOAT4 AtmosphereCamera = {0.0f, 0.0f, 0.0f, 0.0f};
         XMFLOAT4 SkySunDirection{};
         XMFLOAT4 SkyParameters{};
-        XMFLOAT4 LightIesProfiles[RendererState::g_kMAX_SHADER_LIGHTS]{};
-        XMFLOAT4 LiveToonStyle[6]{}; // livetoonstyle.h（HLSL: LiveToonStyle0..3）
+        XMFLOAT4 LightIesProfiles[RendererState::g_kMAX_SHADER_LIGHTS]{}; // z: shadow source radius (m)
+        XMFLOAT4 LiveToonStyle[8]{}; // livetoonstyle.h（HLSL: LiveToonStyle0..7）
         XMFLOAT4 ReflectionProbeCenters[8]{};
         XMFLOAT4 ReflectionProbeSettings[8]{};
         // x = テクスチャ Mip LOD バイアス、y = 2^x（texturemipbias.h。HLSL: TextureSamplingParams）
         XMFLOAT4 TextureSamplingParams = {0.0f, 1.0f, 0.0f, 0.0f};
     };
+
+    float GetShadowSourceRadius(const LightComponent& light)
+    {
+        if (!light.CastShadow || light.RenderMode != LightRenderMode::Physical ||
+            (light.Type != LightType::Point && light.Type != LightType::Spot) || !std::isfinite(light.SourceRadius))
+        {
+            return 0.0f;
+        }
+        return clamp(light.SourceRadius, 0.0f, max(light.Range, 0.0f));
+    }
 
     static_assert(sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
                   "Light constant buffer size accounting must match the CPU structure");
@@ -324,7 +334,8 @@ namespace
                 const auto& culling = RenderCulling::GetSettings();
                 skipShadowMap = (culling.SkipRayTracedShadowMaps && rayTracedShadows) ||
                                 RenderCulling::LightWeight(transform.Position, LightInfluenceRadius(light), false) <= 0.0f ||
-                                (culling.LightOcclusionCulling && MegaLights::IsLightOccluded(entity));
+                                (rayTracedShadows && culling.LightOcclusionCulling &&
+                                 MegaLights::IsLightOccluded(entity));
                 if (skipShadowMap)
                 {
                     ++RenderCulling::MutableStats().ShadowMapsSkipped;
@@ -425,8 +436,8 @@ namespace
         // すべての影ページから静止ジオメトリを追い出してはならない。
         if (g_CachedDirectionalLight.HasLight)
         {
-            hashVirtualBytes(&g_CachedDirectionalLight.Component.Direction,
-                             sizeof(g_CachedDirectionalLight.Component.Direction));
+            const XMFLOAT3 shadowDirection = ShadowCastDirection(g_CachedDirectionalLight.Component);
+            hashVirtualBytes(&shadowDirection, sizeof(shadowDirection));
         }
 
         // RT フレームではページを描かないため、未書き込みページの常駐状態は維持しない。
@@ -999,7 +1010,7 @@ namespace
         XMFLOAT3 lightDirection;
         if (runtimeLight.HasLight)
         {
-            lightDirection = runtimeLight.Component.Direction;
+            lightDirection = ShadowCastDirection(runtimeLight.Component);
         }
         else
         {
@@ -1126,7 +1137,7 @@ namespace
     void BuildVirtualDirectionalShadowViewProjection(const RuntimeLightState& runtimeLight, UINT level,
                                                      XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams)
     {
-        XMFLOAT3 direction = runtimeLight.Component.Direction;
+        XMFLOAT3 direction = ShadowCastDirection(runtimeLight.Component);
         XMVECTOR lightDirection = XMVectorSet(direction.x, direction.y, direction.z, 0.0f);
         if (XMVectorGetX(XMVector3LengthSq(lightDirection)) < 0.000001f)
         {
@@ -1758,7 +1769,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
                 const LightComponent& light = candidate.Light;
                 const bool local =
                     light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect;
-                if (!local || !light.AllowMegaLights || !light.AffectsOpaque ||
+                // チャンネル限定のライトはグリッド（チャンネル判定なし）に入れず、通常のライトループで評価する
+                if (!local || !light.AllowMegaLights || !light.AffectsOpaque || (light.LightingChannels & 3) != 3 ||
                     light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0.0f ||
                     candidate.Entity >= g_kMAX_ENTITIES || FindShadowLightIndex(candidate.Entity) >= 0)
                 {
@@ -1773,12 +1785,13 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
                 gpuLight.Color =
                     XMFLOAT4(light.Color.x, light.Color.y, light.Color.z, deferredLightStrength * light.Intensity);
                 gpuLight.Extra = PackLightExtra(light);
-                const float sourceRadius =
-                    light.Type == LightType::Rect ? 0.0f : clamp(light.SourceRadius, 0.0f, max(light.Range, 0.0f));
+                const float sourceRadius = GetShadowSourceRadius(light);
                 // x：bit0 影を落とす / bit1 Forward（半透明）に影響（M7）
                 const float lightBits = (light.CastShadow ? 1.0f : 0.0f) + (light.AffectsForward ? 2.0f : 0.0f);
                 gpuLight.Flags = XMFLOAT4(lightBits, sourceRadius, 0.0f, 0.0f);
                 gpuLight.IesProfile = GetIesProfileParameters(light);
+                gpuLight.IesProfile.z = sourceRadius;
+                gpuLight.IesProfile.w = PackLightChannelsAndSpecular(light); // スペキュラ強度（グリッドは全チャンネルのみ）
                 // M7：Rect のテクスチャ（Extra.w = テクスチャ番号 + 1。番号はエンジンのテクスチャ SRV の先頭から）
                 if (light.Type == LightType::Rect && !light.AreaTexturePath.empty())
                 {
@@ -1885,6 +1898,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
         constants.LightPositionTypes[lightIndex] =
             XMFLOAT4(candidate.Position.x, candidate.Position.y, candidate.Position.z, static_cast<float>(light.Type));
         constants.LightIesProfiles[lightIndex] = GetIesProfileParameters(light);
+        constants.LightIesProfiles[lightIndex].z = GetShadowSourceRadius(light);
+        constants.LightIesProfiles[lightIndex].w = PackLightChannelsAndSpecular(light);
         constants.LightExtras[lightIndex] = PackLightExtra(light);
         const bool enableVolumetrics = light.Type != LightType::Capsule &&
                                        light.RenderMode == LightRenderMode::Physical && light.AffectsVolumetrics &&
@@ -2204,5 +2219,7 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
     clearLayer = pass.ClearLayer;
     return true;
 }
+
+
 
 

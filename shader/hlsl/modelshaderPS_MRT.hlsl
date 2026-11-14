@@ -18,9 +18,9 @@ GBufferDepthOutput main(in PSInput3D In)
     AssetParallaxResult pom =
         ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
     float2 materialUv = pom.Uv;
-    float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
+    float materialPartId = MaterialMode == 1 ? ResolveLiveToonMaterialClass(In.Diffuse.a, (float)ShaderClass) : max(In.Diffuse.a, 0.0f);
     // SNI ヘッドマスク: materialPartId + 100.0f でエンコードされている
-    float headMask = step(15.0f, materialPartId);
+    float headMask = step(100.0f, materialPartId);
     materialPartId = materialPartId - headMask * 100.0f;
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)

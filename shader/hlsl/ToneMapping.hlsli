@@ -76,9 +76,35 @@ float3 PbrNeutralToneMap(float3 color)
     return saturate(lerp(color, newPeak.xxx, g));
 }
 
+// --- GT トーンマッパー（内村 2017「HDR theory and practice」, Gran Turismo Sport）---
+// 暗部（つま先）・線形の中間調・肩の 3 区間。中間調がほぼ線形なのでトゥーンの塗り分けや肌の色相を崩しにくい。
+float3 GranTurismoToneMap(float3 x, float P, float a, float m, float l, float c)
+{
+    x = max(x, 0.0f);
+    const float b = 0.0f;
+    float l0 = ((P - m) * l) / a;
+    float S0 = m + l0;
+    float S1 = m + a * l0;
+    float C2 = (a * P) / max(P - S1, 1e-4f);
+    float CP = -C2 / P;
+    float3 w0 = 1.0f - smoothstep(0.0f, m, x);
+    float3 w2 = step(m + l0, x);
+    float3 w1 = 1.0f - w0 - w2;
+    float3 T = m * pow(max(x / m, 0.0f), c) + b;
+    float3 S = P - (P - S1) * exp(CP * (x - S0));
+    float3 L = m + a * (x - m);
+    return saturate(T * w0 + L * w1 + S * w2);
+}
+
 float3 ApplyToneMapper(float3 color)
 {
     int mode = (int)round(GradeParams0.x);
+    if (mode == 4)
+    {
+        return GranTurismoToneMap(color, max(QualityReserved.x, 0.5f), max(QualityReserved.y, 0.2f),
+                                  clamp(QualityReserved.z, 0.01f, 0.9f), saturate(QualityReserved.w),
+                                  max(GradeParams1.w, 1.0f));
+    }
     if (mode == 1)
     {
         return AgXToneMap(color, GradeParams1.z > 0.5f);
@@ -176,3 +202,5 @@ float3 ApplyLensOutput(float3 color, float2 uv, float2 pixel)
 }
 
 #endif
+
+

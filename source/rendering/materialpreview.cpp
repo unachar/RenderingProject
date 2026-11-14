@@ -645,11 +645,11 @@ namespace
         constexpr size_t flagsOffset = shadowDataOffset + RendererState::g_kMAX_SHADER_LIGHTS;
         lights[shadowDataOffset] = {-1, 0, 0, 0}; // スタジオライトにはシーンのシャドウマップがない。
         lights[flagsOffset] = {1, 1, 0, 0};       // 不透明パスとフォワードパスで物理ライティングを有効にする。
-        XMFLOAT4 toonStyle[6];
+        XMFLOAT4 toonStyle[8];
         LiveToonStyle::Write(toonStyle);
-        // 末尾から：TextureSamplingParams(1) → ReflectionProbe(8 * 2) → LiveToonStyle(6)。
+        // 末尾から：TextureSamplingParams(1) → ReflectionProbe(8 * 2) → LiveToonStyle(8)。
         // プレビューはアップスケールしないので TextureSamplingParams は memset の 0（バイアス無し）のまま。
-        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 1 - 8 * 2 - 6;
+        constexpr size_t toonStyleOffset = RendererState::g_kLIGHT_CB_FLOAT4_COUNT - 1 - 8 * 2 - 8;
         std::copy(std::begin(toonStyle), std::end(toonStyle), lights + toonStyleOffset);
         commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() +
                                                            GraphicsDevice::GetFrameIndex() * constantBytes);
@@ -1204,4 +1204,6 @@ uint64_t ThumbnailPreviewContext::MemoryBytes() const
     }
     return bytes;
 }
+
+
 

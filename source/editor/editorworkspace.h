@@ -126,6 +126,7 @@ class EditorWorkspaceManager
         std::string Name;
         std::string Preset;
         std::string Layout;
+        std::string MaximizedArea;
         std::vector<std::string> VisibleWindows;
         std::unordered_map<std::string, std::string> AreaTypes;
         // #15 ユーザーが保存したレイアウト（「保存したレイアウトに戻す」で復元。空 = 未保存）
@@ -170,8 +171,9 @@ class EditorWorkspaceManager
     std::string m_ActionId;
     std::string m_LastSaved;
     std::string m_SaveError;
-    std::string m_MaximizedArea;
-    std::string m_MaximizedLayout;
+    bool m_RestoreDockTabs = false;
+    int m_DockTabRestoreFrames = 0;
+    std::unordered_map<ImGuiID, ImGuiID> m_PendingDockTabs;
     ImVec2 m_AreaWorkPosition{};
     ImVec2 m_AreaWorkSize{};
     char m_Rename[128]{};

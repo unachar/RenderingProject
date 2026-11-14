@@ -2,6 +2,7 @@
 #include "common.hlsl"
 #include "VisibilityCommon.hlsl"
 #include "NormalMapDecode.hlsli"
+#include "ToonLighting.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -9,7 +10,8 @@ SamplerState g_SamplerState : register(s0);
 
 uint4 PSMain(PSInput3D input) : SV_Target0
 {
-    float materialPartId = MaterialMode == 1 ? (float)ShaderClass : max(input.Diffuse.a, 0.0f);
+    float materialPartId = MaterialMode == 1 ? ResolveLiveToonMaterialClass(input.Diffuse.a, (float)ShaderClass) : max(input.Diffuse.a, 0.0f);
+    materialPartId -= step(100.0f, materialPartId) * 100.0f;
     float4 baseColor = float4(input.Diffuse.rgb, 1.0f);
     float3 normal = input.Normal * (FlipNormal != 0 ? -1.0f : 1.0f);
     if (UseNormalMap != 0)

@@ -116,6 +116,15 @@ float4 ShadeDeferred(PSInputPostProcess input, float depth)
     }
 
     bool toon = IsLiveToonClass(shaderClass);
+    // 学マス方式の拡張データ（DeferredPS が Material.r / .b に詰めたもの）を戻す。
+    g_LiveToonExtra = (LiveToonExtra)0;
+    [branch] if (toon && IsLiveToonExtraPacked(material.b))
+    {
+        g_LiveToonExtra = UnpackLiveToonExtra(material.r, material.b);
+        material.r = g_LiveToonExtra.Metallic;
+        material.b = 0.04f;
+        giReflectance = baseColor.rgb * (1 - saturate(material.x));
+    }
     bool shadow = IsMaterialClass(shaderClass, 5.0f);
     bool lit = IsMaterialClass(shaderClass, 8.0f);
     bool pbr = IsMaterialClass(shaderClass, 11.0f);
@@ -229,7 +238,7 @@ float4 ShadeDeferred(PSInputPostProcess input, float depth)
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, environmentUv, 8.0f).rgb;
         const float3 toonAlbedo = baseColor.rgb;
         baseColor.rgb = pbrDirectLight + EvaluateLiveToonAmbientStyled(toonAlbedo, irradiance, shaderClass);
-        [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
+        [branch] if (!IsLiveToonEyeClass(shaderClass) && LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
         {
             float3 reflected = reflect(-viewDir, surfaceNormal);
             float2 reflectedUv = float2(frac(atan2(reflected.z, reflected.x) / (2.0f * PI) + 0.5f),
@@ -304,7 +313,8 @@ float4 ShadeDeferred(PSInputPostProcess input, float depth)
             EvaluateSurfaceEnvironment(surface, viewDir, position, input.TexCoord, shadowSoftness, pbrDirectLight);
     }
 
-    baseColor.rgb = ApplySurfaceScreenEffects(baseColor.rgb, authoredEmissionAO.rgb, input.TexCoord, giReflectance);
+    baseColor.rgb = ApplySurfaceScreenEffects(baseColor.rgb, authoredEmissionAO.rgb, input.TexCoord, giReflectance,
+                                              IsLiveToonEyeClass(shaderClass));
     baseColor.a = 1.0f;
     return baseColor;
 }
@@ -548,5 +558,7 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
     MegaLightRaw[linearIndex] = result;
     return 0.0f;
 }
+
+
 
 

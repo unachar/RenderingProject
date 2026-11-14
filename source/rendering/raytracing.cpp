@@ -7,6 +7,10 @@
 #include "persistentpsocache.h"
 #include "camera.h"
 #include "staticmodel.h"
+#include "virtualgeometry/virtualgeometryresources.h"
+#include "virtualgeometry/virtualgeometrystreaming.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
+#include <numeric>
 #include "../../External/NVAPI/rtxmg/nvapi.h"
 #include "world.h"
 #include "nrddenoiser.h"
@@ -41,6 +45,14 @@ namespace
     constexpr UINT kMaximumInstances = RendererState::g_kGLASS_MAX_MESHES;
 
     using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT, bool>;
+
+    struct StreamedRayGeometry
+    {
+        StaticMeshData Mesh;
+        vector<uint32_t> Clusters;
+        uint64_t Revision = 0;
+        uint64_t LastSeen = 0;
+    };
 
     struct BottomLevel
     {
@@ -235,6 +247,7 @@ XMFLOAT4 g_PreviousShadowDistances{};
     EntityID g_NrdCamera = g_kINVALID_ENTITY;
     ComPtr<ID3D12Resource> g_Constants;
     array<FrameResources, kFrameCount> g_Frames;
+    map<uint32_t, StreamedRayGeometry> g_StreamedGeometry;
     Raytracing::Settings g_Settings;
     UINT g_Increment = 0;
     UINT g_FrameIndex = 0;
@@ -767,14 +780,43 @@ XMFLOAT4 g_PreviousShadowDistances{};
         using BlasArgs = NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_MULTI_INDIRECT_CLUSTER_ARGS;
         using Inputs = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_INPUTS;
         using Sizes = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_REQUIREMENTS_INFO;
-        constexpr UINT trianglesPerCluster = 64;
-        constexpr UINT verticesPerCluster = trianglesPerCluster * 3;
         const auto& indices = mesh.CpuIndices;
         if (indices.empty() || indices.size() % 3 || indices.size() > 3'000'000)
         {
             return false;
         }
-        const UINT count = static_cast<UINT>((indices.size() + verticesPerCluster - 1) / verticesPerCluster);
+        vector<UINT> clusterTriangles;
+        if (mesh.VirtualGeometryRootFallback)
+        {
+            // Preserve the page hierarchy's root cluster boundaries. Expanded vertices
+            // keep local indexing independent of the compressed page representation.
+            for (UINT remaining : mesh.VirtualGeometryRootTriangleCounts)
+            {
+                while (remaining > 0)
+                {
+                    const UINT triangles = (min)(remaining, 64u);
+                    clusterTriangles.push_back(triangles);
+                    remaining -= triangles;
+                }
+            }
+        }
+        else
+        {
+            for (UINT remaining = static_cast<UINT>(indices.size() / 3); remaining > 0;)
+            {
+                const UINT triangles = (min)(remaining, 64u);
+                clusterTriangles.push_back(triangles);
+                remaining -= triangles;
+            }
+        }
+        if (clusterTriangles.empty() ||
+            std::accumulate(clusterTriangles.begin(), clusterTriangles.end(), UINT64{0}) * 3 != indices.size())
+        {
+            return false;
+        }
+        constexpr UINT trianglesPerCluster = 64;
+        constexpr UINT verticesPerCluster = trianglesPerCluster * 3;
+        const UINT count = static_cast<UINT>(clusterTriangles.size());
         Inputs triangles{};
         triangles.maxArgCount = count;
         triangles.type = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_TYPE_BUILD_CLAS_FROM_TRIANGLES;
@@ -842,19 +884,20 @@ XMFLOAT4 g_PreviousShadowDistances{};
             localIndices[i] = static_cast<uint16_t>(i);
         }
         const auto inputAddress = upload->GetGPUVirtualAddress();
+        UINT start = 0;
         for (UINT i = 0; i < count; ++i)
         {
-            const UINT start = i * verticesPerCluster;
             TriangleArgs args{};
             args.clusterId = i;
-            args.vertexCount = (min)(verticesPerCluster, static_cast<UINT>(indices.size()) - start);
-            args.triangleCount = args.vertexCount / 3;
+            args.triangleCount = clusterTriangles[i];
+            args.vertexCount = args.triangleCount * 3;
             args.indexFormat = NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_INDEX_FORMAT_16BIT;
             args.baseGeometryIndexAndFlags =
                 NVAPI_D3D12_RAYTRACING_MULTI_INDIRECT_CLUSTER_OPERATION_GEOMETRY_FLAG_OPAQUE;
             args.indexBuffer = inputAddress + indexOffset;
             args.vertexBuffer = inputAddress + positionOffset + start * sizeof(XMFLOAT3);
             memcpy(bytes + sizeof(TriangleArgs) * i, &args, sizeof(args));
+            start += args.vertexCount;
         }
         const BlasArgs blasArgs{count, 0, addresses->GetGPUVirtualAddress()};
         memcpy(bytes + blasArgsOffset, &blasArgs, sizeof(blasArgs));
@@ -1183,16 +1226,201 @@ XMFLOAT4 g_PreviousShadowDistances{};
         return true;
     }
 
+    vector<uint32_t> SelectResidentRayClusters(const VirtualGeometryGPU::PackedAsset& geometry, uint32_t pageBase)
+    {
+        // レイはカメラ外にも届くため、常駐ページからメッシュ全体を覆うカットを選ぶ。
+        vector<uint8_t> active(geometry.Clusters.size());
+        uint64_t triangles = 0;
+        for (uint32_t root : geometry.Roots)
+        {
+            active[root] = 1;
+            triangles += geometry.Clusters[root].TriangleCount;
+        }
+        constexpr uint64_t maxRayTriangles = 1'000'000;
+        array<vector<uint32_t>, 31> groupsByLevel;
+        for (uint32_t i = 0; i < geometry.Groups.size(); ++i)
+        {
+            groupsByLevel[geometry.Groups[i].Level].push_back(i);
+        }
+        const span<const uint32_t> links(geometry.HierarchyIndices);
+        for (auto level = groupsByLevel.rbegin(); level != groupsByLevel.rend(); ++level)
+        {
+            for (uint32_t i : *level)
+            {
+                const auto& group = geometry.Groups[i];
+                const auto parents = links.subspan(group.FirstParent, group.ParentCount);
+                const auto children = links.subspan(group.FirstChild, group.ChildCount);
+                if (!all_of(parents.begin(), parents.end(), [&](uint32_t parent) { return active[parent]; }) ||
+                    !all_of(children.begin(), children.end(), [&](uint32_t child) {
+                        const uint32_t page = pageBase + geometry.Clusters[child].PageIndex;
+                        return !VirtualGeometryStreaming::ResidentRayPage(page).empty();
+                    }))
+                {
+                    continue;
+                }
+                const auto sumTriangles = [&](uint64_t sum, uint32_t cluster) {
+                    return sum + geometry.Clusters[cluster].TriangleCount;
+                };
+                const uint64_t refined = triangles - accumulate(parents.begin(), parents.end(), uint64_t{}, sumTriangles)
+                                         + accumulate(children.begin(), children.end(), uint64_t{}, sumTriangles);
+                if (refined > maxRayTriangles && refined > triangles)
+                {
+                    continue;
+                }
+                triangles = refined;
+                for (uint32_t parent : parents)
+                {
+                    active[parent] = 0;
+                }
+                for (uint32_t child : children)
+                {
+                    active[child] = 1;
+                }
+            }
+        }
+        vector<uint32_t> clusters;
+        for (uint32_t i = 0; i < active.size(); ++i)
+        {
+            if (active[i])
+            {
+                clusters.push_back(i);
+            }
+        }
+        return clusters;
+    }
+
+    bool UploadStreamedRayBuffer(ComPtr<ID3D12Resource>& buffer, const void* data, UINT bytes, const wchar_t* name)
+    {
+        if (!EnsureBuffer(buffer, bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, name))
+        {
+            return false;
+        }
+        const D3D12_RANGE noRead{0, 0};
+        void* mapped = nullptr;
+        if (FAILED(buffer->Map(0, &noRead, &mapped)))
+        {
+            return false;
+        }
+        memcpy(mapped, data, bytes);
+        const D3D12_RANGE written{0, bytes};
+        buffer->Unmap(0, &written);
+        return true;
+    }
+
+    bool BuildStreamedRayMesh(const VirtualGeometryGPU::PackedAsset& geometry, uint32_t pageBase,
+                             span<const uint32_t> clusters, StaticMeshData& mesh)
+    {
+        mesh.VirtualGeometryRootFallback = true;
+        for (uint32_t id : clusters)
+        {
+            const auto& cluster = geometry.Clusters[id];
+            const auto page = VirtualGeometryStreaming::ResidentRayPage(pageBase + cluster.PageIndex);
+            if (page.empty() || !AppendVirtualGeometryCluster(cluster, page, mesh.CpuVertices, mesh.CpuIndices))
+            {
+                return false;
+            }
+            mesh.VirtualGeometryRootTriangleCounts.push_back(cluster.TriangleCount);
+        }
+        if (mesh.CpuVertices.empty() || mesh.CpuIndices.empty() ||
+            mesh.CpuVertices.size() > UINT_MAX / sizeof(StaticModelVertex) ||
+            mesh.CpuIndices.size() > UINT_MAX / sizeof(uint32_t))
+        {
+            return false;
+        }
+        const UINT vertexBytes = static_cast<UINT>(mesh.CpuVertices.size() * sizeof(StaticModelVertex));
+        const UINT indexBytes = static_cast<UINT>(mesh.CpuIndices.size() * sizeof(uint32_t));
+        if (!UploadStreamedRayBuffer(mesh.VertexBuffer, mesh.CpuVertices.data(), vertexBytes, L"VG ray vertices") ||
+            !UploadStreamedRayBuffer(mesh.IndexBuffer, mesh.CpuIndices.data(), indexBytes, L"VG ray indices"))
+        {
+            return false;
+        }
+        mesh.VertexBufferView = {mesh.VertexBuffer->GetGPUVirtualAddress(), vertexBytes, sizeof(StaticModelVertex)};
+        mesh.IndexBufferView = {mesh.IndexBuffer->GetGPUVirtualAddress(), indexBytes, DXGI_FORMAT_R32_UINT};
+        mesh.IndexCount = static_cast<UINT>(mesh.CpuIndices.size());
+        return true;
+    }
+
+    void ResolveStreamedRayGeometry(RaytracingGeometry& entry)
+    {
+        const auto* mesh = entry.ClusterSource;
+        if (!mesh || !mesh->VirtualGeometryRootFallback || !mesh->VirtualGeometrySettings.Enabled ||
+            !VirtualGeometryTraversal::Active())
+        {
+            return;
+        }
+        const auto& runtime = mesh->VirtualGeometryLODs[0];
+        if (!runtime || !runtime->Pages)
+        {
+            return;
+        }
+        const uint32_t asset = VirtualGeometryResources::Find(runtime.get());
+        if (!VirtualGeometryResources::Ready(asset))
+        {
+            return;
+        }
+        const uint32_t pageBase = VirtualGeometryResources::AssetTable()[asset].VertexOffset;
+        const uint64_t revision = VirtualGeometryStreaming::RayPageRevision(pageBase);
+        auto& cached = g_StreamedGeometry[asset];
+        if (cached.LastSeen != g_Serial && cached.Revision != revision)
+        {
+            const auto& geometry = runtime->Pages->Metadata;
+            auto clusters = SelectResidentRayClusters(geometry, pageBase);
+            if (clusters != cached.Clusters)
+            {
+                StaticMeshData refined;
+                const bool rootOnly = clusters.size() == geometry.Roots.size() &&
+                    all_of(clusters.begin(), clusters.end(), [&](uint32_t id) {
+                        return geometry.Clusters[id].GroupIndex == UINT32_MAX;
+                    });
+                if (rootOnly || BuildStreamedRayMesh(geometry, pageBase, clusters, refined))
+                {
+                    cached.Clusters = std::move(clusters);
+                    cached.Revision = revision;
+                    cached.Mesh = std::move(refined);
+                }
+                else
+                {
+                    cached.Mesh = {};
+                    cached.Clusters.clear();
+                }
+            }
+            else
+            {
+                cached.Revision = revision;
+            }
+        }
+        cached.LastSeen = g_Serial;
+        const auto& refined = cached.Mesh;
+        if (!refined.VertexBuffer)
+        {
+            return;
+        }
+        entry.Vertices = refined.VertexBuffer;
+        entry.Indices = refined.IndexBuffer;
+        entry.VertexView = refined.VertexBufferView;
+        entry.IndexView = refined.IndexBufferView;
+        entry.IndexCount = refined.IndexCount;
+        entry.VertexState = D3D12_RESOURCE_STATE_GENERIC_READ;
+        entry.IndexState = D3D12_RESOURCE_STATE_GENERIC_READ;
+        entry.ClusterSource = &refined;
+    }
+
     bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
     {
         RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
-        const auto geometry = GatherRaytracingGeometry();
+        auto geometry = GatherRaytracingGeometry();
+        for (auto& entry : geometry)
+        {
+            ResolveStreamedRayGeometry(entry);
+        }
+        std::erase_if(g_StreamedGeometry, [](const auto& item) { return item.second.LastSeen != g_Serial; });
         const bool useClusters = g_Settings.MegaGeometry && g_ClusterApi.Execute && !Raytracing::RadianceRequested() &&
                                  none_of(geometry.begin(), geometry.end(), [](const auto& entry) {
                                      return entry.Transmission > 0.001f;
                                  });
         const auto geometryKey = [useClusters](const RaytracingGeometry& entry) {
-            const bool clustered = useClusters && entry.ClusterSource && entry.IndexCount >= 3072 &&
+            const bool clustered = useClusters && entry.ClusterSource &&
+                                   (entry.ClusterSource->VirtualGeometryRootFallback || entry.IndexCount >= 3072) &&
                                    entry.ClusterSource->CpuIndices.size() == entry.IndexCount;
             return GeometryKey(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
                                entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
@@ -1296,6 +1524,7 @@ XMFLOAT4 g_PreviousShadowDistances{};
             instance.AccelerationStructure = bottom.Result->GetGPUVirtualAddress();
             instances.push_back(instance);
             frame.SceneGeometry.push_back(entry);
+            frame.SceneGeometry.back().ClusterSource = nullptr;
         }
         BuildGlassMetadata(frame);
         // TLAS 構築とレイ判定の前に、すべての BLAS 書き込みを可視化する。
@@ -1639,6 +1868,7 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
 
 void Raytracing::Shutdown()
 {
+    g_StreamedGeometry.clear();
     g_ClusterApi.Shutdown();
     g_TelemetryPipeline.Reset();
     g_TelemetryPipelineTried = false;
@@ -1707,6 +1937,7 @@ void Raytracing::ReleaseInactiveResources()
     }
     if (releaseScene)
     {
+        g_StreamedGeometry.clear();
         g_Frames = {};
         g_SharedGuides = {};
         g_InstanceCount = 0;
@@ -1744,7 +1975,9 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                               ? static_cast<float>(g_Frames[g_FrameIndex].SceneGeometry.size())
                               : 0.0f};
         lighting.Parameters = {clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
-                               clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f};
+                               clamp(g_Settings.NormalBias, 0.001f, 0.1f),
+                               clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f),
+                               -static_cast<float>(clamp(g_Settings.Samples, 1, 8))};
         lighting.Lights = g_LightShadowFlags;
         void* mapped = nullptr;
         D3D12_RANGE noRead{0, 0};

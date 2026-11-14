@@ -67,7 +67,9 @@ namespace VirtualGeometryStreaming
     const Statistics& GetStatistics();
     // 安定したグローバル Page 先頭位置を返す。常駐固定の受付に失敗したら UINT32_MAX。
     uint32_t Register(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest,
-                      uint32_t priority = UINT32_MAX);
+                      uint32_t priority = UINT32_MAX, bool retainRayPages = false);
+    uint64_t RayPageRevision(uint32_t pageBase);
+    std::span<const uint8_t> ResidentRayPage(uint32_t page);
     bool CanRegister(const VirtualGeometryPageCache::PageManifest& manifest);
     void Prepare(RenderGraph& graph);
     void RecordFeedbackCopy(RenderGraph& graph);

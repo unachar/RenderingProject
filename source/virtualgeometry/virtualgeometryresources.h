@@ -10,6 +10,7 @@ namespace VirtualGeometryResources
     uint32_t RegisterManifest(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest);
     void Prepare(RenderGraph& graph);
     bool Ready(uint32_t asset);
+    uint32_t Find(const VirtualGeometryRuntime::RuntimeAsset* asset);
     uint32_t AssetCount();
     uint64_t RegisteredClusterCount();
     const std::vector<uint64_t>& SourceTriangleCounts();

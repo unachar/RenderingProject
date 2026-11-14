@@ -17,6 +17,50 @@
 unordered_map<string, ComPtr<ID3DBlob>> g_ShaderBlobCache;
 std::mutex g_ShaderBlobCacheMutex;
 
+namespace
+{
+    // shader/hlsl 以下の .hlsl / .hlsli のうち最も新しい更新時刻（起動中 1 回だけ調べる）。
+    // ビルド済み .cso はインクルード（.hlsli）の変更を追跡しないことがあり、GpuSceneCommon.hlsli の
+    // マテリアル ストライドのような共有定義を変えると、古い .cso の CS / MS が C++ 側と食い違って
+    // オブジェクトが描画されなくなる。.cso がこれより古ければ実行時に .hlsl からコンパイルする
+    // （DXC の結果は前処理済みソースのハッシュで Data/Cache にキャッシュされる）。
+    std::filesystem::file_time_type NewestShaderSourceTime()
+    {
+        static const std::filesystem::file_time_type newest = [] {
+            std::filesystem::file_time_type result{};
+            std::error_code error;
+            for (std::filesystem::directory_iterator it("shader/hlsl", error), end; !error && it != end;
+                 it.increment(error))
+            {
+                const auto extension = it->path().extension().string();
+                if (extension != ".hlsl" && extension != ".hlsli")
+                {
+                    continue;
+                }
+                std::error_code timeError;
+                const auto time = it->last_write_time(timeError);
+                if (!timeError && time > result)
+                {
+                    result = time;
+                }
+            }
+            return result;
+        }();
+        return newest;
+    }
+
+    bool IsCompiledShaderStale(const std::wstring& csoPath)
+    {
+        std::error_code error;
+        const auto csoTime = std::filesystem::last_write_time(csoPath, error);
+        if (error)
+        {
+            return false; // .cso が無い場合は従来どおりの経路（実行時コンパイル）に任せる
+        }
+        return NewestShaderSourceTime() > csoTime;
+    }
+} // namespace
+
 bool ShaderPipelines::CreateModelPipeline()
 {
     m_ModelRootSignature = m_RootSignature;
@@ -136,13 +180,15 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource, bool all
             }
         }
     }
-    if (FAILED(hr))
+    // .cso がシェーダー ソースより古いときは、先に .hlsl から実行時コンパイルする（失敗したら .cso を使う）。
+    const bool staleCso = FAILED(hr) && IsCompiledShaderStale(wPath);
+    if (FAILED(hr) && !staleCso)
     {
         hr = D3DReadFileToBlob(wPath.c_str(), ppBlob);
     }
     if (FAILED(hr))
     {
-        // .cso が無い（vcxproj に未登録の新規シェーダーなど）場合は、同名の .hlsl を実行時にコンパイルする。
+        // .cso が無い（vcxproj に未登録の新規シェーダーなど）、または古い場合は、同名の .hlsl を実行時にコンパイルする。
         string source = key;
         const auto buildFolder = source.find("/build/");
         if (buildFolder != string::npos)
@@ -165,6 +211,8 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource, bool all
         consider(psAt, "ps_6_5");
         consider(vsAt, "vs_6_5");
         consider(csAt, "cs_6_5");
+        consider(leaf.rfind("MS"), "ms_6_5"); // メッシュシェーダー（MeshletMS / VirtualGeometryMS）
+        consider(leaf.rfind("AS"), "as_6_5");
         if (target && filesystem::exists(source))
         {
             ComPtr<ID3DBlob> errors;
@@ -176,7 +224,16 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource, bool all
                 WriteGraphicsLog("Runtime shader compile failed: %s %s\n", source.c_str(),
                                  errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
             }
+            else if (staleCso)
+            {
+                WriteGraphicsLog("Shader: %s is older than shader sources; compiled %s at runtime\n", csoPath,
+                                 source.c_str());
+            }
         }
+    }
+    if (FAILED(hr) && staleCso)
+    {
+        hr = D3DReadFileToBlob(wPath.c_str(), ppBlob);
     }
     if (FAILED(hr))
     {
@@ -479,3 +536,4 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     ShaderLogToFile("PP: done\n");
     return true;
 }
+

@@ -495,6 +495,11 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     emissionAO = float4(0, 0, 0, 1);
     if (material.Surface.z < 0.5f)
     {
+        // マテリアルアセットを持たないシーン内マテリアル（プリミティブなど）でも、インスペクターの
+        // ベースカラーと発光（色 × 強度）は効かせる。以前はここで return していたため、
+        // 「Emissive floor」のような発光設定が描画に反映されなかった。既定値（白・発光 0）なら結果は変わらない。
+        color *= material.BaseColor;
+        emissionAO.rgb = material.Emission.rgb * max(material.Emission.a, 0.0f);
         return;
     }
     if (material.Noise[0].Width != 0)
@@ -553,4 +558,5 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
 // マテリアルグラフの描画時評価（GPU）。ScaleAssetNormal / LoadMaterialTexture の後に置く
 #include "MaterialGraphVM.hlsli"
 #endif
+
 

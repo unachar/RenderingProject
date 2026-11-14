@@ -554,14 +554,10 @@ void EditorWorkspaceManager::CaptureActive()
 {
     auto& workspace = m_Workspaces[m_Active];
     size_t length = 0;
-    if (m_MaximizedArea.empty())
+    if (workspace.MaximizedArea.empty())
     {
         const char* layout = ImGui::SaveIniSettingsToMemory(&length);
         workspace.Layout.assign(layout, length);
-    }
-    else
-    {
-        workspace.Layout = m_MaximizedLayout;
     }
     workspace.VisibleWindows.clear();
     workspace.AreaTypes = m_Registry.AreaTypes();
@@ -576,7 +572,16 @@ void EditorWorkspaceManager::CaptureActive()
 
 void EditorWorkspaceManager::ApplyActive()
 {
-    const auto& workspace = m_Workspaces[m_Active];
+    auto& workspace = m_Workspaces[m_Active];
+    if (!workspace.MaximizedArea.empty() &&
+        std::none_of(m_Registry.Windows().begin(), m_Registry.Windows().end(), [&](const auto& window) {
+            return window.Draw && window.Id == workspace.MaximizedArea &&
+                   Contains(workspace.VisibleWindows, window.Id);
+        }))
+    {
+        workspace.MaximizedArea.clear();
+    }
+    ImGui::FocusWindow(nullptr);
     m_Registry.RestoreAreaTypes(workspace.AreaTypes);
     ImGui::ClearIniSettings();
     if (!workspace.Layout.empty())
@@ -610,6 +615,9 @@ void EditorWorkspaceManager::ApplyActive()
         *window.Visible = Contains(workspace.VisibleWindows, window.Id);
     }
     m_BuildLayout = workspace.Layout.empty();
+    m_RestoreDockTabs = !m_BuildLayout;
+    m_DockTabRestoreFrames = 0;
+    m_PendingDockTabs.clear();
 }
 
 void EditorWorkspaceManager::Queue(Action action, const std::string& id)
@@ -628,27 +636,20 @@ void EditorWorkspaceManager::BeginFrame()
     CaptureActive();
     if (m_Action == Action::Maximize)
     {
-        if (m_MaximizedArea.empty())
+        auto& workspace = m_Workspaces[m_Active];
+        if (workspace.MaximizedArea.empty())
         {
-            m_MaximizedLayout = m_Workspaces[m_Active].Layout;
-            m_MaximizedArea = m_ActionId;
+            workspace.MaximizedArea = m_ActionId;
         }
         else
         {
-            m_MaximizedArea.clear();
-            m_MaximizedLayout.clear();
+            workspace.MaximizedArea.clear();
             ApplyActive();
         }
         m_Action = Action::None;
         m_ActionId.clear();
+        m_ForceSave = true;
         return;
-    }
-    // Switching workspaces or changing their structure always exits the temporary full-area view.
-    if (!m_MaximizedArea.empty())
-    {
-        m_MaximizedArea.clear();
-        m_MaximizedLayout.clear();
-        ApplyActive();
     }
     const auto found = std::find_if(m_Workspaces.begin(), m_Workspaces.end(), [&](const auto& workspace) {
         return workspace.Id == m_ActionId;
@@ -727,6 +728,7 @@ void EditorWorkspaceManager::BeginFrame()
                     workspace.Layout = workspace.SavedLayout;
                     workspace.VisibleWindows = workspace.SavedVisibleWindows;
                     workspace.AreaTypes = workspace.SavedAreaTypes;
+                    workspace.MaximizedArea.clear();
                     apply = target == m_Active;
                 }
                 break;
@@ -736,6 +738,7 @@ void EditorWorkspaceManager::BeginFrame()
                 m_Workspaces[target].VisibleWindows = preset.VisibleWindows;
                 m_Workspaces[target].AreaTypes.clear();
                 m_Workspaces[target].Layout.clear();
+                m_Workspaces[target].MaximizedArea.clear();
                 apply = target == m_Active;
                 break;
             }
@@ -999,7 +1002,39 @@ void EditorWorkspaceManager::DrawDockSpace()
         ImGui::DockBuilderFinish(root);
         m_BuildLayout = false;
     }
+    if (m_RestoreDockTabs)
+    {
+        const auto capture = [&](const auto& visit, const ImGuiDockNode* node) -> void {
+            if (!node)
+            {
+                return;
+            }
+            if (node->SelectedTabId)
+            {
+                m_PendingDockTabs[node->ID] = node->SelectedTabId;
+            }
+            visit(visit, node->ChildNodes[0]);
+            visit(visit, node->ChildNodes[1]);
+        };
+        capture(capture, ImGui::DockBuilderGetNode(root));
+        m_RestoreDockTabs = false;
+        m_DockTabRestoreFrames = 2;
+    }
+    // The first dockspace submission can auto-select newly rebound tabs.
+    // Apply saved selections once all workspace windows have been submitted.
+    for (const auto& [nodeId, tabId] : m_PendingDockTabs)
+    {
+        if (auto* node = ImGui::DockBuilderGetNode(nodeId); node && node->TabBar &&
+            ImGui::TabBarFindTabByID(node->TabBar, tabId))
+        {
+            node->TabBar->NextSelectedTabId = tabId;
+        }
+    }
     ImGui::DockSpace(root, ImVec2(0, 0));
+    if (m_DockTabRestoreFrames > 0 && --m_DockTabRestoreFrames == 0)
+    {
+        m_PendingDockTabs.clear();
+    }
 }
 
 void EditorWorkspaceManager::RequestReset()
@@ -1017,12 +1052,12 @@ void EditorWorkspaceManager::RequestMaximize(const std::string& area)
 
 bool EditorWorkspaceManager::IsAreaDrawn(const std::string& area) const
 {
-    return m_MaximizedArea.empty() || m_MaximizedArea == area;
+    return m_Workspaces.empty() || m_Workspaces[m_Active].MaximizedArea.empty() || IsMaximized(area);
 }
 
 bool EditorWorkspaceManager::IsMaximized(const std::string& area) const
 {
-    return m_MaximizedArea == area;
+    return !m_Workspaces.empty() && m_Workspaces[m_Active].MaximizedArea == area;
 }
 
 bool EditorWorkspaceManager::Load()
@@ -1061,6 +1096,10 @@ bool EditorWorkspaceManager::Load()
         workspace.Name = value["name"].asString();
         workspace.Preset = value["preset"].asString();
         workspace.Layout = value["layout"].asString();
+        if (value["maximized"].isString())
+        {
+            workspace.MaximizedArea = value["maximized"].asString();
+        }
         if (value["saved"].isObject())
         {
             const auto& saved = value["saved"];
@@ -1141,6 +1180,7 @@ void EditorWorkspaceManager::Save()
         value["name"] = workspace.Name;
         value["preset"] = workspace.Preset;
         value["layout"] = workspace.Layout;
+        value["maximized"] = workspace.MaximizedArea;
         value["visible"] = Json::Value(Json::arrayValue);
         value["types"] = Json::Value(Json::objectValue);
         for (const auto& [area, type] : workspace.AreaTypes)
@@ -1226,7 +1266,8 @@ void EditorWorkspaceManager::Shutdown()
     m_Initialized = false;
     m_Active = 0;
     m_Action = Action::None;
-    m_MaximizedArea.clear();
-    m_MaximizedLayout.clear();
+    m_PendingDockTabs.clear();
+    m_RestoreDockTabs = false;
+    m_DockTabRestoreFrames = 0;
     m_LastSaved.clear();
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <string>
 #include <unordered_map>
 #include "texturemanager.h"
@@ -48,6 +49,8 @@ struct LiveToonStyleSettings
     float LocalSpecular = 0.0f;
     float BacklightDiffuse = 0.0f;
     float EnvironmentRoughness = 0.5f;
+    // 質感ランプ（SpecularRampPath）の行数。マテリアルで行（1..7）を指定したときの縦の分割数（学マスは 6 行）。
+    int SpecularRampRowCount = 6;
 };
 
 // マテリアル・ランプ用のテクスチャ解決。パス → ディスクリプタ番号をキャッシュし、
@@ -105,8 +108,48 @@ namespace LiveToonStyle
         Get() = LiveToonStyleSettings{};
     }
 
-    // LightParams.LiveToonStyle0..5 と同じ並び。
-    inline void Write(XMFLOAT4 (&out)[6])
+    // キャラ別の陰影ランプ（マテリアルの LiveToonShadowRampPath）。最大 6 枚をスロット 1..6 に割り当てる。
+    // スロットは一度割り当てたら変えない（マテリアル定数と LightParams の表が常に一致する）。0 = シーン共通。
+    constexpr uint32_t kCharacterRampSlots = 6;
+    inline std::array<std::string, kCharacterRampSlots>& CharacterRampPaths()
+    {
+        static std::array<std::string, kCharacterRampSlots> paths{};
+        return paths;
+    }
+
+    inline uint32_t AcquireShadowRampSlot(const std::string& path)
+    {
+        if (path.empty())
+        {
+            return 0u;
+        }
+        auto& paths = CharacterRampPaths();
+        for (uint32_t i = 0; i < kCharacterRampSlots; ++i)
+        {
+            if (paths[i] == path)
+            {
+                return i + 1u;
+            }
+        }
+        for (uint32_t i = 0; i < kCharacterRampSlots; ++i)
+        {
+            if (paths[i].empty())
+            {
+                paths[i] = path;
+                return i + 1u;
+            }
+        }
+        return 0u; // 7 枚目以降はシーン共通のランプにフォールバック
+    }
+
+    inline float CharacterRampHeapOffset(uint32_t index)
+    {
+        const uint32_t offset = LiveToonTextures::ResolveHeapOffset(CharacterRampPaths()[index]);
+        return offset == UINT32_MAX ? -1.0f : static_cast<float>(offset);
+    }
+
+    // LightParams.LiveToonStyle0..7 と同じ並び。
+    inline void Write(XMFLOAT4 (&out)[8])
     {
         const LiveToonStyleSettings& s = Get();
         out[0] = {s.Blend, s.ShadowTintStrength, s.AdditiveSoftness, s.AdditiveGain};
@@ -122,5 +165,13 @@ namespace LiveToonStyle
                   s.PackedShadowRamp ? 1.0f : 0.0f,
                   static_cast<float>(specularRampCode)};
         out[5] = {s.LocalSpecular, s.BacklightDiffuse, s.EnvironmentRoughness, 0.0f};
+        // キャラ別陰影ランプの表（スロット 1..6 → テクスチャ表の番号、< 0 で無効）と質感ランプの行数
+        out[6] = {CharacterRampHeapOffset(0), CharacterRampHeapOffset(1), CharacterRampHeapOffset(2),
+                  CharacterRampHeapOffset(3)};
+        out[7] = {CharacterRampHeapOffset(4), CharacterRampHeapOffset(5),
+                  static_cast<float>(s.SpecularRampRowCount < 1 ? 1 : (s.SpecularRampRowCount > 16 ? 16 : s.SpecularRampRowCount)),
+                  0.0f};
     }
 } // namespace LiveToonStyle
+
+

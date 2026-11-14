@@ -87,8 +87,14 @@ namespace
 
         // 球面法線補間 (SNI) パラメータ: xyz=球中心(ワールド空間), w=半径 (>0 で有効)
         XMFLOAT4 SniParams{0, 1.5f, 0, 1.0f};
+        // ライブトゥーン拡張（HLSL: LiveToonTextures2 / LiveToonParams2）
+        XMUINT4 LiveToonTextures2{UINT32_MAX, UINT32_MAX, 0, 0}; // シェードカラー、レイヤー、スロット|行<<8、フラグ
+        XMFLOAT4 LiveToonParams2{1, 0, 1, 1};
     };
     static_assert(offsetof(PBRConstants, LiveToonTextures) == 190 * sizeof(XMFLOAT4));
+    static_assert(offsetof(PBRConstants, LiveToonTextures2) == 193 * sizeof(XMFLOAT4));
+    // HLSL PBRParams: 32 float の直後の float3 PBRPadding（x = ShadowMode, y = ShadowCutoff）と一致させる。
+    static_assert(offsetof(PBRConstants, Reserved) == 8 * sizeof(XMFLOAT4));
     static_assert(sizeof(PBRConstants) <= GpuSceneMaterialParameterVectors * sizeof(XMFLOAT4));
 
     static_assert(offsetof(PBRConstants, AssetNoise) == 151 * sizeof(XMFLOAT4));
@@ -211,6 +217,20 @@ namespace
                                       material.LiveToonDefSmoothness ? 1u : 0u};
         constants.LiveToonMaterialParams = {material.LiveToonDefStrength, material.LiveToonFaceStrength,
                                             material.LiveToonTextureRampMultiply, material.LiveToonTextureRampAdd};
+
+        {
+            const uint32_t rampSlot = LiveToonStyle::AcquireShadowRampSlot(material.LiveToonShadowRampPath);
+            const uint32_t rampRow = static_cast<uint32_t>(std::clamp(material.LiveToonTextureRampRow, 0, 7));
+            const uint32_t layer = LiveToonTextures::ResolveHeapOffset(material.LiveToonLayerPath);
+            constants.LiveToonTextures2 = {LiveToonTextures::ResolveHeapOffset(material.LiveToonShadeColorPath),
+                                           material.LiveToonLayerBlend > 0.0f ? layer : UINT32_MAX,
+                                           rampSlot | (rampRow << 8u),
+                                           material.LiveToonDefGakumasLayout ? 1u : 0u};
+            constants.LiveToonParams2 = {std::clamp(material.LiveToonShadeColorStrength, 0.0f, 1.0f),
+                                         std::clamp(material.LiveToonLayerBlend, 0.0f, 1.0f),
+                                         std::clamp(material.LiveToonRimMaskStrength, 0.0f, 1.0f),
+                                         std::clamp(material.LiveToonSpecularMaskStrength, 0.0f, 1.0f)};
+        }
 
         // 球面法線補間 (SNI) パラメータ: xyz=球中心, w=半径（>0 で有効）
         constants.SniParams = {material.SniSphereCenter.x, material.SniSphereCenter.y, material.SniSphereCenter.z,
@@ -546,5 +566,7 @@ void MaterialBindings::UpdateDeferredLightingMaterial()
         memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
     }
 }
+
+
 
 

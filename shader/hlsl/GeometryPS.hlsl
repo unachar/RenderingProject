@@ -21,7 +21,8 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
     AssetParallaxResult pom =
         ApplyAssetParallaxEx(assetMaterial, input.TexCoord, input.WorldPos, input.Normal, input.CameraPos, Sampler);
     float2 materialUv = pom.Uv;
-    float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(input.Diffuse.a, 0.0f);
+    float materialPartId = MaterialMode == 1 ? ResolveLiveToonMaterialClass(input.Diffuse.a, (float)ShaderClass) : max(input.Diffuse.a, 0.0f);
+    materialPartId -= step(100.0f, materialPartId) * 100.0f;
     float4 baseColor = float4(input.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
     {

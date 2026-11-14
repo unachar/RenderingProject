@@ -35,6 +35,9 @@
     <MakeDir Directories="$(RenderRoot)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_0 -E Copy -D DLSS_COPY=1 -O3 -Fo &quot;$(RenderRoot)shader\hlsl\build\DlssCopyCS.cso&quot; &quot;$(RenderRoot)shader\hlsl\DlssPrepareCS.hlsl&quot;" />
   </Target>
+  <Target Name="CopyDirectStorageRuntime" AfterTargets="Build" Condition="'$(Platform)' == 'x64' and Exists('$(RenderRoot)packages\Microsoft.Direct3D.DirectStorage.1.3.0\native\bin\x64\dstorage.dll')">
+    <Copy SourceFiles="$(RenderRoot)packages\Microsoft.Direct3D.DirectStorage.1.3.0\native\bin\x64\dstorage.dll;$(RenderRoot)packages\Microsoft.Direct3D.DirectStorage.1.3.0\native\bin\x64\dstoragecore.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="CopyDlssRuntime" AfterTargets="Build" Condition="'$(EnableDlss)' == 'true' and '$(Platform)' == 'x64'">
     <Copy SourceFiles="$(DlssSdkRoot)lib\Windows_x86_64\rel\nvngx_dlss.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(DlssSdkRoot)LICENSE.txt" DestinationFiles="$(OutDir)..\licenses\NVIDIA_DLSS_LICENSE.txt" SkipUnchangedFiles="true" />

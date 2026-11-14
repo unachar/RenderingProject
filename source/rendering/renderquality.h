@@ -21,7 +21,8 @@ enum class ToneMapper : int
     AcesApprox = 0,
     AgX = 1,
     AcesFitted = 2,
-    PbrNeutral = 3
+    PbrNeutral = 3,
+    GranTurismo = 4 // GT トーンマッパー（内村 2017）。中間調が線形でアニメ調の色を崩さない
 };
 
 struct RenderQualitySettings
@@ -40,6 +41,12 @@ struct RenderQualitySettings
     DirectX::XMFLOAT3 Lift = {0.0f, 0.0f, 0.0f};
     DirectX::XMFLOAT3 Gamma = {1.0f, 1.0f, 1.0f};
     DirectX::XMFLOAT3 Gain = {1.0f, 1.0f, 1.0f};
+    // GT トーンマッパーのパラメーター（P：最大輝度、a：コントラスト、m：線形部の開始、l：線形部の長さ、c：黒の締まり）
+    float GtMaxBrightness = 1.0f;
+    float GtContrast = 1.0f;
+    float GtLinearStart = 0.22f;
+    float GtLinearLength = 0.4f;
+    float GtBlackTightness = 1.33f;
     // --- レンズ ---
     float Vignette = 0.0f;
     float VignetteSmoothness = 0.45f;
@@ -51,6 +58,10 @@ struct RenderQualitySettings
     float BloomThreshold = 1.0f; // 0 で物理ベース（しきい値なし）
     float BloomRadius = 0.85f;   // アップサンプル時のフィルタ半径
     int BloomLevels = 6;
+    // ディフュージョン（ソフトフォーカス）：にじませた像を「比較（明）」で重ねる。肌や衣装をやわらかく見せる
+    bool Diffusion = false;
+    float DiffusionAmount = 0.35f;
+    float DiffusionRadius = 6.0f; // 1080p 換算のピクセル
     bool LensFlare = false;
     float LensFlareIntensity = 0.35f;
     float LensFlareHalo = 0.25f;
@@ -133,7 +144,7 @@ class RenderQuality final
         out[0] = {static_cast<float>(s.Tonemapper), (std::max)(0.0f, s.Contrast), (std::max)(0.0f, s.Saturation),
                   s.Vibrance};
         out[1] = {std::clamp(s.Temperature, -1.0f, 1.0f), std::clamp(s.Tint, -1.0f, 1.0f), s.AgXPunchy ? 1.0f : 0.0f,
-                  0.0f};
+                  std::clamp(s.GtBlackTightness, 1.0f, 3.0f)};
         out[2] = {s.Lift.x, s.Lift.y, s.Lift.z, 0.0f};
         out[3] = {(std::max)(0.05f, s.Gamma.x), (std::max)(0.05f, s.Gamma.y), (std::max)(0.05f, s.Gamma.z), 0.0f};
         out[4] = {(std::max)(0.0f, s.Gain.x), (std::max)(0.0f, s.Gain.y), (std::max)(0.0f, s.Gain.z), 0.0f};
@@ -148,7 +159,9 @@ class RenderQuality final
         out[8] = {weather ? std::clamp(s.SnowFall, 0.0f, 1.0f) : 0.0f, s.WindX, s.WindZ, 0.0f};
         out[9] = {s.EnergyCompensation ? 1.0f : 0.0f, s.AreaLights ? 1.0f : 0.0f, oitActive ? 1.0f : 0.0f,
                   refractionActive ? 1.0f : 0.0f};
-        out[10] = {0.0f, 0.0f, 0.0f, 0.0f};
+        // GT トーンマッパー（ToneMapping.hlsli: GranTurismoToneMap）
+        out[10] = {std::clamp(s.GtMaxBrightness, 0.5f, 4.0f), std::clamp(s.GtContrast, 0.2f, 3.0f),
+                   std::clamp(s.GtLinearStart, 0.01f, 0.9f), std::clamp(s.GtLinearLength, 0.0f, 0.95f)};
     }
 
     static float GetEffectiveWetness()
@@ -189,3 +202,5 @@ class RenderQuality final
     static inline float s_EffectiveWetness = 0.0f;
     static inline float s_EffectivePuddles = 0.0f;
 };
+
+

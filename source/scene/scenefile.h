@@ -1031,6 +1031,10 @@ namespace SceneFile
         a("reflectionTexture", c.ReflectionTexturePath);
         a("reflectionBlendDistance", c.ReflectionBlendDistance);
         a("reflectionDxrRoughness", c.ReflectionDxrRoughness);
+        a("lightingChannels", c.LightingChannels);
+        a("specularScale", c.SpecularScale);
+        a("useShadowDirection", c.UseShadowDirection);
+        a("shadowDirection", c.ShadowDirection);
     }
 
     inline void Visit(Archive& a, SunComponent& c)
@@ -1228,6 +1232,15 @@ namespace SceneFile
         a("liveToonTextureRampPath", c.LiveToonTextureRampPath);
         a("liveToonTextureRampMultiply", c.LiveToonTextureRampMultiply);
         a("liveToonTextureRampAdd", c.LiveToonTextureRampAdd);
+        a("liveToonShadeColorPath", c.LiveToonShadeColorPath);
+        a("liveToonShadeColorStrength", c.LiveToonShadeColorStrength);
+        a("liveToonShadowRampPath", c.LiveToonShadowRampPath);
+        a("liveToonDefGakumasLayout", c.LiveToonDefGakumasLayout);
+        a("liveToonRimMaskStrength", c.LiveToonRimMaskStrength);
+        a("liveToonSpecularMaskStrength", c.LiveToonSpecularMaskStrength);
+        a("liveToonTextureRampRow", c.LiveToonTextureRampRow);
+        a("liveToonLayerPath", c.LiveToonLayerPath);
+        a("liveToonLayerBlend", c.LiveToonLayerBlend);
         a("alpha", c.Alpha);
         a("shadowMode", c.ShadowMode);
         a("shadowCutoff", c.ShadowCutoff);
@@ -1501,6 +1514,8 @@ namespace SceneFile
         });
     }
 } // 名前空間 SceneFile の終わり。
+
+
 
 
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "componentmanager.h"
 #include "material.h"
 #include "scene.h"
 #include <algorithm>
@@ -55,7 +56,7 @@ inline const vector<string_view> kMaterialPartSkinTokens = {"skin", "body", "fac
 
 inline const vector<string_view> kMaterialPartClothTokens = {"cloth", "dress", "shoe", "socks", "skirt"};
 
-// 意味フラグ用のトークン（部位 ID の判定とは独立。部位 ID の結果は従来と完全に同じ）。
+// 意味フラグと目のトゥーン部位を判定するトークン。
 // VRoid 系 VRM（F00_000_00_FaceBrow_00_FACE など）、MMD 系 PMX（前髪 / 目 / 眉 / まつ毛）、
 // 一般的な FBX（Eye_L, Brow, Lashes, Bangs）を想定。
 inline const vector<string_view> kSemanticBangsTokens = {"bang", "fringe", "maegami", "front_hair", "fronthair",
@@ -71,6 +72,8 @@ inline const vector<string_view> kSemanticBrowTokens = {"brow", "mayu", "\xE7\x9
 inline const vector<string_view> kSemanticEyeTokens = {
     "eye",  "iris", "pupil", "hitomi", "shirome",
     "\xE7\x9E\xB3" /*瞳*/, "\xE7\x99\xBD\xE7\x9B\xAE" /*白目*/, "\xE7\x9B\xAE" /*目*/};
+inline const vector<string_view> kScleraTokens = {"sclera", "eye_white", "eyewhite", "shirome",
+                                                  "\xE7\x99\xBD\xE7\x9B\xAE" /*白目*/};
 inline const vector<string_view> kSemanticFaceTokens = {"face", "head", "kao", "\xE9\xA1\x94" /*顔*/};
 inline const vector<string_view> kSemanticSkinTokens = {"skin", "body", "hada", "\xE8\x82\x8C" /*肌*/};
 
@@ -163,7 +166,10 @@ inline MeshSemanticInfo ResolveMeshSemantics(string_view materialNameRaw, string
     const bool lash = MaterialPartContainsAnyToken(key, kSemanticLashTokens);
     const bool brow = MaterialPartContainsAnyToken(key, kSemanticBrowTokens);
     const bool eye = MaterialPartContainsAnyToken(key, kSemanticEyeTokens);
-    if (highlight && (eye || key.find("hl") != string_view::npos))
+    const bool eyeGlint = (highlight && (eye || key.find("hl") != string_view::npos)) ||
+                          materialName == "\xE3\x83\x8F\xE3\x82\xA4\xE3\x83\xA9\xE3\x82\xA4\xE3\x83\x88" /*ハイライト*/ ||
+                          materialName == "\xE5\x85\x89\xE5\xBD\xA9" /*光彩*/;
+    if (eyeGlint)
     {
         info.Flags |= MeshSemantic_EyeHighlight;
     }
@@ -178,6 +184,13 @@ inline MeshSemanticInfo ResolveMeshSemantics(string_view materialNameRaw, string
     if (eye && !lash && !brow)
     {
         info.Flags |= MeshSemantic_Eye;
+    }
+    if (eyeGlint || (eye && !lash && !brow))
+    {
+        const bool sclera = MaterialPartContainsAnyToken(key, kScleraTokens);
+        info.MaterialPartId = static_cast<float>(eyeGlint ? MeshShadingOverride::ToonEyeHighlight
+                                                         : (sclera ? MeshShadingOverride::ToonSclera
+                                                                   : MeshShadingOverride::ToonIris));
     }
     const bool facialPart = (info.Flags & kMekakureDefaultTargetMask) != 0;
     if (!facialPart)

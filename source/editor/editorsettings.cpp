@@ -81,13 +81,21 @@ void ImGuiManager::DrawGlobalPostProcessSettings()
         {
             int toneMapper = static_cast<int>(rq.Tonemapper);
             if (ImGui::Combo("トーンマッパー", &toneMapper,
-                             "ACES (従来の近似)\0AgX\0ACES Fitted (RRT+ODT)\0Khronos PBR Neutral\0"))
+                             "ACES (従来の近似)\0AgX\0ACES Fitted (RRT+ODT)\0Khronos PBR Neutral\0GT (Gran Turismo)\0"))
             {
                 rq.Tonemapper = static_cast<ToneMapper>(toneMapper);
             }
             ImGui::BeginDisabled(rq.Tonemapper != ToneMapper::AgX);
             ImGui::Checkbox("AgX Punchy", &rq.AgXPunchy);
             ImGui::EndDisabled();
+            if (rq.Tonemapper == ToneMapper::GranTurismo)
+            {
+                ImGui::SliderFloat("GT 最大輝度 (P)", &rq.GtMaxBrightness, 0.5f, 4.0f, "%.2f");
+                ImGui::SliderFloat("GT コントラスト (a)", &rq.GtContrast, 0.2f, 3.0f, "%.2f");
+                ImGui::SliderFloat("GT 線形の開始 (m)", &rq.GtLinearStart, 0.01f, 0.9f, "%.2f");
+                ImGui::SliderFloat("GT 線形の長さ (l)", &rq.GtLinearLength, 0.0f, 0.95f, "%.2f");
+                ImGui::SliderFloat("GT 黒の締まり (c)", &rq.GtBlackTightness, 1.0f, 3.0f, "%.2f");
+            }
             ImGui::SliderFloat("コントラスト", &rq.Contrast, 0.5f, 2.0f, "%.2f");
             ImGui::SliderFloat("彩度", &rq.Saturation, 0.0f, 2.0f, "%.2f");
             ImGui::SliderFloat("自然な彩度", &rq.Vibrance, -1.0f, 1.0f, "%.2f");
@@ -115,6 +123,12 @@ void ImGuiManager::DrawGlobalPostProcessSettings()
             ImGui::SliderFloat("しきい値 (0=物理ベース)", &rq.BloomThreshold, 0.0f, 8.0f, "%.2f");
             ImGui::SliderFloat("広がり", &rq.BloomRadius, 0.0f, 1.0f, "%.2f");
             ImGui::SliderInt("段数", &rq.BloomLevels, 2, 8);
+            ImGui::EndDisabled();
+            ImGui::SeparatorText("ディフュージョン（ソフトフォーカス）");
+            ImGui::Checkbox("ディフュージョン", &rq.Diffusion);
+            ImGui::BeginDisabled(!rq.Diffusion);
+            ImGui::SliderFloat("ディフュージョン量", &rq.DiffusionAmount, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("にじみの半径", &rq.DiffusionRadius, 1.0f, 24.0f, "%.1f px");
             ImGui::EndDisabled();
             ImGui::EndDisabled();
             break;
@@ -319,6 +333,10 @@ void ImGuiManager::DrawProjectSettingsWindow()
         }
         ImGui::BeginDisabled(rays.RenderMode == Raytracing::Mode::ReflectionsOnly);
         ImGui::Checkbox("全ライトのレイトレーシング影", &rays.Shadows);
+        ImGui::BeginDisabled(!rays.Shadows);
+        ImGui::SliderFloat("太陽の角半径", &rays.SunAngularRadius, 0.0f, 0.05f, "%.4f rad");
+        ImGui::SliderInt("影のサンプル数", &rays.Samples, 1, 8);
+        ImGui::EndDisabled();
         ImGui::Checkbox("レイトレーシング AO", &rays.AmbientOcclusion);
         ImGui::EndDisabled();
         ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
@@ -1489,6 +1507,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("livetoon.ShadowRampStrength", liveToon.ShadowRampStrength, 0.0, 1.0);
     field("livetoon.PackedShadowRamp", liveToon.PackedShadowRamp, 0, 1);
     field("livetoon.SpecularRampByPart", liveToon.SpecularRampByPart, 0, 1);
+    field("livetoon.SpecularRampRowCount", liveToon.SpecularRampRowCount, 1, 16);
     // 陰影ランプのパス（文字列。数値用の EditorConfig::Value は使えないので直接扱う）
     if (output)
     {
@@ -1579,7 +1598,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("megalights.PhiLuminance", megaLights.PhiLuminance, 0.1, 100.0);
     field("megalights.PhiPlane", megaLights.PhiPlane, 0.05, 100.0);
     int toneMapper = static_cast<int>(rq.Tonemapper);
-    if (EditorConfig::Value(output, key, value, "quality.Tonemapper", toneMapper, 0, 3))
+    if (EditorConfig::Value(output, key, value, "quality.Tonemapper", toneMapper, 0, 4))
     {
         rq.Tonemapper = static_cast<ToneMapper>(toneMapper);
         matched = true;
@@ -1608,6 +1627,14 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("quality.BloomThreshold", rq.BloomThreshold, 0, 100);
     field("quality.BloomRadius", rq.BloomRadius, 0, 1);
     field("quality.BloomLevels", rq.BloomLevels, 2, 8);
+    field("quality.Diffusion", rq.Diffusion, 0, 1);
+    field("quality.DiffusionAmount", rq.DiffusionAmount, 0, 1);
+    field("quality.DiffusionRadius", rq.DiffusionRadius, 1, 24);
+    field("quality.GtMaxBrightness", rq.GtMaxBrightness, 0.5, 4);
+    field("quality.GtContrast", rq.GtContrast, 0.2, 3);
+    field("quality.GtLinearStart", rq.GtLinearStart, 0.01, 0.9);
+    field("quality.GtLinearLength", rq.GtLinearLength, 0, 0.95);
+    field("quality.GtBlackTightness", rq.GtBlackTightness, 1, 3);
     field("quality.LensFlare", rq.LensFlare, 0, 1);
     field("quality.LensFlareIntensity", rq.LensFlareIntensity, 0, 10);
     field("quality.LensFlareHalo", rq.LensFlareHalo, 0, 10);
@@ -2293,5 +2320,7 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
+
+
 
 

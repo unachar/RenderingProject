@@ -734,7 +734,7 @@ void ImGuiManager::DrawLegacyMaterialEditorWindow()
 }
 
 // テクスチャのパス入力（UTF-8）。エクスプローラーからパスを貼り付けて Enter で確定。
-static bool DrawLiveToonPathInput(const char* label, string& path)
+static bool DrawLiveToonPathInput(const char* label, string& path, bool showLoadError = true)
 {
     // 入力中の文字列はフレームをまたいで保持し、編集中でないときだけパスから同期する。
     static std::unordered_map<ImGuiID, std::array<char, 512>> buffers;
@@ -767,7 +767,7 @@ static bool DrawLiveToonPathInput(const char* label, string& path)
             changed = true;
         }
         ImGui::PopID();
-        if (LiveToonTextures::ResolveDescriptor(path) < 0)
+        if (showLoadError && LiveToonTextures::ResolveDescriptor(path) < 0)
         {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "読み込めません: %s", path.c_str());
         }
@@ -775,8 +775,181 @@ static bool DrawLiveToonPathInput(const char* label, string& path)
     return changed;
 }
 
+enum class LiveToonRampKind
+{
+    Shadow,
+    PackedShadow,
+    LightResponse,
+    PartLightResponse,
+    ViewAngle,
+};
+
+struct LiveToonRampPalette
+{
+    std::array<std::array<ImVec4, 3>, 4> Colors{};
+    float Midpoint = 0.5f;
+    string Error;
+
+    void Reset(LiveToonRampKind kind)
+    {
+        Midpoint = 0.5f;
+        Error.clear();
+        const bool viewAngle = kind == LiveToonRampKind::ViewAngle;
+        const bool shadow = kind == LiveToonRampKind::Shadow || kind == LiveToonRampKind::PackedShadow;
+        for (auto& row : Colors)
+        {
+            row = {ImVec4(0.5f, 0.5f, 0.5f, 0.0f), ImVec4(0.5f, 0.5f, 0.5f, shadow ? 0.5f : 0.0f),
+                   ImVec4(1.0f, 1.0f, 1.0f, shadow ? 1.0f : 0.0f)};
+            if (viewAngle)
+            {
+                row[2] = ImVec4(0.42f, 0.37f, 0.36f, 1.0f);
+            }
+        }
+    }
+};
+
+static bool DrawLiveToonRampInput(const char* label, string& path, LiveToonRampKind kind,
+                                 const filesystem::path& assetRoot)
+{
+    ImGui::PushID(label);
+    const float inputWidth = ImGui::CalcItemWidth();
+    const bool open = ImGui::SmallButton("ランプ作成");
+    const float buttonWidth = ImGui::GetItemRectSize().x + ImGui::GetStyle().ItemSpacing.x;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(std::max(inputWidth - buttonWidth, ImGui::GetFontSize() * 3.0f));
+    bool changed = DrawLiveToonPathInput(label, path, false);
+    if (!path.empty() && LiveToonTextures::ResolveDescriptor(path) < 0)
+    {
+        ImGui::TextWrapped("読み込めません: %s", path.c_str());
+    }
+
+    static LiveToonRampPalette palette;
+    if (open)
+    {
+        palette.Reset(kind);
+        ImGui::OpenPopup("ランプパレット");
+    }
+    if (ImGui::BeginPopup("ランプパレット"))
+    {
+        const bool packed = kind == LiveToonRampKind::PackedShadow;
+        const bool lightResponse = kind == LiveToonRampKind::LightResponse ||
+                                   kind == LiveToonRampKind::PartLightResponse;
+        const bool editAlpha = packed || lightResponse;
+        const bool viewAngle = kind == LiveToonRampKind::ViewAngle;
+        const char* const* rowNames = nullptr;
+        const char* shadowRows[] = {"肌", "肌以外"};
+        const char* responseRows[] = {"髪", "衣装", "肌", "汎用トゥーン"};
+        int rowCount = 1;
+        if (kind == LiveToonRampKind::Shadow)
+        {
+            rowCount = 2;
+            rowNames = shadowRows;
+        }
+        if (kind == LiveToonRampKind::PartLightResponse)
+        {
+            rowCount = 4;
+            rowNames = responseRows;
+        }
+        ImGui::TextUnformatted(viewAngle ? "正面 → 輪郭" : (lightResponse ? "弱い反射 → 強い反射" : "影 → 光"));
+        if (editAlpha)
+        {
+            ImGui::TextUnformatted(packed ? "α は肌以外の影から光への補間" : "α は拡散光への加算割合");
+        }
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
+        ImGui::SliderFloat("中間色の位置", &palette.Midpoint, 0.05f, 0.95f, "%.2f");
+        const char* stopNames[] = {"左端", "中間", "右端"};
+        for (int row = 0; row < rowCount; ++row)
+        {
+            ImGui::PushID(row);
+            if (rowNames)
+            {
+                ImGui::SeparatorText(rowNames[row]);
+            }
+            auto& colors = palette.Colors[row];
+            for (int stop = 0; stop < 3; ++stop)
+            {
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
+                ImGui::ColorEdit4(stopNames[stop], &colors[stop].x,
+                                  ImGuiColorEditFlags_Float | (editAlpha ? 0 : ImGuiColorEditFlags_NoAlpha));
+            }
+            const ImVec2 start = ImGui::GetCursorScreenPos();
+            const float width = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
+            const float height = ImGui::GetFrameHeight();
+            const float middle = start.x + width * palette.Midpoint;
+            const float end = start.x + width;
+            const ImU32 left = ImGui::GetColorU32(ImVec4(colors[0].x, colors[0].y, colors[0].z, 1.0f));
+            const ImU32 center = ImGui::GetColorU32(ImVec4(colors[1].x, colors[1].y, colors[1].z, 1.0f));
+            const ImU32 right = ImGui::GetColorU32(ImVec4(colors[2].x, colors[2].y, colors[2].z, 1.0f));
+            auto* drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilledMultiColor(start, ImVec2(middle, start.y + height), left, center, center, left);
+            drawList->AddRectFilledMultiColor(ImVec2(middle, start.y), ImVec2(end, start.y + height),
+                                              center, right, right, center);
+            ImGui::Dummy(ImVec2(width, height));
+            ImGui::PopID();
+        }
+        if (ImGui::Button("PNGを保存して登録"))
+        {
+            ProcStudio::Image image;
+            image.Width = 256;
+            constexpr int rowHeight = 16;
+            image.Height = rowCount * rowHeight;
+            image.Pixels.resize(static_cast<size_t>(image.Width) * image.Height);
+            for (int y = 0; y < image.Height; ++y)
+            {
+                const auto& colors = palette.Colors[y / rowHeight];
+                for (int x = 0; x < image.Width; ++x)
+                {
+                    const float u = static_cast<float>(x) / (image.Width - 1);
+                    const bool left = u < palette.Midpoint;
+                    const float t = left ? u / palette.Midpoint : (u - palette.Midpoint) / (1.0f - palette.Midpoint);
+                    const ImVec4& a = colors[left ? 0 : 1];
+                    const ImVec4& b = colors[left ? 1 : 2];
+                    image.Pixels[static_cast<size_t>(y) * image.Width + x] = {
+                        std::lerp(a.x, b.x, t), std::lerp(a.y, b.y, t), std::lerp(a.z, b.z, t),
+                        editAlpha ? std::lerp(a.w, b.w, t) : 1.0f};
+                }
+            }
+            const filesystem::path directory = assetRoot / "texture" / "LiveToonRamps";
+            std::error_code error;
+            filesystem::create_directories(directory, error);
+            GUID guid{};
+            wchar_t name[40]{};
+            if (error || FAILED(CoCreateGuid(&guid)) || !StringFromGUID2(guid, name, ARRAYSIZE(name)))
+            {
+                palette.Error = "ランプの保存先を作成できません";
+            }
+            else
+            {
+                const filesystem::path output = directory / (wstring(L"ramp_") + name + L".png");
+                if (ProceduralIO::SaveImageFile(output, image, ProceduralIO::Encoding::Linear, palette.Error))
+                {
+                    const filesystem::path relative = filesystem::relative(output, error);
+                    const string candidate = ProceduralIO::ToUtf8(error ? output : relative);
+                    if (LiveToonTextures::ResolveHeapOffset(candidate) != UINT32_MAX)
+                    {
+                        path = candidate;
+                        changed = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    else
+                    {
+                        palette.Error = "PNGは保存されましたが、ランプを登録できません";
+                    }
+                }
+            }
+        }
+        if (!palette.Error.empty())
+        {
+            ImGui::TextWrapped("%s", palette.Error.c_str());
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // ライブ用トゥーンスタイル（シーン全体）。Forward / Deferred 共通で LightParams に入る。
-static void DrawLiveToonStyleControls()
+static void DrawLiveToonStyleControls(const filesystem::path& assetRoot)
 {
     auto& s = LiveToonStyle::Get();
     ImGui::TextWrapped("学マスのライブ風シェーディング（シーン全体）。トゥーン系クラス（髪・服・肌・トゥーン）に適用されます。");
@@ -805,15 +978,20 @@ static void DrawLiveToonStyleControls()
     ImGui::Checkbox("RGB / α 形式", &s.PackedShadowRamp);
     ImGui::TextWrapped(s.PackedShadowRamp ? "RGB は肌の乗算色、α は肌以外の影色から明色への補間。"
                                         : "上段は肌、下段は肌以外。横軸は影から光への遷移。");
-    DrawLiveToonPathInput("陰影ランプ画像", s.ShadowRampPath);
+    DrawLiveToonRampInput("陰影ランプ画像", s.ShadowRampPath,
+                         s.PackedShadowRamp ? LiveToonRampKind::PackedShadow : LiveToonRampKind::Shadow, assetRoot);
     ImGui::SliderFloat("陰影ランプの強さ", &s.ShadowRampStrength, 0.0f, 1.0f);
     ImGui::SeparatorText("ライト応答の質感ランプ");
-    DrawLiveToonPathInput("質感ランプ画像", s.SpecularRampPath);
     ImGui::Checkbox("質感ランプを部位別に使う", &s.SpecularRampByPart);
+    DrawLiveToonRampInput("質感ランプ画像", s.SpecularRampPath,
+                         s.SpecularRampByPart ? LiveToonRampKind::PartLightResponse : LiveToonRampKind::LightResponse,
+                         assetRoot);
     if (s.SpecularRampByPart)
     {
         ImGui::TextWrapped("画像を縦に4等分し、上から髪・衣装・肌・汎用トゥーンを配置します。");
     }
+    ImGui::SliderInt("質感ランプの行数", &s.SpecularRampRowCount, 1, 16);
+    ImGui::SetItemTooltip("マテリアルで「質感ランプの行」を指定したときの縦の分割数（学マスは 6 行）。");
     ImGui::TextWrapped("横軸はハイライトの応答。α でスペキュラの乗算から拡散光への加算に切り替えます。");
     ImGui::TextDisabled("強さは「ランプスペキュラ」で調整します。");
     if (ImGui::Button("ライブスタイルを標準値に戻す"))
@@ -836,7 +1014,7 @@ void ImGuiManager::DrawRimSettingsWindow()
     {
         ImGui::TextUnformatted("リムを設定するマテリアル付きオブジェクトを選択してください");
         ImGui::Separator();
-        DrawLiveToonStyleControls();
+        DrawLiveToonStyleControls(m_AssetRoot);
         ImGui::End();
         return;
     }
@@ -928,7 +1106,7 @@ void ImGuiManager::DrawRimSettingsWindow()
         }
         if (ImGui::BeginTabItem("ライブトゥーン"))
         {
-            DrawLiveToonStyleControls();
+            DrawLiveToonStyleControls(m_AssetRoot);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -1225,10 +1403,37 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
     changed |= DrawLiveToonPathInput("顔陰影反転", material.LiveToonFacePath);
     ImGui::SetItemTooltip("R = 影側でも光を残す領域（頬など）");
     changed |= ImGui::SliderFloat("顔陰影反転の強さ", &material.LiveToonFaceStrength, 0.0f, 1.0f);
-    changed |= DrawLiveToonPathInput("質感ランプ", material.LiveToonTextureRampPath);
+    changed |= DrawLiveToonRampInput("質感ランプ", material.LiveToonTextureRampPath, LiveToonRampKind::ViewAngle,
+                                    m_AssetRoot);
     ImGui::SetItemTooltip("横軸 = 視線角度（左 = 正面、右 = 縁）。オーロラ素材・偏光塗料風の色変化");
     changed |= ImGui::SliderFloat("質感ランプ（乗算）", &material.LiveToonTextureRampMultiply, 0.0f, 1.0f);
     changed |= ImGui::SliderFloat("質感ランプ（加算）", &material.LiveToonTextureRampAdd, 0.0f, 1.0f);
+
+    ImGui::SeparatorText("学マス方式（シェードカラー / キャラ別ランプ / 汗）");
+    changed |= ImGui::Checkbox("Def を学マス配置で読む", &material.LiveToonDefGakumasLayout);
+    ImGui::SetItemTooltip("R = 陰影オフセット（& リムマスク）、G = スムースネス、B = メタリック、A = スペキュラマスク");
+    ImGui::BeginDisabled(!material.LiveToonDefGakumasLayout && material.LiveToonLayerPath.empty());
+    changed |= ImGui::SliderFloat("リムマスクの効き", &material.LiveToonRimMaskStrength, 0.0f, 1.0f);
+    ImGui::SetItemTooltip("Def の R（0〜0.5 を 0〜1 に引き伸ばし）でリムを抑える量。凹んだ所にリムが乗らなくなります。");
+    changed |= ImGui::SliderFloat("スペキュラマスクの効き", &material.LiveToonSpecularMaskStrength, 0.0f, 1.0f);
+    ImGui::EndDisabled();
+    changed |= DrawLiveToonPathInput("シェードカラー", material.LiveToonShadeColorPath);
+    ImGui::SetItemTooltip("RGB = 影色（落ち影も同じ色）、A = 肌領域のマスク（白 = 肌）");
+    ImGui::BeginDisabled(material.LiveToonShadeColorPath.empty());
+    changed |= ImGui::SliderFloat("シェードカラーの強さ", &material.LiveToonShadeColorStrength, 0.0f, 1.0f);
+    ImGui::EndDisabled();
+    changed |= DrawLiveToonRampInput("キャラ陰影ランプ", material.LiveToonShadowRampPath, LiveToonRampKind::PackedShadow,
+                                    m_AssetRoot);
+    ImGui::SetItemTooltip("1024x4 の横長ランプ。RGB = 肌の乗算色、A = 肌以外のカラー↔シェードカラーの補間。\n"
+                          "キャラ（肌の系統色）ごとに最大 6 枚。7 枚目以降はシーン共通のランプを使います。");
+    changed |= ImGui::SliderInt("質感ランプの行", &material.LiveToonTextureRampRow, 0, 7,
+                                material.LiveToonTextureRampRow == 0 ? "自動" : "%d");
+    ImGui::SetItemTooltip("ライト応答の質感ランプ（ライブスタイル設定）の何行目を使うか。0 = マテリアルクラスから自動。");
+    changed |= DrawLiveToonPathInput("レイヤー（汗）", material.LiveToonLayerPath);
+    ImGui::SetItemTooltip("2:1 の画像。左半分 = カラー（A = 下地とのブレンド）、右半分 = Def（学マス配置）。");
+    ImGui::BeginDisabled(material.LiveToonLayerPath.empty());
+    changed |= ImGui::SliderFloat("汗の量", &material.LiveToonLayerBlend, 0.0f, 1.0f);
+    ImGui::EndDisabled();
 
     ImGui::SeparatorText("球面法線補間 (SNI)");
     ImGui::TextWrapped("頭部を球面として法線を補間し、トゥーン陰影の境界を滑らかにする");
@@ -1757,7 +1962,7 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
                                   "影",           "メタリック", "セルフシャドウ",
                                   "ライティング", "目",         "非ライティング",
                                   "PBR",          "BRDF",       "BTDF",
-                                  "BSDF"};
+                                  "BSDF", "トゥーン白目", "トゥーン虹彩", "トゥーン瞳ハイライト"};
     const int shadingValues[] = {
         static_cast<int>(MeshShadingOverride::Auto),       static_cast<int>(MeshShadingOverride::Transparent),
         static_cast<int>(MeshShadingOverride::Hair),       static_cast<int>(MeshShadingOverride::Cloth),
@@ -1767,12 +1972,20 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
         static_cast<int>(MeshShadingOverride::Eye),        static_cast<int>(MeshShadingOverride::Unlit),
         static_cast<int>(MeshShadingOverride::PBR),        static_cast<int>(MeshShadingOverride::BRDF),
         static_cast<int>(MeshShadingOverride::BTDF),       static_cast<int>(MeshShadingOverride::BSDF),
+        static_cast<int>(MeshShadingOverride::ToonSclera), static_cast<int>(MeshShadingOverride::ToonIris),
+        static_cast<int>(MeshShadingOverride::ToonEyeHighlight),
     };
 
     auto getAutoLabel = [](float materialPartId) -> const char* {
         const int part = static_cast<int>(materialPartId + 0.5f);
         switch (part)
         {
+            case static_cast<int>(MeshShadingOverride::ToonSclera):
+                return "白目";
+            case static_cast<int>(MeshShadingOverride::ToonIris):
+                return "虹彩";
+            case static_cast<int>(MeshShadingOverride::ToonEyeHighlight):
+                return "瞳ハイライト";
             case static_cast<int>(ShaderClass::Hair):
                 return "髪";
             case static_cast<int>(ShaderClass::Cloth):
@@ -2010,9 +2223,54 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
     changed |= ImGui::Checkbox("大気・ボリュームに影響", &light.AffectsVolumetrics);
     ImGui::EndDisabled();
     changed |= ImGui::DragFloat("ライト優先度", &light.Priority, 0.05f, -10.0f, 10.0f);
+    {
+        // 学マス方式：キャラ用（トゥーン）と背景用のライトを分ける
+        bool environment = (light.LightingChannels & 1) != 0;
+        bool character = (light.LightingChannels & 2) != 0;
+        bool channelChanged = ImGui::Checkbox("背景を照らす", &environment);
+        ImGui::SameLine();
+        channelChanged |= ImGui::Checkbox("キャラを照らす", &character);
+        ImGui::SetItemTooltip("キャラ = ライブトゥーン系のマテリアル。片方だけにしたライトは MegaLights のグリッドに入りません。");
+        if (channelChanged && (environment || character))
+        {
+            light.LightingChannels = (environment ? 1 : 0) | (character ? 2 : 0);
+            changed = true;
+        }
+        changed |= ImGui::SliderFloat("スペキュラ強度", &light.SpecularScale, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("ハイライトだけを弱めます（ディフューズは変わりません）。");
+    }
     ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical || light.Type == LightType::Capsule);
     changed |= ImGui::Checkbox("影を描画", &light.CastShadow);
     ImGui::EndDisabled();
+    if (light.Type == LightType::Directional)
+    {
+        ImGui::BeginDisabled(!light.CastShadow);
+        changed |= ImGui::Checkbox("影の向きを別にする", &light.UseShadowDirection);
+        ImGui::SetItemTooltip("シャドウマップだけを別の向きから描きます（陰影の向きはそのまま）。\n"
+                              "キャラ専用のライトと組み合わせると、顔に落ちる望ましくない影を避けられます。\n"
+                              "レイトレーシングの影には適用されません。");
+        if (light.UseShadowDirection)
+        {
+            changed |= ImGui::DragFloat3("影の向き", &light.ShadowDirection.x, 0.01f, -1.0f, 1.0f, "%.2f");
+            if (ImGui::SmallButton("ライトの向きをコピー"))
+            {
+                light.ShadowDirection = light.Direction;
+                changed = true;
+            }
+        }
+        ImGui::EndDisabled();
+    }
+    if (light.Type == LightType::Point || light.Type == LightType::Spot)
+    {
+        ImGui::BeginDisabled(!light.CastShadow || light.RenderMode != LightRenderMode::Physical);
+        changed |= ImGui::DragFloat("影のぼかし###ソース半径", &light.SourceRadius, 0.005f, 0.0f, 5.0f, "%.3f m",
+                                    ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("発光面の半径です。値を大きくすると落ち影の輪郭が柔らかくなります。");
+        }
+        ImGui::EndDisabled();
+    }
     if (light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect)
     {
         ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical);
@@ -2022,15 +2280,6 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
         {
             ImGui::SetTooltip("環境設定で MegaLights が有効なとき、不透明面をクラスターライトグリッドで評価します。\n"
                               "シャドウマップを割り当てられたライトは従来の経路のままです。");
-        }
-        if (light.Type != LightType::Rect)
-        {
-            changed |= ImGui::DragFloat("ソース半径", &light.SourceRadius, 0.005f, 0.0f, 5.0f, "%.3f m");
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip(
-                    "MegaLights（M2 / リファレンス）の影レイで、発光球の大きさに応じたソフトシャドウになります。");
-            }
         }
     }
     if (light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect)
@@ -3422,6 +3671,8 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
     }
 }
+
+
 
 
 

@@ -22,6 +22,7 @@ namespace VirtualGeometryRuntime
         std::shared_ptr<const VirtualGeometryPageCache::PageManifest> Pages;
         uint64_t Key = 0;
         bool CacheHit = false;
+        bool StreamRayGeometry = false;
         double BuildMilliseconds = 0;
         std::filesystem::path CachePath;
         std::string Error;

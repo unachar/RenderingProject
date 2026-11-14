@@ -317,9 +317,9 @@ float4 ShadeForward(in PSInput3D In)
         g_PomSelfShadow = AssetParallaxSelfShadow(pom, g_PomSelfShadowLight, g_SamplerState);
     }
 #endif
-    float rawPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
+    float rawPartId = MaterialMode == 1 ? ResolveLiveToonMaterialClass(In.Diffuse.a, (float)ShaderClass) : max(In.Diffuse.a, 0.0f);
     // SNI ヘッドマスク: materialPartId + 100.0f でエンコードされている
-    float headMask = step(15.0f, rawPartId);
+    float headMask = step(100.0f, rawPartId);
     float materialPartId = rawPartId - headMask * 100.0f;
     // 手動モードへ切り替えた後も、モデル色の alpha にマテリアルの分類が残る場合がある。
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
@@ -416,13 +416,20 @@ float4 ShadeForward(in PSInput3D In)
         toonSurface.ShadowThreshold = shadowThreshold;
         toonSurface.ShadowSoftness = shadowSoftness;
         toonSurface.Roughness = material.g;
-        ApplyLiveToonMaterialTextures(LiveToonTextures, LiveToonMaterialParams, materialUv, surfaceNormal,
-                                      SurfaceViewDirectionCommon(In.WorldPos, CameraPos), shaderClass,
-                                      g_SamplerState, toonSurface);
+        toonSurface.Extra = LiveToonExtraDefault();
+        ApplyLiveToonMaterialTextures(LiveToonTextures, LiveToonMaterialParams, LiveToonTextures2, LiveToonParams2,
+                                      materialUv, surfaceNormal, SurfaceViewDirectionCommon(In.WorldPos, CameraPos),
+                                      shaderClass, material.r, g_SamplerState, toonSurface);
         baseColor.rgb = toonSurface.Albedo;
         shadowThreshold = toonSurface.ShadowThreshold;
         shadowSoftness = max(toonSurface.ShadowSoftness, 0.0001f);
         material.g = toonSurface.Roughness;
+        // Forward はそのままライティングへ渡す（Deferred は GBuffer 経由で同じ値になる）。
+        g_LiveToonExtra = toonSurface.Extra;
+        if (toonSurface.Extra.Valid)
+        {
+            material.r = toonSurface.Extra.Metallic;
+        }
     }
 #endif
 
@@ -441,7 +448,7 @@ float4 ShadeForward(in PSInput3D In)
             attenuation, volume, range, visibility);
         float3 irradiance = SampleEnvironmentLatLong(surfaceNormal, 1.0f);
         float3 color = directLight + EvaluateLiveToonAmbientStyled(baseColor.rgb, irradiance, shaderClass);
-        [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
+        [branch] if (!IsLiveToonEyeClass(shaderClass) && LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
         {
             float3 environment = SampleEnvironmentLatLong(reflect(-toonView, surfaceNormal), saturate(LiveToonStyle5.z));
             color += EvaluateLiveToonEnvironmentSpecular(baseColor.rgb, surfaceNormal, toonView, environment,
@@ -451,7 +458,8 @@ float4 ShadeForward(in PSInput3D In)
         // Reuse the same GI/fog/emission composition as Deferred.
         float2 screenUv = In.Position.xy / max(ViewportSize, float2(1.0f, 1.0f));
         color = ApplySurfaceScreenEffects(color, assetEmissionAO.rgb, screenUv,
-                                           baseColor.rgb * (1.0f - saturate(material.r)));
+                                           baseColor.rgb * (1.0f - saturate(material.r)),
+                                           IsLiveToonEyeClass(shaderClass));
         return float4(color * baseColor.a, baseColor.a);
     }
 
@@ -689,6 +697,8 @@ ForwardOutput main(in PSInput3D In)
     return output;
 }
 #endif
+
+
 
 
 

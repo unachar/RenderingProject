@@ -19,6 +19,10 @@ struct StaticModelVertex
     XMFLOAT4 Diffuse{};
 };
 
+struct VirtualGeometryGPUCluster;
+bool AppendVirtualGeometryCluster(const VirtualGeometryGPUCluster& cluster, std::span<const uint8_t> page,
+                                  std::vector<StaticModelVertex>& vertices, std::vector<uint32_t>& indices);
+
 struct StaticMeshData
 {
     static constexpr UINT LodCount = 5;
@@ -68,6 +72,7 @@ struct StaticMeshData
     array<shared_future<shared_ptr<const VirtualGeometryRuntime::RuntimeAsset>>, LodCount> VirtualGeometryBuilds{};
     string VirtualGeometryBuildError;
     bool VirtualGeometryRootFallback = false;
+    vector<UINT> VirtualGeometryRootTriangleCounts;
     vector<uint32_t> CpuIndices{}; // 最適化済み LOD0 の正確なアップロードデータ。GPU の読み戻しからは再構築しない。
     array<vector<uint32_t>, LodCount - 1> CpuLodIndices{};
     array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};

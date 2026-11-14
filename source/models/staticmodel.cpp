@@ -1026,6 +1026,62 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     return true;
 }
 
+bool AppendVirtualGeometryCluster(const VirtualGeometryGPUCluster& cluster, std::span<const uint8_t> page,
+                                  std::vector<StaticModelVertex>& vertices, std::vector<uint32_t>& indices)
+{
+    if (vertices.size() + cluster.VertexCount > UINT32_MAX ||
+        indices.size() + uint64_t(cluster.TriangleCount) * 3 > UINT32_MAX)
+    {
+        return false;
+    }
+    const uint32_t first = static_cast<uint32_t>(vertices.size());
+    const bool encoded = (cluster.Flags & VirtualGeometryCompression::ClusterFlag) != 0;
+    const auto payload = page.subspan(cluster.VertexOffset);
+    for (uint32_t index = 0; index < cluster.VertexCount; ++index)
+    {
+        StaticModelVertex vertex;
+        if (encoded)
+        {
+            const auto decoded = VirtualGeometryCompression::DecodeVertexCPU(payload, index);
+            vertex.Position = {decoded.Position[0], decoded.Position[1], decoded.Position[2]};
+            vertex.Normal = {decoded.Normal[0], decoded.Normal[1], decoded.Normal[2]};
+            if (!decoded.Texcoords.empty())
+            {
+                vertex.TexCoord = {decoded.Texcoords[0][0], decoded.Texcoords[0][1]};
+            }
+            vertex.Diffuse = {decoded.Color[0], decoded.Color[1], decoded.Color[2], decoded.Color[3]};
+        }
+        else
+        {
+            static_assert(sizeof(StaticModelVertex) == sizeof(VirtualGeometryVertex));
+            memcpy(&vertex, payload.data() + size_t(index) * sizeof(StaticModelVertex), sizeof(vertex));
+        }
+        vertices.push_back(vertex);
+    }
+    for (uint32_t triangle = 0; triangle < cluster.TriangleCount; ++triangle)
+    {
+        std::array<uint32_t, 3> triangleIndices;
+        if (encoded)
+        {
+            triangleIndices = VirtualGeometryCompression::LoadTriangleCPU(payload, triangle);
+        }
+        else
+        {
+            const size_t offset = size_t(cluster.TriangleOffset) + size_t(triangle) * 3;
+            triangleIndices = {page[offset], page[offset + 1], page[offset + 2]};
+        }
+        for (const auto index : triangleIndices)
+        {
+            if (index >= cluster.VertexCount)
+            {
+                return false;
+            }
+            indices.push_back(first + index);
+        }
+    }
+    return true;
+}
+
 bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device* device)
 {
     try
@@ -1062,56 +1118,11 @@ bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device
                 }
                 lastPage = cluster.PageIndex;
             }
-            if (mesh.CpuVertices.size() + cluster.VertexCount > UINT32_MAX ||
-                mesh.CpuIndices.size() + uint64_t(cluster.TriangleCount) * 3 > UINT32_MAX)
+            if (!AppendVirtualGeometryCluster(cluster, page, mesh.CpuVertices, mesh.CpuIndices))
             {
                 return false;
             }
-            const uint32_t first = static_cast<uint32_t>(mesh.CpuVertices.size());
-            const bool encoded = (cluster.Flags & VirtualGeometryCompression::ClusterFlag) != 0;
-            const auto payload = std::span<const uint8_t>(page).subspan(cluster.VertexOffset);
-            for (uint32_t index = 0; index < cluster.VertexCount; ++index)
-            {
-                StaticModelVertex vertex;
-                if (encoded)
-                {
-                    const auto decoded = VirtualGeometryCompression::DecodeVertexCPU(payload, index);
-                    vertex.Position = {decoded.Position[0], decoded.Position[1], decoded.Position[2]};
-                    vertex.Normal = {decoded.Normal[0], decoded.Normal[1], decoded.Normal[2]};
-                    if (!decoded.Texcoords.empty())
-                    {
-                        vertex.TexCoord = {decoded.Texcoords[0][0], decoded.Texcoords[0][1]};
-                    }
-                    vertex.Diffuse = {decoded.Color[0], decoded.Color[1], decoded.Color[2], decoded.Color[3]};
-                }
-                else
-                {
-                    static_assert(sizeof(StaticModelVertex) == sizeof(VirtualGeometryVertex));
-                    memcpy(&vertex, payload.data() + size_t(index) * sizeof(StaticModelVertex), sizeof(vertex));
-                }
-                mesh.CpuVertices.push_back(vertex);
-            }
-            for (uint32_t triangle = 0; triangle < cluster.TriangleCount; ++triangle)
-            {
-                std::array<uint32_t, 3> indices;
-                if (encoded)
-                {
-                    indices = VirtualGeometryCompression::LoadTriangleCPU(payload, triangle);
-                }
-                else
-                {
-                    const size_t offset = size_t(cluster.TriangleOffset) + size_t(triangle) * 3;
-                    indices = {page.at(offset), page.at(offset + 1), page.at(offset + 2)};
-                }
-                for (const auto index : indices)
-                {
-                    if (index >= cluster.VertexCount)
-                    {
-                        return false;
-                    }
-                    mesh.CpuIndices.push_back(first + index);
-                }
-            }
+            mesh.VirtualGeometryRootTriangleCounts.push_back(cluster.TriangleCount);
             lower.x = std::min(lower.x, cluster.Bounds[0] - cluster.Bounds[3]);
             lower.y = std::min(lower.y, cluster.Bounds[1] - cluster.Bounds[3]);
             lower.z = std::min(lower.z, cluster.Bounds[2] - cluster.Bounds[3]);
@@ -1139,6 +1150,7 @@ bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device
         mesh.IndexBufferView = {mesh.IndexBuffer->GetGPUVirtualAddress(), indexBytes, DXGI_FORMAT_R32_UINT};
         auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>();
         runtime->Key = manifest->Identity;
+        runtime->StreamRayGeometry = true;
         runtime->CachePath = manifest->Path;
         runtime->ImportSettings = m_VGSettings;
         runtime->Hierarchy.Stats.SourceTriangles = manifest->SourceTriangles;
@@ -1364,6 +1376,11 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
             {
                 MeshSemanticInfo semantic = ResolveMeshSemantics(mesh.MaterialName, mesh.MeshName,
                                                                  static_cast<unsigned int>(mesh.MaterialIndex));
+                if (semantic.MaterialPartId >= static_cast<float>(MeshShadingOverride::ToonSclera) &&
+                    mesh.MaterialPartId != semantic.MaterialPartId)
+                {
+                    return false;
+                }
                 mesh.SemanticFlags = semantic.Flags;
                 mesh.SemanticKey = std::move(semantic.Key);
             }
@@ -1637,7 +1654,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         }
         const float materialPartId = semantic.MaterialPartId;
         // 頭部メッシュ（Face/Skin）は SNI 球面法線補間を有効にするため、Diffuse.w にフラグを埋め込む
-        // materialPartId (0-14) + 100.0f で頭部フラグを表現。シェーダー側で step(15.0f, Diffuse.a) で判定。
+        // materialPartId + 100.0f で頭部フラグを表現。
         const float diffuseW = (semantic.Flags & MeshSemantic_Head) != 0 ? materialPartId + 100.0f : materialPartId;
         const XMFLOAT4 meshDiffuse(diffuse.r, diffuse.g, diffuse.b, diffuseW);
 

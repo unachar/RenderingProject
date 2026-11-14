@@ -13,12 +13,93 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#if __has_include("../../packages/Microsoft.Direct3D.DirectStorage.1.3.0/native/include/dstorage.h")
+#include <d3d12.h>
+#include <wrl/client.h>
+#include "../../packages/Microsoft.Direct3D.DirectStorage.1.3.0/native/include/dstorage.h"
+#define VG_HAS_DIRECTSTORAGE 1
+#endif
 #endif
 
 namespace VirtualGeometryPageCache
 {
     namespace
     {
+        void ReadExact(std::ifstream& file, std::span<uint8_t> bytes);
+#if VG_HAS_DIRECTSTORAGE
+        bool ReadDirectStorage(const std::filesystem::path& path, uint64_t offset, std::span<uint8_t> bytes)
+        {
+            using Microsoft::WRL::ComPtr;
+            struct Reader
+            {
+                HMODULE Library = LoadLibraryExW(L"dstorage.dll", nullptr,
+                                                LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+                ComPtr<IDStorageFactory> Factory;
+                ComPtr<IDStorageQueue2> Queue;
+                ComPtr<IDStorageStatusArray> Status;
+                HANDLE Completed = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+
+                Reader()
+                {
+                    const auto factory = Library ? reinterpret_cast<decltype(&DStorageGetFactory)>(
+                        GetProcAddress(Library, "DStorageGetFactory")) : nullptr;
+                    if (!Completed || !factory || FAILED(factory(IID_PPV_ARGS(&Factory))))
+                    {
+                        return;
+                    }
+                    DSTORAGE_QUEUE_DESC desc{};
+                    desc.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
+                    desc.Priority = DSTORAGE_PRIORITY_NORMAL;
+                    desc.Capacity = DSTORAGE_MIN_QUEUE_CAPACITY;
+                    if (SUCCEEDED(Factory->CreateQueue(&desc, IID_PPV_ARGS(&Queue))))
+                    {
+                        Factory->CreateStatusArray(1, nullptr, IID_PPV_ARGS(&Status));
+                    }
+                }
+
+                ~Reader()
+                {
+                    Status.Reset();
+                    Queue.Reset();
+                    Factory.Reset();
+                    if (Completed) CloseHandle(Completed);
+                    if (Library) FreeLibrary(Library);
+                }
+            };
+            thread_local Reader reader;
+            ComPtr<IDStorageFile> file;
+            if (!reader.Status || FAILED(reader.Factory->OpenFile(path.c_str(), IID_PPV_ARGS(&file))))
+            {
+                return false;
+            }
+            DSTORAGE_REQUEST request{};
+            request.Options.SourceType = DSTORAGE_REQUEST_SOURCE_FILE;
+            request.Options.DestinationType = DSTORAGE_REQUEST_DESTINATION_MEMORY;
+            const auto size = static_cast<UINT32>(bytes.size());
+            request.Source.File = {file.Get(), offset, size};
+            request.Destination.Memory = {bytes.data(), size};
+            request.UncompressedSize = size;
+            reader.Queue->EnqueueRequest(&request);
+            reader.Queue->EnqueueStatus(reader.Status.Get(), 0);
+            reader.Queue->EnqueueSetEvent(reader.Completed);
+            reader.Queue->Submit();
+            WaitForSingleObject(reader.Completed, INFINITE);
+            return SUCCEEDED(reader.Status->GetHResult(0));
+        }
+#endif
+
+        void ReadPageBytes(const std::filesystem::path& path, uint64_t offset, std::span<uint8_t> bytes)
+        {
+#if VG_HAS_DIRECTSTORAGE
+            if (ReadDirectStorage(path, offset, bytes))
+            {
+                return;
+            }
+#endif
+            std::ifstream file(path, std::ios::binary);
+            file.seekg(std::streamoff(offset));
+            ReadExact(file, bytes);
+        }
         using VirtualGeometrySerialization::Reader;
         using VirtualGeometrySerialization::Writer;
         constexpr uint32_t Magic = 0x32504756; // ページ形式の識別子（VGP2）
@@ -506,16 +587,14 @@ namespace VirtualGeometryPageCache
             {
                 throw std::runtime_error("Page file offset overflow");
             }
-            std::ifstream file(manifest.Path, std::ios::binary);
-            file.seekg(std::streamoff(entry.Offset));
             if (entry.Size == bytes.size())
             {
-                ReadExact(file, bytes);
+                ReadPageBytes(manifest.Path, entry.Offset, bytes);
             }
             else
             {
                 std::vector<uint8_t> compressed(entry.Size);
-                ReadExact(file, compressed);
+                ReadPageBytes(manifest.Path, entry.Offset, compressed);
                 const size_t frameBytes = ZSTD_findFrameCompressedSize(compressed.data(), compressed.size());
                 if (ZSTD_getFrameContentSize(compressed.data(), compressed.size()) != bytes.size() ||
                     ZSTD_isError(frameBytes) || frameBytes != compressed.size())

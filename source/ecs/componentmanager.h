@@ -254,6 +254,9 @@ enum class MeshShadingOverride : int
     BRDF = 12,
     BTDF = 13,
     BSDF = 14,
+    ToonSclera = 15,
+    ToonIris = 16,
+    ToonEyeHighlight = 17,
 };
 
 static constexpr int kMaterialPartParamCount = 15;
@@ -416,6 +419,16 @@ struct MaterialComponent
     string LiveToonTextureRampPath;     // 質感ランプ：横軸 = 視線角度（正面→縁）
     float LiveToonTextureRampMultiply = 1.0f;
     float LiveToonTextureRampAdd = 0.0f;
+    // 学マス方式の拡張（LiveToonMaterial.hlsli）
+    string LiveToonShadeColorPath;          // シェードカラー：RGB = 影色（落ち影も同じ色）、A = 肌領域のマスク
+    float LiveToonShadeColorStrength = 1.0f;
+    string LiveToonShadowRampPath;          // キャラ別の陰影ランプ（1024x4。RGB = 肌の乗算、A = 肌以外のカラー↔シェード補間）
+    bool LiveToonDefGakumasLayout = false;  // Def を R = 陰影オフセット & リム, G = スムースネス, B = メタリック, A = スペキュラマスクで読む
+    float LiveToonRimMaskStrength = 1.0f;   // Def の R（0-0.5 → 0-1）をリムマスクにする量
+    float LiveToonSpecularMaskStrength = 1.0f;
+    int LiveToonTextureRampRow = 0;         // 質感ランプの行（0 = マテリアルクラスから自動、1..7）
+    string LiveToonLayerPath;               // レイヤー（汗・髪の乱れ）：左半分 = カラー（A = ブレンド）、右半分 = Def
+    float LiveToonLayerBlend = 0.0f;        // レイヤーの適用量（0 で無効。ライブ中の汗の進行に使う）
 
     // 球面法線補間 (SNI) パラメータ
     XMFLOAT3 SniSphereCenter = {0.0f, 1.5f, 0.0f};  // ワールド空間の球中心（毎フレーム更新推奨）
@@ -531,7 +544,7 @@ struct LightComponent
     bool AffectsVolumetrics = false;
     bool CastShadow = false;
     bool AllowMegaLights = true; // ディファード時、MegaLights のクラスターグリッドで評価してよい（Point / Spot / Rect）
-    float SourceRadius = 0.0f;   // Point / Spot の発光球の半径（m）。MegaLights の影レイでソフトシャドウになる
+    float SourceRadius = 0.0f;   // Point / Spot のソフトシャドウに使う発光半径（m）
     string AreaTexturePath;      // Rect の発光面のテクスチャ（MegaLights M7。空 = 単色）
     string IesProfilePath;       // IES 配光。空の場合は従来の配光を使う。
     float IesRotationDegrees = 0.0f;
@@ -541,6 +554,13 @@ struct LightComponent
     string ReflectionTexturePath;
     float ReflectionBlendDistance = 1.0f;
     float ReflectionDxrRoughness = 0.55f;
+    // ライティングチャンネル（学マス方式のキャラ / 背景のライト分離）。bit0 = 背景（PBR など）、bit1 = キャラ（ライブトゥーン）
+    int LightingChannels = 3;
+    // スペキュラだけを弱める倍率（0..1）。ギラつきで絵が硬くなるのを抑える。ディフューズは変わらない。
+    float SpecularScale = 1.0f;
+    // 平行光源：シャドウマップを描く方向だけを別にする（セルフシャドウの角度をトゥーン陰影の向きと独立に調整）
+    bool UseShadowDirection = false;
+    XMFLOAT3 ShadowDirection = {0.0f, 1.0f, -1.0f};
 
     bool IsActiveForCamera(EntityID camera) const
     {
@@ -549,6 +569,24 @@ struct LightComponent
 
     LightType Type = LightType::Directional;
 };
+
+// シャドウマップを描く方向（平行光源の UseShadowDirection）。照明の向きは Direction のまま。
+inline XMFLOAT3 ShadowCastDirection(const LightComponent& light)
+{
+    return light.Type == LightType::Directional && light.UseShadowDirection ? light.ShadowDirection : light.Direction;
+}
+
+// LightIesProfiles[i].w：整数部 = チャンネル（1..3）、小数部 = スペキュラ倍率 * 0.99。0 は従来（両方・1.0）。
+inline float PackLightChannelsAndSpecular(const LightComponent& light)
+{
+    const int channels = (std::max)(1, (std::min)(light.LightingChannels & 3, 3));
+    const float specular = (std::max)(0.0f, (std::min)(light.SpecularScale, 1.0f));
+    if (channels == 3 && specular >= 0.999f)
+    {
+        return 0.0f;
+    }
+    return static_cast<float>(channels) + specular * 0.99f;
+}
 
 // Preserve legacy buffer layouts: stage attenuation is encoded in the density sign.
 inline XMFLOAT4 PackLightExtra(const LightComponent& light)
@@ -827,6 +865,8 @@ class ComponentManager
         Registry::RemoveComponent(entity, types...);
     }
 };
+
+
 
 
 

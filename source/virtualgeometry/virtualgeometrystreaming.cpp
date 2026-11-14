@@ -24,6 +24,9 @@ namespace VirtualGeometryStreaming
             uint32_t Failures = 0;
             Clock::time_point RetryAfter{};
             Clock::time_point SubmittedAt{};
+            uint32_t RayPageBase = UINT32_MAX;
+            uint64_t RayPageRevision = 0;
+            std::vector<uint8_t> RayPayload;
         };
 
         struct Frame
@@ -49,6 +52,7 @@ namespace VirtualGeometryStreaming
             std::array<Frame, 3> Frames;
             uint64_t Serial = 0;
             uint32_t Outstanding = 0;
+            uint64_t RayPayloadBytes = 0;
             bool Initialized = false, Available = false;
         };
 
@@ -282,7 +286,8 @@ namespace VirtualGeometryStreaming
         return Current().Usage;
     }
 
-    uint32_t Register(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest, uint32_t priority)
+    uint32_t Register(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest, uint32_t priority,
+                      bool retainRayPages)
     {
         auto& state = Data();
         if (!manifest || !Supported())
@@ -300,8 +305,28 @@ namespace VirtualGeometryStreaming
         for (uint32_t page = 0; page < manifest->Pages.size(); ++page)
         {
             state.Sources.push_back({manifest, page});
+            if (retainRayPages)
+            {
+                state.Sources.back().RayPageBase = base;
+            }
         }
         return base;
+    }
+
+    uint64_t RayPageRevision(uint32_t pageBase)
+    {
+        const auto& sources = Data().Sources;
+        return pageBase < sources.size() ? sources[pageBase].RayPageRevision : 0;
+    }
+
+    std::span<const uint8_t> ResidentRayPage(uint32_t page)
+    {
+        const auto& state = Data();
+        if (page >= state.Sources.size() || state.Manager.Pages()[page].State != PageState::Resident)
+        {
+            return {};
+        }
+        return state.Sources[page].RayPayload;
     }
 
     bool CanRegister(const VirtualGeometryPageCache::PageManifest& manifest)
@@ -386,7 +411,13 @@ namespace VirtualGeometryStreaming
                 {
                     uint64_t fence = state.Pool->Submit(result.Ticket, result.Payload);
                     state.Manager.CompleteCopy(result.Ticket, fence);
-                    state.Sources[result.Ticket.Page].SubmittedAt = Clock::now();
+                    auto& source = state.Sources[result.Ticket.Page];
+                    source.SubmittedAt = Clock::now();
+                    if (fence && source.RayPageBase != UINT32_MAX)
+                    {
+                        state.RayPayloadBytes += result.Payload.size();
+                        source.RayPayload = std::move(result.Payload);
+                    }
                     state.Stats.SubmittedBytes += 65536;
                     transferred += 65536;
                 }
@@ -403,6 +434,10 @@ namespace VirtualGeometryStreaming
                     state.Stats.CopyMilliseconds =
                         std::chrono::duration<double, std::milli>(Clock::now() - source.SubmittedAt).count();
                     source.Failures = 0;
+                    if (source.RayPageBase != UINT32_MAX)
+                    {
+                        ++state.Sources[source.RayPageBase].RayPageRevision;
+                    }
                 }
             }
             state.Manager.Publish(completedCopy, state.Serial);
@@ -485,6 +520,13 @@ namespace VirtualGeometryStreaming
                 if (oldest && state.Manager.Retire(*oldest, 0))
                 {
                     ++state.Stats.Evictions;
+                    auto& source = state.Sources[*oldest];
+                    if (source.RayPageBase != UINT32_MAX)
+                    {
+                        ++state.Sources[source.RayPageBase].RayPageRevision;
+                        state.RayPayloadBytes -= source.RayPayload.size();
+                        std::vector<uint8_t>().swap(source.RayPayload);
+                    }
                 }
             }
         }
@@ -550,7 +592,8 @@ namespace VirtualGeometryStreaming
         stats.BudgetBytes = state.Manager.Budget();
         stats.PoolBytes = state.Available ? state.Pool->MemoryBytes() : 0;
         stats.UploadBytes = state.Available ? state.Pool->UploadBytes() : 0;
-        stats.StagingBytes = state.Available ? state.Io->StagingBytes() + state.Ready.size() * 65536ull : 0;
+        stats.StagingBytes =
+            state.Available ? state.Io->StagingBytes() + state.Ready.size() * 65536ull + state.RayPayloadBytes : 0;
         stats.CpuMilliseconds = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
     }
 

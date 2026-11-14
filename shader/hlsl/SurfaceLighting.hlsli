@@ -46,10 +46,13 @@ float IsMaterialClass(float value, float target)
 
 
 
-float2 DirectionalReceiverDepthGradient(float3 receiverWorldDx, float3 receiverWorldDy, float4x4 lightViewProjection)
+float2 ShadowReceiverDepthGradient(float3 receiverWorldDx, float3 receiverWorldDy, float4x4 lightViewProjection,
+                                    float3 lightNdc = float3(0.0f, 0.0f, 0.0f))
 {
-    float3 lightDx = mul(float4(receiverWorldDx, 0.0f), lightViewProjection).xyz;
-    float3 lightDy = mul(float4(receiverWorldDy, 0.0f), lightViewProjection).xyz;
+    const float4 clipDx = mul(float4(receiverWorldDx, 0.0f), lightViewProjection);
+    const float4 clipDy = mul(float4(receiverWorldDy, 0.0f), lightViewProjection);
+    float3 lightDx = clipDx.xyz - lightNdc * clipDx.w;
+    float3 lightDy = clipDy.xyz - lightNdc * clipDy.w;
     float2 uvDx = float2(lightDx.x * 0.5f, -lightDx.y * 0.5f);
     float2 uvDy = float2(lightDy.x * 0.5f, -lightDy.y * 0.5f);
     float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
@@ -98,7 +101,7 @@ float3 SampleShadowTransmission(float2 uv, float lightLayer, float receiverDepth
 }
 
 float3 SampleConventionalShadowPcf9(float2 shadowUv, float shadowLayer, float texelSize, float currentDepth,
-                                    float2 receiverDepthGradient, int filterRadius)
+                                    float2 receiverDepthGradient, int filterRadius, float extraRadius = 0.0f)
 {
     const float2 kernel[9] = {float2(0.0f, 0.0f),
                               float2(1.0f, 0.0f),
@@ -110,7 +113,8 @@ float3 SampleConventionalShadowPcf9(float2 shadowUv, float shadowLayer, float te
                               float2(0.7071068f, -0.7071068f),
                               float2(-0.7071068f, -0.7071068f)};
     filterRadius = clamp(filterRadius, 0, 3);
-    int tapCount = filterRadius <= 0 ? 1 : 9;
+    int tapCount = filterRadius <= 0 && extraRadius <= 0.0f ? 1 : 9;
+    const float kernelRadius = max((float)filterRadius + extraRadius, 0.0f);
     float3 visibility = 0.0f;
     [loop] for (int tap = 0; tap < 9; ++tap)
     {
@@ -118,7 +122,7 @@ float3 SampleConventionalShadowPcf9(float2 shadowUv, float shadowLayer, float te
         {
             break;
         }
-        float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
+        float2 offset = kernel[tap] * kernelRadius * texelSize;
         float tapDepth = currentDepth + dot(receiverDepthGradient, offset);
         float opaqueVisibility =
             ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(shadowUv + offset, shadowLayer), tapDepth);
@@ -176,7 +180,7 @@ bool SampleVirtualShadowLevel(int level, float3 worldPos, float3 worldPosDx, flo
     float baseBias = DirectionalShadowComparisonBias(params, nDotL);
     float currentDepth = lightNdc.z - baseBias;
     float2 receiverDepthGradient =
-        DirectionalReceiverDepthGradient(worldPosDx, worldPosDy, VirtualShadowViewProjections[level]);
+        ShadowReceiverDepthGradient(worldPosDx, worldPosDy, VirtualShadowViewProjections[level]);
 
     const float2 poisson[9] = {float2(0.0f, 0.0f),       float2(0.286f, 0.088f),   float2(-0.218f, 0.273f),
                                float2(-0.153f, -0.394f), float2(0.424f, -0.309f),  float2(0.523f, 0.334f),
@@ -243,8 +247,13 @@ float3 SampleSurfaceShadowMap(int lightIndex, float3 worldPos, float3 worldPosDx
                               float3 lightDir, int filterRadius)
 {
 #ifdef SHADER_RAYTRACING
-    if (SceneRayFlags.x > 0.5f)
+    if (SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
     {
+        if (LightPositionTypes[lightIndex].w < 0.5f && SceneShadowLights[lightIndex].x != 0u &&
+            IsLiveToonClass(g_LiveToonClass))
+        {
+            return TraceSceneDirectionalShadow(worldPos, normal, lightDir);
+        }
         return SceneShadowForLightCommon(lightIndex, worldPos, normal, lightDir);
     }
 #endif
@@ -324,7 +333,7 @@ float3 SampleSurfaceShadowMap(int lightIndex, float3 worldPos, float3 worldPosDx
             float baseBias = DirectionalShadowComparisonBias(params, dot(normal, lightDir));
             float currentDepth = lightNdc.z - baseBias;
             float2 receiverDepthGradient =
-                DirectionalReceiverDepthGradient(worldPosDx, worldPosDy, VirtualShadowViewProjections[level]);
+                ShadowReceiverDepthGradient(worldPosDx, worldPosDy, VirtualShadowViewProjections[level]);
             float3 levelVisibility =
                 SampleConventionalShadowPcf9(shadowUv, params.x, params.y * ShadowWorldFilterScaleCommon(level),
                                              currentDepth, receiverDepthGradient, filterRadius);
@@ -360,8 +369,20 @@ float3 SampleSurfaceShadowMap(int lightIndex, float3 worldPos, float3 worldPosDx
     float texelSize = LightShadowData[lightIndex].y;
     float currentDepth = lightNdc.z - max(LightShadowData[lightIndex].z, 0.0f) -
                          abs(LightShadowData[lightIndex].w) * (1.0f - saturate(dot(normal, lightDir)));
-    return SampleConventionalShadowPcf9(shadowUv, shadowLayer, texelSize, currentDepth, float2(0.0f, 0.0f),
-                                        filterRadius);
+    const float sourceRadius = LightIesProfiles[lightIndex].z;
+    float extraRadius = 0.0f;
+    float2 receiverDepthGradient = 0.0f;
+    if (sourceRadius > 0.0f)
+    {
+        const float projectionScale = length(LightViewProjections[lightIndex]._11_21_31);
+        const float radiusInTexels = sourceRadius * projectionScale * 0.5f / max(lightClip.w * texelSize, 1.0e-6f);
+        const float maxExtraRadius = 8.0f;
+        extraRadius = maxExtraRadius * radiusInTexels / (radiusInTexels + maxExtraRadius);
+        receiverDepthGradient =
+            ShadowReceiverDepthGradient(worldPosDx, worldPosDy, LightViewProjections[lightIndex], lightNdc);
+    }
+    return SampleConventionalShadowPcf9(shadowUv, shadowLayer, texelSize, currentDepth, receiverDepthGradient,
+                                        filterRadius, extraRadius);
 }
 
 float LoadContactDepth(float2 uv)
@@ -723,7 +744,7 @@ float3 EvaluatePbrDirectLight(float3 N, float3 V, float3 L, float3 radiance, flo
         extra += (coatD * coatV * coatF * NdotLScalar).xxx;
     }
 
-    return (diffuseTerm + specularTerm + extra) * radiance;
+    return (diffuseTerm + specularTerm * g_LightSpecularScale + extra) * radiance;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1012,6 +1033,8 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
     {
         return;
     }
+    // ライトごとのスペキュラ倍率（ギラつきを抑える。ディフューズは変えない）
+    g_LightSpecularScale = decalLight ? 1.0f : LightSpecularScaleCommon(iesProfile.w);
 
     float3 shadowVisibility = 1.0f;
     [branch] if (visibilityOverride >= 0.0f)
@@ -1077,13 +1100,13 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
 #ifdef SHADER_RAYTRACING
     else if (gridCastShadow && SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
     {
-        // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
-        const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
+        // MegaLights M1 と Forward のグリッドライトも発光半径を使う。
         // 最適化：点 / スポット光で N・L < -0.6 なら、ラップ照明（最大 0.55）を含めても寄与が 0 なので
         // 影レイを省く（矩形 / カプセル / ボリュームは中心方向と寄与が一致しないので対象外）
         shadowVisibility = lightPositionType.w < 2.5f && dot(normal, singleDir) < -0.6f
                                ? 0.0f
-                               : TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);
+                               : TraceSceneLocalShadow(worldPos + g_PomShadowOffset, normal, singleDir,
+                                                       lightPositionType.xyz, iesProfile.z);
     }
 #endif
     float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
@@ -1147,7 +1170,8 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
             acc.PbrDirect +=
                 sampleWeight *
                 EvaluateRectLightLtcTinted(normal, viewDir, worldPos, lightPositionType.xyz, emitNormal, lightExtra.x,
-                                           lightExtra.y, albedo, materialData, diffuseTint, specularTint) *
+                                           lightExtra.y, albedo, materialData, diffuseTint,
+                                           specularTint * g_LightSpecularScale) *
                 emitterRadiance;
         }
         else
@@ -1182,6 +1206,7 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
     acc.VolumeSum += singleVolume * lightIntensityValue * visibilityLuminance;
     acc.RangeSum += saturate((max(lightDirection.w, 1.0f) - 1.0f) / 7.0f) * weight;
     acc.ShadowSum += visibilityLuminance * weight;
+    g_LightSpecularScale = 1.0f;
 }
 
 #if defined(MEGALIGHTS_GRID) && !defined(MEGALIGHTS_FORWARD)
@@ -1333,6 +1358,12 @@ void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, fl
         uint lightIndex = useLightGrid ? LightTileIndices[tileBase + (uint)iteration] : (uint)iteration;
         if (lightIndex == 0xffffffffu || lightIndex >= (uint)count || LightFlags[lightIndex].x < 0.5f ||
             LightFlags[lightIndex].w >= 1.5f)
+        {
+            continue;
+        }
+        // ライトの照射チャンネル（bit0 = 背景・PBR、bit1 = キャラ・ライブトゥーン）。
+        // キャラ専用のトゥーン用メインライト / 背景専用のステージライトを分けられる（学マスのキャラ / 背景のライト分離）。
+        if ((LightChannelMaskCommon(LightIesProfiles[lightIndex].w) & (IsLiveToonClass(g_LiveToonClass) ? 2u : 1u)) == 0u)
         {
             continue;
         }
@@ -1633,12 +1664,18 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     return pbrDirectLight + ambient + surface.Emissive;
 }
 
-float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv, float3 diffuseReflectance)
+float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv, float3 diffuseReflectance,
+                                 bool preserveEyeColor = false)
 {
     // 独立したプレビューやフォワード専用のシーンには、画面空間の照明履歴がない。
     if (Flags.w <= 0.0f)
     {
         return color + emissive;
+    }
+    if (preserveEyeColor)
+    {
+        float4 atmosphereMedia = AtmosphereTexture.SampleLevel(TextureSampler, screenUv, 0);
+        return (color + emissive) * saturate(atmosphereMedia.a) + atmosphereMedia.rgb;
     }
     float ambientVisibility = 1.0f;
     if (HdrFlags.z > 0.5f)
@@ -1678,6 +1715,8 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
+
 
 
 

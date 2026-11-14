@@ -9,7 +9,7 @@ using GPUMeshID = uint32_t;
 using GPUMaterialID = uint32_t;
 inline constexpr GPUInstanceID InvalidGPUInstanceID = UINT32_MAX;
 inline constexpr uint32_t GpuSceneInitialCapacity = 1024;
-inline constexpr uint32_t GpuSceneMaterialParameterVectors = 193;
+inline constexpr uint32_t GpuSceneMaterialParameterVectors = 195; // +2：ライブトゥーン拡張（シェード / レイヤー）
 
 enum class GpuSceneDirtyFlags : uint32_t
 {
@@ -83,7 +83,7 @@ static_assert(offsetof(GPUInstanceData, MeshIndex) == 128);
 static_assert(offsetof(GPUInstanceData, BoundsCenter) == 144);
 static_assert(offsetof(GPUInstanceData, LocalCenter) == 176);
 static_assert(sizeof(GPUMeshData) == 64);
-static_assert(sizeof(GPUMaterialData) == 3152);
+static_assert(sizeof(GPUMaterialData) == 3184); // HLSL: GPU_SCENE_MATERIAL_STRIDE
 static_assert(offsetof(GPUMaterialData, ShadingParameters) == 64);
 
 struct GpuSceneStatistics
@@ -100,4 +100,6 @@ struct GpuSceneStatistics
     uint64_t BufferMemoryBytes = 0;
     double UpdateCpuMilliseconds = 0;
 };
+
+
 
